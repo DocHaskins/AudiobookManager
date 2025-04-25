@@ -1,34 +1,36 @@
-// File: lib/ui/screens/settings_view.dart
+// File: lib/ui/screens/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'dart:io';
-import 'dart:async';
 
 import 'package:audiobook_organizer/storage/user_preferences.dart';
 import 'package:audiobook_organizer/services/audiobook_scanner.dart';
 import 'package:audiobook_organizer/services/providers/google_books_provider.dart';
+import 'package:audiobook_organizer/storage/metadata_cache.dart';
+import 'package:audiobook_organizer/storage/library_storage.dart';
+import 'package:audiobook_organizer/main.dart';
 
-class SettingsView extends StatefulWidget {
-  const SettingsView({Key? key}) : super(key: key);
+class SettingsScreen extends StatefulWidget {
+  const SettingsScreen({Key? key}) : super(key: key);
 
   @override
-  State<SettingsView> createState() => _SettingsViewState();
+  State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsViewState extends State<SettingsView> {
+class _SettingsScreenState extends State<SettingsScreen> {
   // Controllers
   final _apiKeyController = TextEditingController();
   final _namingPatternController = TextEditingController();
-  final _scrollController = ScrollController(); // Add explicit ScrollController
   
   // State variables
   String? _defaultDirectory;
   bool _isLoading = true;
   bool _isTestingApiKey = false;
-  bool _showScanOptions = false;
   bool _includeSubfolders = true;
+  bool _autoMatchNewFiles = false;
+  bool _useDarkMode = false;
   List<String> _supportedExtensions = [];
   
   // API key test result
@@ -38,18 +40,14 @@ class _SettingsViewState extends State<SettingsView> {
   @override
   void initState() {
     super.initState();
-    // Delay loading to avoid UI blocking
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadPreferences();
-      _loadSupportedExtensions();
-    });
+    _loadPreferences();
+    _loadSupportedExtensions();
   }
   
   @override
   void dispose() {
     _apiKeyController.dispose();
     _namingPatternController.dispose();
-    _scrollController.dispose(); // Dispose ScrollController when done
     super.dispose();
   }
   
@@ -58,42 +56,46 @@ class _SettingsViewState extends State<SettingsView> {
     
     try {
       final prefs = Provider.of<UserPreferences>(context, listen: false);
+      final themeProvider = Provider.of<ThemeModeProvider>(context, listen: false);
       
       final apiKey = await prefs.getApiKey();
       final defaultDir = await prefs.getDefaultDirectory();
       final pattern = await prefs.getNamingPattern();
       final includeSubfolders = await prefs.getIncludeSubfolders();
+      final autoMatchNewFiles = await prefs.getAutoMatchNewFiles();
+      final useDarkMode = await prefs.getUseDarkMode();
       
-      if (!mounted) return;
       setState(() {
         _apiKeyController.text = apiKey ?? '';
         _defaultDirectory = defaultDir;
         _namingPatternController.text = pattern;
         _includeSubfolders = includeSubfolders;
+        _autoMatchNewFiles = autoMatchNewFiles;
+        _useDarkMode = useDarkMode ?? false;
         _isLoading = false;
       });
     } catch (e) {
       print('Error loading preferences: $e');
-      if (!mounted) return;
       
       setState(() {
         _isLoading = false;
       });
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error loading settings: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading settings: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
   
   Future<void> _loadSupportedExtensions() async {
-    if (!mounted) return;
-    
     try {
       final scanner = Provider.of<AudiobookScanner>(context, listen: false);
+      
       setState(() {
         _supportedExtensions = scanner.supportedExtensions;
       });
@@ -111,51 +113,59 @@ class _SettingsViewState extends State<SettingsView> {
     
     try {
       final prefs = Provider.of<UserPreferences>(context, listen: false);
+      final themeProvider = Provider.of<ThemeModeProvider>(context, listen: false);
       
       await prefs.saveApiKey(_apiKeyController.text.trim());
       await prefs.saveNamingPattern(_namingPatternController.text.trim());
       await prefs.saveIncludeSubfolders(_includeSubfolders);
+      await prefs.saveAutoMatchNewFiles(_autoMatchNewFiles);
+      await prefs.saveUseDarkMode(_useDarkMode);
       
       if (_defaultDirectory != null) {
         await prefs.saveDefaultDirectory(_defaultDirectory!);
       }
       
+      // Update the theme mode
+      themeProvider.setThemeMode(_useDarkMode ? ThemeMode.dark : ThemeMode.light);
+      
       // Update the GoogleBooksProvider with the new API key
       final googleProvider = Provider.of<GoogleBooksProvider>(context, listen: false);
       googleProvider.updateApiKey(_apiKeyController.text.trim());
       
-      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Settings saved'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Settings saved'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
     } catch (e) {
       print('Error saving preferences: $e');
-      if (!mounted) return;
       
       setState(() {
         _isLoading = false;
       });
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error saving settings: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving settings: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
   
   Future<void> _selectDefaultDirectory() async {
     try {
       final String? directory = await getDirectoryPath(
-        confirmButtonText: 'Select Folder',  
+        confirmButtonText: 'Select Folder',
       );
       
       if (directory != null && mounted) {
@@ -165,6 +175,15 @@ class _SettingsViewState extends State<SettingsView> {
       }
     } catch (e) {
       print('Error selecting directory: $e');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error selecting directory: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
   
@@ -185,14 +204,12 @@ class _SettingsViewState extends State<SettingsView> {
     });
     
     try {
-      final testProvider = GoogleBooksProvider(apiKey: apiKey);
-      // Use a timeout to prevent indefinite hanging
-      const timeout = Duration(seconds: 10);
+      final googleProvider = Provider.of<GoogleBooksProvider>(context, listen: false);
+      googleProvider.updateApiKey(apiKey);
       
-      final results = await testProvider.search('Harry Potter')
-          .timeout(timeout, onTimeout: () => throw TimeoutException('Request timed out'));
+      // Try a simple search to test the API key
+      final results = await googleProvider.search('Harry Potter');
       
-      if (!mounted) return;
       setState(() {
         _isTestingApiKey = false;
         if (results.isNotEmpty) {
@@ -204,7 +221,6 @@ class _SettingsViewState extends State<SettingsView> {
         }
       });
     } catch (e) {
-      if (!mounted) return;
       setState(() {
         _isTestingApiKey = false;
         _apiKeyTestResult = 'Error: ${e.toString()}';
@@ -213,35 +229,117 @@ class _SettingsViewState extends State<SettingsView> {
     }
   }
   
-  Future<void> _launchGoogleCloudConsole() async {
-    final Uri url = Uri.parse('https://console.cloud.google.com/apis/library/books.googleapis.com');
+  Future<void> _clearMetadataCache() async {
     try {
-      if (await canLaunchUrl(url)) {
-        await launchUrl(url);
-      } else {
-        if (!mounted) return;
+      final metadataCache = Provider.of<MetadataCache>(context, listen: false);
+      await metadataCache.clearCache();
+      
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Could not open URL'),
+            content: Text('Metadata cache cleared'),
             behavior: SnackBarBehavior.floating,
           ),
         );
       }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error opening URL: ${e.toString()}'),
-          behavior: SnackBarBehavior.floating,
+      print('Error clearing metadata cache: $e');
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error clearing metadata cache: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+  
+  Future<void> _resetAllSettings() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset Settings'),
+        content: const Text(
+          'This will reset all settings to their default values and clear your library. '
+          'Are you sure you want to continue?'
         ),
-      );
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirm == true) {
+      setState(() {
+        _isLoading = true;
+      });
+      
+      try {
+        print('Starting library reset process...');
+        
+        // Reset user preferences
+        final prefs = Provider.of<UserPreferences>(context, listen: false);
+        await prefs.resetAllSettings();
+        print('User preferences reset...');
+        
+        // Clear the metadata cache
+        final metadataCache = Provider.of<MetadataCache>(context, listen: false);
+        await metadataCache.clearCache();
+        print('Metadata cache cleared...');
+        
+        // Clear the library storage
+        final libraryStorage = Provider.of<LibraryStorage>(context, listen: false);
+        await libraryStorage.clearLibrary();
+        print('Library storage cleared...');
+        
+        // Reload preferences
+        await _loadPreferences();
+        
+        // Force app to reload library screen when returning
+        Navigator.of(context).pop(true); // Return true to indicate changes
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('All settings reset to defaults and library cleared'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      } catch (e) {
+        print('Error resetting settings and library: $e');
+        
+        setState(() {
+          _isLoading = false;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error resetting settings: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
     }
   }
   
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     
     return Scaffold(
       appBar: AppBar(
@@ -251,32 +349,52 @@ class _SettingsViewState extends State<SettingsView> {
             onPressed: _savePreferences,
             icon: const Icon(Icons.save),
             label: const Text('Save'),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.white,
+            ),
           ),
         ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : SafeArea(
-              child: ListView( // Use ListView directly instead of Scrollbar+SingleChildScrollView
-                controller: _scrollController, // Attach controller to ListView
-                padding: const EdgeInsets.all(16),
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // API Section
                   _buildApiSection(theme),
                   const SizedBox(height: 24),
+                  
+                  // Appearance Section
+                  _buildAppearanceSection(theme),
+                  const SizedBox(height: 24),
+                  
+                  // File Management Section
                   _buildFileManagementSection(theme),
                   const SizedBox(height: 24),
+                  
+                  // Scanning Options Section
                   _buildScanningOptionsSection(theme),
                   const SizedBox(height: 24),
+                  
+                  // Advanced Section
+                  _buildAdvancedSection(theme),
+                  const SizedBox(height: 24),
+                  
+                  // About Section
                   _buildAboutSection(theme),
                   const SizedBox(height: 32),
+                  
+                  // Save button
                   Center(
                     child: ElevatedButton.icon(
                       onPressed: _savePreferences,
                       icon: const Icon(Icons.save),
                       label: const Text('Save Settings'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: colorScheme.primary,
-                        foregroundColor: colorScheme.onPrimary,
+                        backgroundColor: theme.colorScheme.primary,
+                        foregroundColor: theme.colorScheme.onPrimary,
                         padding: const EdgeInsets.symmetric(
                           horizontal: 32,
                           vertical: 16,
@@ -284,7 +402,6 @@ class _SettingsViewState extends State<SettingsView> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 32),
                 ],
               ),
             ),
@@ -293,7 +410,6 @@ class _SettingsViewState extends State<SettingsView> {
   
   Widget _buildApiSection(ThemeData theme) {
     final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
     
     return Card(
       elevation: 1,
@@ -314,7 +430,7 @@ class _SettingsViewState extends State<SettingsView> {
                 const SizedBox(width: 8),
                 Text(
                   'API Configuration',
-                  style: textTheme.titleMedium?.copyWith(
+                  style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -381,7 +497,7 @@ class _SettingsViewState extends State<SettingsView> {
                     Expanded(
                       child: Text(
                         _apiKeyTestResult!,
-                        style: textTheme.bodySmall?.copyWith(
+                        style: theme.textTheme.bodySmall?.copyWith(
                           color: _apiKeyValid == true
                               ? Colors.green
                               : _apiKeyValid == false
@@ -400,24 +516,58 @@ class _SettingsViewState extends State<SettingsView> {
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 OutlinedButton.icon(
-                  onPressed: _launchGoogleCloudConsole,
+                  onPressed: () => launchUrl(Uri.parse('https://console.cloud.google.com/apis/library/books.googleapis.com')),
                   icon: const Icon(Icons.open_in_new),
                   label: const Text('Get API Key'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: colorScheme.primary,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildAppearanceSection(ThemeData theme) {
+    final colorScheme = theme.colorScheme;
+    
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.palette,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Appearance',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ],
             ),
+            const Divider(height: 24),
             
-            const SizedBox(height: 8),
-            Text(
-              'A Google Books API key is required to search for book metadata. '
-              'You can get a free API key from the Google Cloud Console.',
-              style: textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurface.withOpacity(0.7),
-                fontStyle: FontStyle.italic,
-              ),
+            // Dark mode toggle
+            SwitchListTile(
+              title: const Text('Dark Mode'),
+              subtitle: const Text('Use dark theme for the app'),
+              value: _useDarkMode,
+              onChanged: (value) {
+                setState(() {
+                  _useDarkMode = value;
+                });
+              },
             ),
           ],
         ),
@@ -427,7 +577,6 @@ class _SettingsViewState extends State<SettingsView> {
   
   Widget _buildFileManagementSection(ThemeData theme) {
     final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
     
     return Card(
       elevation: 1,
@@ -448,7 +597,7 @@ class _SettingsViewState extends State<SettingsView> {
                 const SizedBox(width: 8),
                 Text(
                   'File Management',
-                  style: textTheme.titleMedium?.copyWith(
+                  style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -487,7 +636,6 @@ class _SettingsViewState extends State<SettingsView> {
   
   Widget _buildScanningOptionsSection(ThemeData theme) {
     final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
     
     return Card(
       elevation: 1,
@@ -500,22 +648,17 @@ class _SettingsViewState extends State<SettingsView> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.search,
-                      color: colorScheme.primary,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Scanning Options',
-                      style: textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+                Icon(
+                  Icons.search,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Scanning Options',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ],
             ),
@@ -533,7 +676,89 @@ class _SettingsViewState extends State<SettingsView> {
               },
             ),
             
-            const SizedBox(height: 8),
+            // Auto-match new files
+            SwitchListTile(
+              title: const Text('Auto-Match New Files'),
+              subtitle: const Text('Automatically search for metadata when scanning new files'),
+              value: _autoMatchNewFiles,
+              onChanged: (value) {
+                setState(() {
+                  _autoMatchNewFiles = value;
+                });
+              },
+            ),
+            
+            // Supported file extensions
+            if (_supportedExtensions.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Supported File Extensions:',
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _supportedExtensions
+                    .map((ext) => Chip(
+                          label: Text(ext),
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          labelStyle: const TextStyle(fontSize: 12),
+                        ))
+                    .toList(),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildAdvancedSection(ThemeData theme) {
+    final colorScheme = theme.colorScheme;
+    
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.settings,
+                  color: colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Advanced',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 24),
+            
+            ListTile(
+              leading: const Icon(Icons.cleaning_services),
+              title: const Text('Clear Metadata Cache'),
+              subtitle: const Text('Remove saved metadata from cache'),
+              onTap: _clearMetadataCache,
+            ),
+            
+            ListTile(
+              leading: const Icon(Icons.restore, color: Colors.red),
+              title: const Text('Reset All Settings'),
+              subtitle: const Text('Restore default settings'),
+              onTap: _resetAllSettings,
+            ),
           ],
         ),
       ),
@@ -542,7 +767,6 @@ class _SettingsViewState extends State<SettingsView> {
   
   Widget _buildAboutSection(ThemeData theme) {
     final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
     
     return Card(
       elevation: 1,
@@ -563,7 +787,7 @@ class _SettingsViewState extends State<SettingsView> {
                 const SizedBox(width: 8),
                 Text(
                   'About',
-                  style: textTheme.titleMedium?.copyWith(
+                  style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -585,8 +809,8 @@ class _SettingsViewState extends State<SettingsView> {
             
             Center(
               child: Text(
-                '© 2023 AudioBook Organizer',
-                style: textTheme.bodySmall?.copyWith(
+                '© 2025 AudioBook Organizer',
+                style: theme.textTheme.bodySmall?.copyWith(
                   color: colorScheme.onSurface.withOpacity(0.7),
                 ),
               ),

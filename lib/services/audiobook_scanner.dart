@@ -1,11 +1,12 @@
 // File: lib/services/audiobook_scanner.dart
 import 'dart:io';
 import 'dart:async';
-import 'dart:collection';
 import 'package:path/path.dart' as path_util;
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_collection.dart';
+import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/storage/user_preferences.dart';
+import 'package:audiobook_organizer/services/metadata_matcher.dart';
 
 class AudiobookScanner {
   final List<String> _supportedExtensions = [
@@ -40,25 +41,17 @@ class AudiobookScanner {
     RegExp(r'^of\s+(\d+)', caseSensitive: false),
   ];
   
-  // Patterns to identify book boundaries within a collection
-  final List<RegExp> _bookBoundaryPatterns = [
-    RegExp(r'^Book\s+(\d+)', caseSensitive: false),
-    RegExp(r'^Volume\s+(\d+)', caseSensitive: false),
-    RegExp(r'^Part\s+(\d+)', caseSensitive: false),
-  ];
-  
-  // Common prefixes to remove when extracting book title from folder name
-  final List<RegExp> _folderPrefixesToRemove = [
-    RegExp(r'^[!_\d]+\s*[-_\s]+', caseSensitive: false), // Numbered or marked folders
-    RegExp(r'^(?:The|A)\s+', caseSensitive: false), // Articles
-  ];
-  
   // Use nullable UserPreferences for backward compatibility
   final UserPreferences? _userPreferences;
   
+  // Optional metadata matcher
+  final MetadataMatcher? metadataMatcher;
+  
   // Default constructor
-  AudiobookScanner({UserPreferences? userPreferences})
-    : _userPreferences = userPreferences;
+  AudiobookScanner({
+    UserPreferences? userPreferences,
+    this.metadataMatcher
+  }) : _userPreferences = userPreferences;
   
   // Getter for supported extensions
   List<String> get supportedExtensions => _supportedExtensions;
@@ -128,6 +121,218 @@ class AudiobookScanner {
     return null;
   }
   
+  // UPDATED METHOD: Scan for files with complete metadata (for Library view)
+  // Added matchOnline parameter to control when online matching happens
+  Future<Map<String, List<AudiobookFile>>> scanForLibraryView(
+    String dirPath, 
+    {bool? recursive, bool matchOnline = false}
+  ) async {
+    Map<String, List<AudiobookFile>> completeBooks = {};
+    
+    // Get all audiobook files
+    List<AudiobookFile> allFiles = await scanDirectory(dirPath, recursive: recursive);
+    
+    // First, extract metadata from all files - this is always done
+    print('LOG: Extracting file metadata for ${allFiles.length} files');
+    for (var file in allFiles) {
+      await file.extractFileMetadata();
+    }
+    
+    // Then, only try to match with online metadata if explicitly requested
+    if (matchOnline && metadataMatcher != null) {
+      print('LOG: Looking up online metadata for files with incomplete metadata');
+      for (var file in allFiles) {
+        if (!file.hasCompleteMetadata) {
+          await metadataMatcher!.matchFile(file);
+        }
+      }
+    }
+    
+    // Group files by metadata - using fileMetadata or metadata, whichever is more complete
+    for (var file in allFiles) {
+      if (file.hasCompleteMetadata) {
+        // Get the metadata to use for grouping - prioritize file metadata when it's complete
+        final meta = _getPreferredMetadata(file);
+        
+        // If the file is part of a series, group by series+title
+        if (meta.series.isNotEmpty) {
+          final key = '${meta.series} - ${meta.title}';
+          completeBooks.putIfAbsent(key, () => []).add(file);
+        } else {
+          // Otherwise, just group by title
+          completeBooks.putIfAbsent(meta.title, () => []).add(file);
+        }
+      }
+    }
+    
+    return completeBooks;
+  }
+
+  // Helper method to determine which metadata to use (file or online)
+  AudiobookMetadata _getPreferredMetadata(AudiobookFile file) {
+    // If file has both types of metadata
+    if (file.hasFileMetadata && file.hasMetadata) {
+      // Use file metadata if it's reasonably complete
+      if (_isFileMetadataComplete(file.fileMetadata!)) {
+        return file.fileMetadata!;
+      } else {
+        // Otherwise use online metadata
+        return file.metadata!;
+      }
+    }
+    
+    // If only one type is available, use whichever is available
+    return file.fileMetadata ?? file.metadata!;
+  }
+  
+  // Check if file metadata is complete enough to be preferred
+  bool _isFileMetadataComplete(AudiobookMetadata metadata) {
+    return metadata.title.isNotEmpty && 
+           metadata.authors.isNotEmpty &&
+           (metadata.series.isNotEmpty || 
+            metadata.description.isNotEmpty || 
+            metadata.publishedDate.isNotEmpty);
+  }
+  
+  // UPDATED METHOD: Get files needing metadata review (for Files view)
+  Future<List<AudiobookFile>> scanForFilesView(
+    String dirPath, 
+    {bool? recursive}
+  ) async {
+    List<AudiobookFile> incompleteFiles = [];
+    
+    // Get all audiobook files
+    List<AudiobookFile> allFiles = await scanDirectory(dirPath, recursive: recursive);
+    
+    // Extract metadata from all files (but don't do online matching yet)
+    print('LOG: Extracting metadata for ${allFiles.length} files');
+    for (var file in allFiles) {
+      await file.extractFileMetadata();
+    }
+    
+    // Filter for files needing metadata review
+    for (var file in allFiles) {
+      if (!file.hasCompleteMetadata) {
+        incompleteFiles.add(file);
+      }
+    }
+    
+    return incompleteFiles;
+  }
+  
+  // NEW METHOD: Process pending files with online metadata
+  Future<int> processFilesWithOnlineMetadata(List<AudiobookFile> files) async {
+    if (metadataMatcher == null) return 0;
+    
+    int processedCount = 0;
+    
+    for (var file in files) {
+      if (!file.hasCompleteMetadata) {
+        final metadata = await metadataMatcher!.matchFile(file);
+        if (metadata != null) {
+          processedCount++;
+        }
+      }
+    }
+    
+    return processedCount;
+  }
+  
+  // Original method is still available for backward compatibility
+  Future<Map<String, List<AudiobookFile>>> scanAndGroupFiles(String dirPath, {bool? recursive}) async {
+    Map<String, List<AudiobookFile>> bookGroups = {};
+    
+    // First, scan for all audiobook files
+    List<AudiobookFile> allFiles = await scanDirectory(dirPath, recursive: recursive);
+    
+    // First extract file metadata
+    for (var file in allFiles) {
+      await file.extractFileMetadata();
+    }
+    
+    // If we have a metadata matcher, only try to match files with incomplete metadata
+    if (metadataMatcher != null) {
+      for (var file in allFiles) {
+        if (!file.hasCompleteMetadata) {
+          await metadataMatcher!.matchFile(file);
+        }
+      }
+    }
+    
+    // First try to group by metadata
+    Map<String, List<AudiobookFile>> metadataGroups = {};
+    for (var file in allFiles) {
+      if (file.hasMetadata || file.hasFileMetadata) {
+        // Use the preferred metadata for grouping
+        final meta = _getPreferredMetadata(file);
+        final key = meta.title;
+        metadataGroups.putIfAbsent(key, () => []).add(file);
+      }
+    }
+    
+    // Add all metadata-grouped files to the result
+    bookGroups.addAll(metadataGroups);
+    
+    // Get the remaining files (without metadata)
+    List<AudiobookFile> remainingFiles = allFiles.where(
+      (file) => !metadataGroups.values.any((list) => list.contains(file))
+    ).toList();
+    
+    // Group remaining files by directory
+    Map<String, List<AudiobookFile>> filesByDir = {};
+    for (var file in remainingFiles) {
+      String dir = path_util.dirname(file.path);
+      filesByDir.putIfAbsent(dir, () => []).add(file);
+    }
+    
+    // Process each directory
+    filesByDir.forEach((dir, files) {
+      // Skip if there's only one file in the directory
+      if (files.length <= 1) {
+        String baseName = path_util.basenameWithoutExtension(files.first.path);
+        bookGroups[baseName] = files;
+        return;
+      }
+      
+      // Get directory name
+      final dirName = path_util.basename(dir);
+      
+      // Check if these are likely chapters of the same book
+      bool areChapters = files.any((file) => 
+          isLikelyChapter(path_util.basename(file.path)));
+      
+      if (areChapters) {
+        // These files are probably chapters of the same book
+        List<String> filePaths = files.map((f) => f.path).toList();
+        
+        // Try to extract title from directory name, falling back to common elements in filenames
+        String bookTitle = extractBookTitleFromChapters(filePaths, dirName);
+        
+        // Sort files by chapter number
+        files.sort((a, b) {
+          int? aNum = extractChapterNumber(path_util.basename(a.path));
+          int? bNum = extractChapterNumber(path_util.basename(b.path));
+          
+          if (aNum == null && bNum == null) return 0;
+          if (aNum == null) return -1;
+          if (bNum == null) return 1;
+          return aNum.compareTo(bNum);
+        });
+        
+        bookGroups[bookTitle] = files;
+        print('LOG: Grouped ${files.length} files as chapters of book: "$bookTitle"');
+      } else {
+        // Treat each file as a separate audiobook
+        for (var file in files) {
+          String baseName = path_util.basenameWithoutExtension(file.path);
+          bookGroups[baseName] = [file];
+        }
+      }
+    });
+    
+    return bookGroups;
+  }
+  
   // Extract the common book title from a set of chapter filenames
   String extractBookTitleFromChapters(List<String> filenames, String directoryName) {
     if (filenames.isEmpty) return '';
@@ -136,7 +341,13 @@ class AudiobookScanner {
     if (directoryName.isNotEmpty) {
       // Remove common prefixes (like numbers) from the folder name
       String cleanedDirName = directoryName;
-      for (var pattern in _folderPrefixesToRemove) {
+      // Common prefixes to remove for cleaner directory names
+      final folderPrefixesToRemove = [
+        RegExp(r'^[!_\d]+\s*[-_\s]+', caseSensitive: false), // Numbered or marked folders
+        RegExp(r'^(?:The|A)\s+', caseSensitive: false), // Articles
+      ];
+      
+      for (var pattern in folderPrefixesToRemove) {
         cleanedDirName = cleanedDirName.replaceFirst(pattern, '');
       }
       
@@ -181,86 +392,7 @@ class AudiobookScanner {
     return baseTitle;
   }
   
-  // Scan a directory for audiobook files and group them by book/collection
-  Future<Map<String, List<AudiobookFile>>> scanAndGroupFiles(String dirPath, {bool? recursive}) async {
-    Map<String, List<AudiobookFile>> bookGroups = {};
-    
-    // First, scan for all audiobook files
-    List<AudiobookFile> allFiles = await scanDirectory(dirPath, recursive: recursive);
-    
-    // Group files by directory first
-    Map<String, List<AudiobookFile>> filesByDir = {};
-    for (var file in allFiles) {
-      String dir = path_util.dirname(file.path);
-      filesByDir.putIfAbsent(dir, () => []).add(file);
-    }
-    
-    // Process each directory
-    filesByDir.forEach((dir, files) {
-      // Skip if there's only one file in the directory
-      if (files.length <= 1) {
-        String baseName = path_util.basenameWithoutExtension(files.first.path);
-        bookGroups[baseName] = files;
-        return;
-      }
-      
-      // Get directory name
-      final dirName = path_util.basename(dir);
-      
-      // Check if these are likely chapters of the same book
-      bool areChapters = files.any((file) => 
-          isLikelyChapter(path_util.basename(file.path)));
-      
-      if (areChapters) {
-        // These files are probably chapters of the same book
-        List<String> filePaths = files.map((f) => f.path).toList();
-        
-        // Try to extract title from directory name, falling back to common elements in filenames
-        String bookTitle = extractBookTitleFromChapters(filePaths, dirName);
-        
-        // Sort files by chapter number
-        files.sort((a, b) {
-          int? aNum = extractChapterNumber(path_util.basename(a.path));
-          int? bNum = extractChapterNumber(path_util.basename(b.path));
-          
-          if (aNum == null && bNum == null) return 0;
-          if (aNum == null) return -1;
-          if (bNum == null) return 1;
-          return aNum.compareTo(bNum);
-        });
-        
-        bookGroups[bookTitle] = files;
-        print('LOG: Grouped ${files.length} files as chapters of book: "$bookTitle"');
-      } else {
-        // Check if the directory name seems to be a book collection/series
-        if (_isLikelySeriesDirectory(dirName)) {
-          // Use the directory name as the book title for all files
-          for (var file in files) {
-            String baseName = path_util.basenameWithoutExtension(file.path);
-            
-            // Create an entry for each book in the collection
-            bookGroups[baseName] = [file];
-          }
-        } else {
-          // Treat each file as a separate audiobook
-          for (var file in files) {
-            String baseName = path_util.basenameWithoutExtension(file.path);
-            bookGroups[baseName] = [file];
-          }
-        }
-      }
-    });
-    
-    return bookGroups;
-  }
-  
-  // Check if a directory name suggests it contains a book series/collection
-  bool _isLikelySeriesDirectory(String dirName) {
-    return RegExp(r'(?:series|collection|omnibus|trilogy|saga|books|complete)', caseSensitive: false).hasMatch(dirName) ||
-           RegExp(r'(?:Book|Volume|Part)\s+\d+', caseSensitive: false).hasMatch(dirName);
-  }
-  
-  // Scan a directory for audiobook files (returns a Future)
+  // Scan a directory for audiobook files
   Future<List<AudiobookFile>> scanDirectory(String dirPath, {bool? recursive}) async {
     List<AudiobookFile> results = [];
     
@@ -287,13 +419,6 @@ class AudiobookScanner {
       // Save the last scanned directory if preferences are available
       if (_userPreferences != null) {
         await _userPreferences!.saveLastScanDirectory(dirPath);
-      }
-      
-      // Function to check if a file is in an excluded directory
-      bool isInExcludedDirectory(String path) {
-        final parentDir = path_util.basename(path_util.dirname(path));
-        return _excludedDirectories.any((excluded) => 
-            parentDir.toLowerCase() == excluded.toLowerCase());
       }
       
       if (shouldRecurse) {
@@ -331,70 +456,6 @@ class AudiobookScanner {
     }
     
     return results;
-  }
-  
-  // Generate a directory listing for debugging
-  Future<String> generateDirectoryListing(String dirPath, {bool? recursive}) async {
-    StringBuffer buffer = StringBuffer();
-    try {
-      final dir = Directory(dirPath);
-      if (!await dir.exists()) {
-        return 'Directory does not exist: $dirPath';
-      }
-      
-      bool shouldRecurse = recursive ?? true;
-      buffer.writeln('Directory listing for: $dirPath (recursive: $shouldRecurse)\n');
-      
-      // Use a local recursive function to print the directory tree
-      Future<void> listDir(Directory dir, String indent) async {
-        List<FileSystemEntity> entities = await dir.list().toList();
-        
-        // Sort: directories first, then files
-        entities.sort((a, b) {
-          bool aIsDir = a is Directory;
-          bool bIsDir = b is Directory;
-          if (aIsDir && !bIsDir) return -1;
-          if (!aIsDir && bIsDir) return 1;
-          return path_util.basename(a.path).compareTo(path_util.basename(b.path));
-        });
-        
-        for (var entity in entities) {
-          String name = path_util.basename(entity.path);
-          
-          if (entity is Directory) {
-            // Check if this is an excluded directory
-            if (_shouldExcludeDirectory(entity.path)) {
-              buffer.writeln('$indent📁 $name (Excluded)');
-              continue;
-            }
-            
-            buffer.writeln('$indent📁 $name');
-            if (shouldRecurse) {
-              await listDir(entity, '$indent  ');
-            }
-          } else if (entity is File) {
-            try {
-              if (isAudiobookFile(entity.path)) {
-                String size = (await entity.length() / (1024 * 1024)).toStringAsFixed(2) + ' MB';
-                String modified = entity.lastModifiedSync().toString().split('.')[0];
-                buffer.writeln('$indent🔊 $name ($size, $modified)');
-              } else {
-                buffer.writeln('$indent📄 $name');
-              }
-            } catch (e) {
-              buffer.writeln('$indent⚠️ $name (Error: $e)');
-            }
-          }
-        }
-      }
-      
-      await listDir(dir, '');
-      
-    } catch (e) {
-      buffer.writeln('Error generating directory listing: $e');
-    }
-    
-    return buffer.toString();
   }
   
   // Scan a directory and return a stream of audiobook files
@@ -449,54 +510,5 @@ class AudiobookScanner {
     } catch (e) {
       print('ERROR: Error scanning directory stream: $e');
     }
-  }
-  
-  // Get a count of audiobook files in a directory (faster than scanning for full details)
-  Future<int> countAudiobooksInDirectory(String dirPath, {bool? recursive}) async {
-    int count = 0;
-    
-    try {
-      final dir = Directory(dirPath);
-      if (!await dir.exists()) {
-        return count;
-      }
-      
-      // Skip this directory if it's in the excluded list
-      if (_shouldExcludeDirectory(dirPath)) {
-        return 0;
-      }
-      
-      // Determine if we should recurse
-      bool shouldRecurse = recursive ?? true;
-      if (recursive == null && _userPreferences != null) {
-        shouldRecurse = await _userPreferences!.getIncludeSubfolders();
-      }
-      
-      if (shouldRecurse) {
-        await for (FileSystemEntity entity in dir.list(recursive: false)) {
-          if (entity is Directory) {
-            // Skip excluded directories
-            if (_shouldExcludeDirectory(entity.path)) {
-              continue;
-            }
-            
-            // Count files in subdirectory
-            count += await countAudiobooksInDirectory(entity.path, recursive: true);
-          } else if (entity is File && isAudiobookFile(entity.path)) {
-            count++;
-          }
-        }
-      } else {
-        await for (FileSystemEntity entity in dir.list(recursive: false)) {
-          if (entity is File && isAudiobookFile(entity.path)) {
-            count++;
-          }
-        }
-      }
-    } catch (e) {
-      print('ERROR: Error counting audiobooks in directory: $e');
-    }
-    
-    return count;
   }
 }

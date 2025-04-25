@@ -1,20 +1,40 @@
+// File: lib/ui/widgets/manual_metadata_search_dialog.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
-import 'package:audiobook_organizer/services/providers/google_books_provider.dart';
-import 'package:audiobook_organizer/services/providers/open_library_provider.dart';
+import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 
 class ManualMetadataSearchDialog extends StatefulWidget {
   final String initialQuery;
+  final List<MetadataProvider> providers;
   final Function(AudiobookMetadata) onMetadataSelected;
   
   const ManualMetadataSearchDialog({
     Key? key,
     required this.initialQuery,
+    required this.providers,
     required this.onMetadataSelected,
   }) : super(key: key);
+
+  /// Static method to show the dialog and return the selected metadata
+  static Future<AudiobookMetadata?> show({
+    required BuildContext context,
+    required String initialQuery,
+    required List<MetadataProvider> providers,
+  }) async {
+    return showDialog<AudiobookMetadata>(
+      context: context,
+      builder: (context) => ManualMetadataSearchDialog(
+        initialQuery: initialQuery,
+        providers: providers,
+        onMetadataSelected: (metadata) {
+          Navigator.of(context).pop(metadata);
+        },
+      ),
+    );
+  }
 
   @override
   State<ManualMetadataSearchDialog> createState() => _ManualMetadataSearchDialogState();
@@ -24,13 +44,16 @@ class _ManualMetadataSearchDialogState extends State<ManualMetadataSearchDialog>
   final TextEditingController _searchController = TextEditingController();
   List<AudiobookMetadata> _searchResults = [];
   bool _isSearching = false;
-  String _activeProvider = 'Google Books';
+  String _activeProviderIndex = '0'; // Store the index as string for ChoiceChip
   
   @override
   void initState() {
     super.initState();
     _searchController.text = widget.initialQuery;
-    _performSearch();
+    // Start initial search with slight delay to allow dialog to show
+    Future.delayed(const Duration(milliseconds: 300), () {
+      _performSearch();
+    });
   }
   
   @override
@@ -49,24 +72,26 @@ class _ManualMetadataSearchDialogState extends State<ManualMetadataSearchDialog>
     });
     
     try {
-      if (_activeProvider == 'Google Books') {
-        final provider = Provider.of<GoogleBooksProvider>(context, listen: false);
-        _searchResults = await provider.search(query);
-      } else {
-        final provider = Provider.of<OpenLibraryProvider>(context, listen: false);
-        _searchResults = await provider.search(query);
+      final providerIndex = int.parse(_activeProviderIndex);
+      if (providerIndex < widget.providers.length) {
+        final activeProvider = widget.providers[providerIndex];
+        _searchResults = await activeProvider.search(query);
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error searching: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error searching: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
-      setState(() {
-        _isSearching = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isSearching = false;
+        });
+      }
     }
   }
   
@@ -112,37 +137,32 @@ class _ManualMetadataSearchDialogState extends State<ManualMetadataSearchDialog>
               ],
             ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                const Text('Provider:'),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('Google Books'),
-                  selected: _activeProvider == 'Google Books',
-                  onSelected: (selected) {
-                    if (selected) {
-                      setState(() {
-                        _activeProvider = 'Google Books';
-                      });
-                      _performSearch();
-                    }
-                  },
-                ),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('Open Library'),
-                  selected: _activeProvider == 'Open Library',
-                  onSelected: (selected) {
-                    if (selected) {
-                      setState(() {
-                        _activeProvider = 'Open Library';
-                      });
-                      _performSearch();
-                    }
-                  },
-                ),
-              ],
-            ),
+            if (widget.providers.length > 1) ...[
+              Row(
+                children: [
+                  const Text('Provider:'),
+                  const SizedBox(width: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: List.generate(
+                      widget.providers.length,
+                      (index) => ChoiceChip(
+                        label: Text(widget.providers[index].runtimeType.toString().replaceAll('Provider', '')),
+                        selected: _activeProviderIndex == index.toString(),
+                        onSelected: (selected) {
+                          if (selected) {
+                            setState(() {
+                              _activeProviderIndex = index.toString();
+                            });
+                            _performSearch();
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 16),
             Expanded(
               child: _isSearching
@@ -180,7 +200,6 @@ class _ManualMetadataSearchDialogState extends State<ManualMetadataSearchDialog>
       margin: const EdgeInsets.only(bottom: 8),
       child: InkWell(
         onTap: () {
-          Navigator.of(context).pop();
           widget.onMetadataSelected(metadata);
         },
         child: Padding(
@@ -278,7 +297,6 @@ class _ManualMetadataSearchDialogState extends State<ManualMetadataSearchDialog>
               IconButton(
                 icon: const Icon(Icons.check_circle_outline),
                 onPressed: () {
-                  Navigator.of(context).pop();
                   widget.onMetadataSelected(metadata);
                 },
                 tooltip: 'Select this metadata',

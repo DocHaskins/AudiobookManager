@@ -1,3 +1,4 @@
+// File: lib/services/metadata_matcher.dart
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
@@ -10,16 +11,29 @@ class MetadataMatcher {
   final MetadataCache cache;
   
   // Lowered threshold for match acceptance
-  final double matchThreshold = 0.15; // Was 0.5 before, which was too high
+  final double matchThreshold = 0.15;
   
   MetadataMatcher({
     required this.providers, 
     required this.cache
   });
   
-  // Update the matchFile method to use file metadata as primary source
+  // Match a file with metadata - prioritizing embedded file metadata
   Future<AudiobookMetadata?> matchFile(AudiobookFile file) async {
-    // Step 1: Check if we have cached metadata for this file
+    // Step 1: Always try to extract metadata from the file first
+    final fileMetadata = await file.extractFileMetadata();
+    
+    // Step 2: If file metadata is comprehensive, use it directly
+    if (fileMetadata != null && _isComprehensiveMetadata(fileMetadata)) {
+      print('LOG: Using comprehensive file metadata for: ${file.filename}');
+      
+      // Save to cache for future use
+      await cache.saveMetadataForFile(file.path, fileMetadata);
+      file.metadata = fileMetadata;
+      return fileMetadata;
+    }
+    
+    // Step 3: Check cache for this specific file
     final cachedMetadata = await cache.getMetadataForFile(file.path);
     if (cachedMetadata != null) {
       print('LOG: Found cached metadata for ${file.filename}');
@@ -27,24 +41,10 @@ class MetadataMatcher {
       return cachedMetadata;
     }
     
-    // Step 2: Try to extract metadata directly from the file itself
-    final fileMetadata = await file.extractFileMetadata();
-    
+    // Step 4: If we have partial file metadata, use it to create a better search query
+    String searchQuery = '';
     if (fileMetadata != null) {
-      print('LOG: Found metadata in the file itself for: ${file.filename}');
-      
-      // Save this metadata to the cache
-      await cache.saveMetadataForFile(file.path, fileMetadata);
-      
-      // If the extracted metadata has comprehensive info, use it directly
-      if (_isComprehensiveMetadata(fileMetadata)) {
-        print('LOG: File metadata is comprehensive, using it directly');
-        file.metadata = fileMetadata;
-        return fileMetadata;
-      }
-      
-      // If file metadata exists but is incomplete, use it to create a better search query
-      String searchQuery = _createSearchQueryFromMetadata(fileMetadata);
+      searchQuery = _createSearchQueryFromMetadata(fileMetadata);
       
       if (searchQuery.isNotEmpty) {
         print('LOG: Using file metadata to create search query: "$searchQuery"');
@@ -64,48 +64,38 @@ class MetadataMatcher {
         }
         
         // Use the enhanced search query to find online metadata
-        for (final provider in providers) {
-          try {
-            print('LOG: Trying provider: ${provider.runtimeType} with metadata-based query');
-            final results = await provider.search(searchQuery);
-            
-            if (results.isNotEmpty) {
-              print('LOG: Found ${results.length} results using metadata-based query');
-              
-              // Find the best match
-              AudiobookMetadata? bestMatch = _findBestMatch(results, searchQuery);
-              if (bestMatch != null) {
-                // Merge with the file metadata to get the best of both worlds
-                final mergedMetadata = _mergeMetadata(fileMetadata, bestMatch);
-                
-                // Cache the result
-                await cache.saveMetadata(searchQuery, mergedMetadata);
-                await cache.saveMetadataForFile(file.path, mergedMetadata);
-                file.metadata = mergedMetadata;
-                return mergedMetadata;
-              }
-            }
-          } catch (e) {
-            print('ERROR: Error matching with provider ${provider.runtimeType}: $e');
-          }
+        AudiobookMetadata? onlineMetadata = await _searchOnlineProviders(searchQuery);
+        
+        if (onlineMetadata != null) {
+          // Merge with the file metadata to get the best of both worlds
+          final mergedMetadata = _mergeMetadata(fileMetadata, onlineMetadata);
+          
+          // Cache the result
+          await cache.saveMetadata(searchQuery, mergedMetadata);
+          await cache.saveMetadataForFile(file.path, mergedMetadata);
+          file.metadata = mergedMetadata;
+          return mergedMetadata;
         }
       }
     }
     
-    // Step 3: If no file metadata or no match was found using file metadata,
-    // fall back to the original folder and filename-based approach
-    
-    // Try with folder name first if file is in a dedicated folder
-    final folderName = _extractFolderName(file.path);
-    String searchQuery = folderName.isNotEmpty ? folderName : file.generateSearchQuery();
+    // Step 5: Fall back to folder/filename-based searching if no file metadata available
+    // or if file metadata search was unsuccessful
+    searchQuery = file.generateSearchQuery();
     
     if (searchQuery.isEmpty) {
       print('LOG: Empty search query for file: ${file.path}');
+      
+      // If we at least have file metadata (even if incomplete), use that
+      if (fileMetadata != null) {
+        file.metadata = fileMetadata;
+        return fileMetadata;
+      }
+      
       return null;
     }
     
     print('LOG: Searching for metadata with query: "$searchQuery" for file: ${file.filename}');
-    print('LOG: Using folder name: ${folderName.isNotEmpty ? "Yes - $folderName" : "No"}');
     
     // Check if we have cached results for this query
     final cachedQueryResult = await cache.getMetadata(searchQuery);
@@ -126,75 +116,26 @@ class MetadataMatcher {
       return cachedQueryResult;
     }
     
-    // Try each provider in order
-    for (final provider in providers) {
-      try {
-        print('LOG: Trying provider: ${provider.runtimeType}');
-        final results = await provider.search(searchQuery);
+    // Try to find online metadata
+    AudiobookMetadata? onlineMetadata = await _searchOnlineProviders(searchQuery);
+    
+    if (onlineMetadata != null) {
+      // If we have file metadata, merge it with the online metadata
+      if (fileMetadata != null) {
+        final mergedMetadata = _mergeMetadata(fileMetadata, onlineMetadata);
         
-        if (results.isEmpty) {
-          print('LOG: No results from ${provider.runtimeType} for query: "$searchQuery"');
-          
-          // If we used folder name first and got no results, try with filename instead
-          if (folderName.isNotEmpty && folderName != file.generateSearchQuery()) {
-            final filenameQuery = file.generateSearchQuery();
-            print('LOG: Trying alternate query with filename: "$filenameQuery"');
-            final altResults = await provider.search(filenameQuery);
-            if (altResults.isNotEmpty) {
-              print('LOG: Found ${altResults.length} results with alternate query');
-              // Process these alternate results
-              final altMatch = _findBestMatch(altResults, filenameQuery);
-              if (altMatch != null) {
-                // If we have file metadata, merge it with the online metadata
-                if (fileMetadata != null) {
-                  final mergedMetadata = _mergeMetadata(fileMetadata, altMatch);
-                  
-                  // Cache the result
-                  await cache.saveMetadata(filenameQuery, mergedMetadata);
-                  await cache.saveMetadataForFile(file.path, mergedMetadata);
-                  file.metadata = mergedMetadata;
-                  return mergedMetadata;
-                }
-                
-                // Cache the result
-                await cache.saveMetadata(filenameQuery, altMatch);
-                await cache.saveMetadataForFile(file.path, altMatch);
-                file.metadata = altMatch;
-                return altMatch;
-              }
-            } else {
-              print('LOG: No results from ${provider.runtimeType} for alternate query either');
-            }
-          }
-          
-          continue;
-        }
-        
-        print('LOG: Found ${results.length} results from ${provider.runtimeType}');
-        
-        // Find the best match
-        AudiobookMetadata? bestMatch = _findBestMatch(results, searchQuery);
-        if (bestMatch != null) {
-          // If we have file metadata, merge it with the online metadata
-          if (fileMetadata != null) {
-            final mergedMetadata = _mergeMetadata(fileMetadata, bestMatch);
-            
-            // Cache the result
-            await cache.saveMetadata(searchQuery, mergedMetadata);
-            await cache.saveMetadataForFile(file.path, mergedMetadata);
-            file.metadata = mergedMetadata;
-            return mergedMetadata;
-          }
-          
-          // Cache the result
-          await cache.saveMetadata(searchQuery, bestMatch);
-          await cache.saveMetadataForFile(file.path, bestMatch);
-          file.metadata = bestMatch;
-          return bestMatch;
-        }
-      } catch (e) {
-        print('ERROR: Error matching with provider ${provider.runtimeType}: $e');
+        // Cache the result
+        await cache.saveMetadata(searchQuery, mergedMetadata);
+        await cache.saveMetadataForFile(file.path, mergedMetadata);
+        file.metadata = mergedMetadata;
+        return mergedMetadata;
       }
+      
+      // Cache the result
+      await cache.saveMetadata(searchQuery, onlineMetadata);
+      await cache.saveMetadataForFile(file.path, onlineMetadata);
+      file.metadata = onlineMetadata;
+      return onlineMetadata;
     }
     
     print('LOG: No suitable metadata match found for file: ${file.filename}');
@@ -204,6 +145,33 @@ class MetadataMatcher {
       print('LOG: Using file metadata as fallback since no online match was found');
       file.metadata = fileMetadata;
       return fileMetadata;
+    }
+    
+    return null;
+  }
+  
+  // Search all online providers with a query
+  Future<AudiobookMetadata?> _searchOnlineProviders(String searchQuery) async {
+    for (final provider in providers) {
+      try {
+        print('LOG: Trying provider: ${provider.runtimeType}');
+        final results = await provider.search(searchQuery);
+        
+        if (results.isEmpty) {
+          print('LOG: No results from ${provider.runtimeType} for query: "$searchQuery"');
+          continue;
+        }
+        
+        print('LOG: Found ${results.length} results from ${provider.runtimeType}');
+        
+        // Find the best match
+        AudiobookMetadata? bestMatch = _findBestMatch(results, searchQuery);
+        if (bestMatch != null) {
+          return bestMatch;
+        }
+      } catch (e) {
+        print('ERROR: Error matching with provider ${provider.runtimeType}: $e');
+      }
     }
     
     return null;
@@ -253,13 +221,13 @@ class MetadataMatcher {
       publisher: onlineMetadata.publisher.isNotEmpty ? onlineMetadata.publisher : fileMetadata.publisher,
       publishedDate: onlineMetadata.publishedDate.isNotEmpty ? onlineMetadata.publishedDate : fileMetadata.publishedDate,
       categories: onlineMetadata.categories.isNotEmpty ? onlineMetadata.categories : fileMetadata.categories,
-      averageRating: onlineMetadata.averageRating > 0 ? onlineMetadata.averageRating : 0.0,
-      ratingsCount: onlineMetadata.ratingsCount > 0 ? onlineMetadata.ratingsCount : 0,
+      averageRating: onlineMetadata.averageRating > 0 ? onlineMetadata.averageRating : fileMetadata.averageRating,
+      ratingsCount: onlineMetadata.ratingsCount > 0 ? onlineMetadata.ratingsCount : fileMetadata.ratingsCount,
       thumbnailUrl: onlineMetadata.thumbnailUrl.isNotEmpty ? onlineMetadata.thumbnailUrl : fileMetadata.thumbnailUrl,
       language: onlineMetadata.language.isNotEmpty ? onlineMetadata.language : fileMetadata.language,
       series: onlineMetadata.series.isNotEmpty ? onlineMetadata.series : fileMetadata.series,
       seriesPosition: onlineMetadata.seriesPosition.isNotEmpty ? onlineMetadata.seriesPosition : fileMetadata.seriesPosition,
-      provider: onlineMetadata.provider.isNotEmpty ? onlineMetadata.provider : fileMetadata.provider,
+      provider: 'Combined (${onlineMetadata.provider} + File Metadata)',
     );
   }
   
@@ -290,53 +258,6 @@ class MetadataMatcher {
     }
     
     return null;
-  }
-  
-  // Extract a meaningful folder name from the file path
-  String _extractFolderName(String filePath) {
-    try {
-      final folderPath = path_util.dirname(filePath);
-      final folders = folderPath.split(path_util.separator);
-      
-      // If we're in a subfolder at least 2 levels deep, use the immediate parent folder
-      if (folders.length > 1) {
-        // Clean the folder name of common patterns we don't want
-        final folderName = folders.last;
-        
-        // Skip generic folder names
-        if (['audio', 'audiobook', 'cd', 'mp3', 'disk', 'disc'].contains(folderName.toLowerCase())) {
-          // Try the parent folder instead if the immediate folder is generic
-          if (folders.length > 2) {
-            return cleanFolderName(folders[folders.length - 2]);
-          }
-          return '';
-        }
-        
-        return cleanFolderName(folderName);
-      }
-    } catch (e) {
-      print('LOG: Error extracting folder name: $e');
-    }
-    return '';
-  }
-  
-  // Clean a folder name for better searching
-  String cleanFolderName(String folderName) {
-    // For folder names like "Book 1 - Series Name", extract "Series Name"
-    String cleaned = folderName
-      .replaceAll(RegExp(r'^(?:Book|Volume|Vol|Part)\s*\d+\s*[\-\:]\s*', caseSensitive: false), '')
-      .replaceAll(RegExp(r'^(?:\d+|\!)[\s\-\_]*'), '') // Remove numbers and exclamation points at start
-      .replaceAll(RegExp(r'(?:Audiobook|Unabridged|Complete|Series|Collection)$', caseSensitive: false), '')
-      .replaceAll(RegExp(r'[({\[\]})]\s*\d*\s*$'), ''); // Remove any trailing brackets with numbers
-      
-    // Clean the filename for better searching
-    cleaned = cleaned
-      .replaceAll(RegExp(r'\bAudiobook\b|\bUnabridged\b'), '')
-      .replaceAll(RegExp(r'[_\.\-\(\)\[\]]'), ' ')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
-    
-    return cleaned;
   }
   
   // Calculate a match score between a search query and metadata

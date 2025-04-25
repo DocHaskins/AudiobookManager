@@ -10,8 +10,8 @@ class AudiobookFile {
   final String extension;
   final int size;
   final DateTime lastModified;
-  AudiobookMetadata? metadata;
-  AudiobookMetadata? fileMetadata; // New field to store metadata extracted from the file itself
+  AudiobookMetadata? metadata;      // Online or combined metadata
+  AudiobookMetadata? fileMetadata;  // Metadata extracted directly from the file
   bool _fileMetadataAttempted = false; // Flag to track if we've tried extracting file metadata
 
   AudiobookFile({
@@ -40,27 +40,87 @@ class AudiobookFile {
       lastModified: fileLastModified,
     );
   }
+  
+  // Basic getters
   bool get hasMetadata => metadata != null;
+  bool get hasFileMetadata => fileMetadata != null;
+  bool get hasAnyMetadata => metadata != null || fileMetadata != null;
   String get fullPath => path;
   
-  // Update getters to use file metadata if available
-  String get displayName => 
-      metadata?.title ?? 
-      fileMetadata?.title ?? 
-      _cleanFilenameForDisplay();
+  // Display name based on available metadata
+  String get displayName {
+    // Use online metadata first if available
+    if (metadata?.title.isNotEmpty == true) {
+      return metadata!.title;
+    }
+    // Fall back to file metadata
+    if (fileMetadata?.title.isNotEmpty == true) {
+      return fileMetadata!.title;
+    }
+    // Last resort: clean the filename
+    return _cleanFilenameForDisplay();
+  }
   
-  String get author => 
-      metadata?.authors.isNotEmpty ?? false ? metadata!.authors.first :
-      fileMetadata?.authors.isNotEmpty ?? false ? fileMetadata!.authors.first :
-      _extractAuthorFromFilename();
-
-  // Method to check if file has any metadata
-  bool get hasAnyMetadata => metadata != null || fileMetadata != null;
+  // Author based on available metadata
+  String get author {
+    // Use online metadata first
+    if (metadata?.authors.isNotEmpty == true) {
+      return metadata!.authors.first;
+    }
+    // Fall back to file metadata
+    if (fileMetadata?.authors.isNotEmpty == true) {
+      return fileMetadata!.authors.first;
+    }
+    // Last resort: try to extract from filename
+    return _extractAuthorFromFilename();
+  }
   
-  // Check if we specifically have file metadata
-  bool get hasFileMetadata => fileMetadata != null;
+  // Series based on available metadata
+  String get series {
+    // Use online metadata first
+    if (metadata?.series.isNotEmpty == true) {
+      return metadata!.series;
+    }
+    // Fall back to file metadata
+    if (fileMetadata?.series.isNotEmpty == true) {
+      return fileMetadata!.series;
+    }
+    return '';
+  }
+  
+  // Series position based on available metadata
+  String get seriesPosition {
+    // Use online metadata first
+    if (metadata?.seriesPosition.isNotEmpty == true) {
+      return metadata!.seriesPosition;
+    }
+    // Fall back to file metadata
+    if (fileMetadata?.seriesPosition.isNotEmpty == true) {
+      return fileMetadata!.seriesPosition;
+    }
+    return '';
+  }
+  
+  // Check if metadata is complete enough for library view
+  bool get hasCompleteMetadata {
+    // Get the most complete metadata
+    final metaToCheck = metadata ?? fileMetadata;
+    if (metaToCheck == null) return false;
+    
+    // Check required fields
+    return metaToCheck.title.isNotEmpty && 
+           metaToCheck.authors.isNotEmpty &&
+           (metaToCheck.series.isNotEmpty || 
+            metaToCheck.description.isNotEmpty || 
+            metaToCheck.publishedDate.isNotEmpty);
+  }
+  
+  // Identify files that need metadata review
+  bool get needsMetadataReview {
+    return !hasCompleteMetadata;
+  }
 
-  // New method to extract metadata from the file
+  // Extract metadata from the file
   Future<AudiobookMetadata?> extractFileMetadata() async {
     // If we already have file metadata or tried to extract it before, return what we have
     if (_fileMetadataAttempted) return fileMetadata;
@@ -84,6 +144,30 @@ class AudiobookFile {
     } catch (e) {
       print('ERROR: Error extracting file metadata: $e');
       return null;
+    }
+  }
+  
+  // Write metadata back to the file
+  Future<bool> writeMetadataToFile(AudiobookMetadata metadataToWrite) async {
+    try {
+      final extractor = AudioMetadataExtractor();
+      final success = await extractor.writeMetadataToFile(path, metadataToWrite);
+      
+      if (success) {
+        // Update our own metadata references
+        fileMetadata = metadataToWrite;
+        if (metadata == null) {
+          metadata = metadataToWrite;
+        }
+        print('LOG: Successfully wrote metadata to file: $path');
+      } else {
+        print('LOG: Failed to write metadata to file: $path');
+      }
+      
+      return success;
+    } catch (e) {
+      print('ERROR: Error writing metadata to file: $e');
+      return false;
     }
   }
 
@@ -277,6 +361,7 @@ class AudiobookFile {
     };
   }
 
+  // Generate a search query for online metadata
   String generateSearchQuery() {
     // First try to use file metadata if available
     if (fileMetadata != null) {
