@@ -1,0 +1,39 @@
+name: audiobook_organizer
+description: An audiobook organization tool for Windows
+version: 1.0.0+1
+
+environment:
+  sdk: ">=2.19.0 <3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.5
+  http: ^0.13.5
+  path: ^1.8.3
+  id3: ^1.0.2
+  shared_preferences: ^2.1.1
+  provider: ^6.0.5
+  path_provider: ^2.0.15
+  file_selector: ^1.0.2
+  flutter_svg: ^2.0.5
+  cached_network_image: ^3.2.3
+  sqflite: ^2.2.8+4
+  sqflite_common_ffi: ^2.2.5
+  fuzzy: ^0.4.0-nullsafety.0
+  window_size:
+    git:
+      url: https://github.com/google/flutter-desktop-embedding.git
+      path: plugins/window_size
+  url_launcher: ^6.3.1
+  
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.1
+
+flutter:
+  uses-material-design: true
+  # assets:
+  #   - assets/images/
