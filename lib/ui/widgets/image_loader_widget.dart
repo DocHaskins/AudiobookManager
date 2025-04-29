@@ -12,7 +12,7 @@ class BookCoverImage extends StatelessWidget {
   final BoxFit fit;
   final Widget Function(BuildContext, String)? placeholder;
   final Widget Function(BuildContext, String, dynamic)? errorWidget;
-  final String bookTitle; // For debugging purposes
+  final String bookTitle;
   
   const BookCoverImage({
     Key? key,
@@ -26,7 +26,7 @@ class BookCoverImage extends StatelessWidget {
   }) : super(key: key);
   
   @override
-  Widget build(BuildContext context) {
+    Widget build(BuildContext context) {
     // Handle null or empty URLs
     if (imageUrl == null || imageUrl!.isEmpty) {
       developer.log('Missing cover image URL for book: $bookTitle');
@@ -37,23 +37,19 @@ class BookCoverImage extends StatelessWidget {
     developer.log('Loading cover image for "$bookTitle": $imageUrl');
     
     return CachedNetworkImage(
+      key: ValueKey(imageUrl), // Add key based on URL to force refresh
       imageUrl: imageUrl!,
       width: width,
       height: height,
       fit: fit,
       placeholder: placeholder ?? _defaultPlaceholder,
       errorWidget: errorWidget ?? _defaultErrorWidget,
-      // Add HTTP headers for potential API authentication
-      httpHeaders: const {
-        'User-Agent': 'AudiobookOrganizer/1.0',
-      },
-      // Enable debug mode to show more detailed logs
-      useOldImageOnUrlChange: true,
-      fadeOutDuration: const Duration(milliseconds: 300),
+      useOldImageOnUrlChange: false, // Force reload when URL changes
+      fadeOutDuration: const Duration(milliseconds: 100),
       fadeInDuration: const Duration(milliseconds: 300),
     );
   }
-  
+    
   // Default placeholder while loading
   Widget _defaultPlaceholder(BuildContext context, String url) {
     return Container(

@@ -3,19 +3,45 @@ import 'dart:io';
 import 'package:path/path.dart' as path_util;
 import 'package:id3/id3.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
+import 'package:audiobook_organizer/utils/filename_parser.dart';
+import 'package:audiobook_organizer/utils/string_extensions.dart';
 
+/// Service for extracting and writing metadata to audiobook files
 class AudioMetadataExtractor {
-  // Check if the file type is supported for metadata extraction
-  bool isSupported(String filePath) {
-    String ext = path_util.extension(filePath).toLowerCase();
-    return ['.mp3', '.m4a', '.m4b'].contains(ext);
+  // Supported file extensions
+  static final List<String> _supportedExtensions = ['.mp3', '.m4a', '.m4b'];
+  
+  // ID3 tag name mappings
+  static final Map<String, List<String>> _id3TagNames = {
+    'title': ['Title', 'TIT2', 'TT2'],
+    'artist': ['Artist', 'TPE1', 'TP1'],
+    'album': ['Album', 'TALB', 'TAL'],
+    'year': ['Year', 'TYER', 'TYE'],
+    'genre': ['Genre', 'TCON', 'TCO'],
+    'comment': ['Comment', 'COMM'],
+  };
+  
+  // Patterns for extracting series information from album field
+  static final RegExp _seriesBookPattern = RegExp(r'(.*?)(?:\s+Book\s+|#)(\d+)');
+  static final RegExp _seriesNamePattern = RegExp(r'(.*?)\s+Series');
+  
+  /// Constructor
+  AudioMetadataExtractor() {
+    Logger.debug('AudioMetadataExtractor initialized');
   }
   
-  // Extract metadata from the audio file
+  /// Check if the file type is supported for metadata extraction
+  bool isSupported(String filePath) {
+    String ext = path_util.extension(filePath).toLowerCase();
+    return _supportedExtensions.contains(ext);
+  }
+  
+  /// Extract metadata from the audio file
   Future<AudiobookMetadata?> extractMetadata(String filePath) async {
     try {
       if (!isSupported(filePath)) {
-        print('LOG: File format not supported for metadata extraction: $filePath');
+        Logger.warning('File format not supported for metadata extraction: $filePath');
         return null;
       }
       
@@ -29,22 +55,25 @@ class AudioMetadataExtractor {
       
       return null;
     } catch (e) {
-      print('ERROR: Failed to extract metadata from file: $e');
+      Logger.error('Failed to extract metadata from file', e);
       return null;
     }
   }
   
-  // Extract metadata from MP3 files
+  /// Extract metadata from MP3 files
   Future<AudiobookMetadata?> _extractMp3Metadata(String filePath) async {
     try {
       final file = File(filePath);
-      if (!await file.exists()) return null;
+      if (!await file.exists()) {
+        Logger.warning('File does not exist: $filePath');
+        return null;
+      }
       
       final bytes = await file.readAsBytes();
       final mp3Data = MP3Instance(bytes);
       
       if (!mp3Data.parseTagsSync()) {
-        print('LOG: No ID3 tags found in file: $filePath');
+        Logger.debug('No ID3 tags found in file: $filePath');
         return null;
       }
       
@@ -52,60 +81,32 @@ class AudioMetadataExtractor {
       final metaTags = mp3Data.getMetaTags() ?? {};
       
       // Extract basic metadata - IDs can vary depending on ID3 version
-      final title = _getTagValue(metaTags, ['Title', 'TIT2', 'TT2']);
-      final artist = _getTagValue(metaTags, ['Artist', 'TPE1', 'TP1']);
-      final album = _getTagValue(metaTags, ['Album', 'TALB', 'TAL']);
-      final year = _getTagValue(metaTags, ['Year', 'TYER', 'TYE']);
-      final genre = _getTagValue(metaTags, ['Genre', 'TCON', 'TCO']);
-      final comment = _getTagValue(metaTags, ['Comment', 'COMM']);
+      final title = _getTagValue(metaTags, _id3TagNames['title']!);
+      final artist = _getTagValue(metaTags, _id3TagNames['artist']!);
+      final album = _getTagValue(metaTags, _id3TagNames['album']!);
+      final year = _getTagValue(metaTags, _id3TagNames['year']!);
+      final genre = _getTagValue(metaTags, _id3TagNames['genre']!);
+      final comment = _getTagValue(metaTags, _id3TagNames['comment']!);
       
-      print('LOG: Extracted metadata from file: $filePath');
-      print('LOG: Title: $title, Artist: $artist, Album: $album');
+      Logger.log('Extracted metadata from file: $filePath');
+      Logger.debug('Title: $title, Artist: $artist, Album: $album');
       
       // Try to extract series information from the album field
-      String series = '';
-      String seriesPosition = '';
-      
-      if (album.isNotEmpty) {
-        // Look for patterns like "The Dresden Files Book 3" in album field
-        final seriesMatch = RegExp(r'(.*?)(?:\s+Book\s+|#)(\d+)').firstMatch(album);
-        if (seriesMatch != null) {
-          series = seriesMatch.group(1)?.trim() ?? '';
-          seriesPosition = seriesMatch.group(2) ?? '';
-        } else {
-          // Look for "Series Name" pattern
-          final seriesNameMatch = RegExp(r'(.*?)\s+Series').firstMatch(album);
-          if (seriesNameMatch != null) {
-            series = seriesNameMatch.group(1)?.trim() ?? '';
-          } else {
-            // If no pattern matched, just use the album as series name
-            series = album;
-          }
-        }
-      }
+      final seriesInfo = _extractSeriesInfo(album);
+      String series = seriesInfo['series'] ?? '';
+      String seriesPosition = seriesInfo['seriesPosition'] ?? '';
       
       // Create a list of authors by splitting the artist field if it contains multiple authors
-      List<String> authors = [];
-      if (artist.isNotEmpty) {
-        authors = artist.split(',')
-                       .map((a) => a.trim())
-                       .where((a) => a.isNotEmpty)
-                       .toList();
-      }
-      
-      // If authors list is empty but we have an artist, use that
-      if (authors.isEmpty && artist.isNotEmpty) {
-        authors = [artist];
-      }
+      List<String> authors = _extractAuthors(artist);
       
       return AudiobookMetadata(
         id: path_util.basename(filePath), // Use filename as ID for local metadata
-        title: title.isNotEmpty ? title : path_util.basenameWithoutExtension(filePath),
+        title: title.isNotEmptyOrNull ? title! : path_util.basenameWithoutExtension(filePath),
         authors: authors,
-        description: comment,
+        description: comment.orEmpty,
         publisher: '',
-        publishedDate: year,
-        categories: genre.isNotEmpty ? [genre] : [],
+        publishedDate: year.orEmpty,
+        categories: genre.isNotEmptyOrNull ? [genre!] : [],
         averageRating: 0.0,
         ratingsCount: 0,
         thumbnailUrl: '',
@@ -115,13 +116,13 @@ class AudioMetadataExtractor {
         provider: 'File Metadata',
       );
     } catch (e) {
-      print('ERROR: Failed to extract MP3 metadata: $e');
+      Logger.error('Failed to extract MP3 metadata', e);
       return null;
     }
   }
   
-  // Helper method to get a tag value from multiple possible ID3 tag names
-  String _getTagValue(Map<String, dynamic> metaTags, List<String> tagNames) {
+  /// Helper method to get a tag value from multiple possible ID3 tag names
+  String? _getTagValue(Map<String, dynamic> metaTags, List<String> tagNames) {
     for (final tagName in tagNames) {
       final value = metaTags[tagName];
       if (value != null) {
@@ -141,25 +142,73 @@ class AudioMetadataExtractor {
         }
       }
     }
-    return '';
+    return null;
   }
   
-  // Extract metadata from M4A/M4B files
+  /// Extract authors from artist string
+  List<String> _extractAuthors(String? artist) {
+    if (artist == null || artist.isEmpty) {
+      return [];
+    }
+    
+    // Split by common separators
+    List<String> authors = artist.split(RegExp(r',|;|\band\b|\s*&\s*'))
+                            .map((a) => a.trim())
+                            .where((a) => a.isNotEmpty)
+                            .toList();
+    
+    // If splitting didn't produce multiple authors, use the original string
+    if (authors.isEmpty) {
+      authors = [artist];
+    }
+    
+    return authors;
+  }
+  
+  /// Extract series info from album field
+  Map<String, String> _extractSeriesInfo(String? album) {
+    Map<String, String> result = {};
+    
+    if (album == null || album.isEmpty) {
+      return result;
+    }
+    
+    // Look for patterns like "The Dresden Files Book 3" in album field
+    final seriesMatch = _seriesBookPattern.firstMatch(album);
+    if (seriesMatch != null) {
+      result['series'] = seriesMatch.group(1)?.trim() ?? '';
+      result['seriesPosition'] = seriesMatch.group(2) ?? '';
+      return result;
+    }
+    
+    // Look for "Series Name" pattern
+    final seriesNameMatch = _seriesNamePattern.firstMatch(album);
+    if (seriesNameMatch != null) {
+      result['series'] = seriesNameMatch.group(1)?.trim() ?? '';
+      return result;
+    }
+    
+    // If no pattern matched, just use the album as series name
+    result['series'] = album;
+    return result;
+  }
+  
+  /// Extract metadata from M4A/M4B files
   Future<AudiobookMetadata?> _extractM4aMetadata(String filePath) async {
     try {
       // This implementation would typically use FFmpeg or another native plugin
       // Since we don't have direct access to implement that here,
-      // we'll use a placeholder implementation that tries to extract info from the filename
+      // we'll use the FilenameParser to extract info from the filename
       
       final filename = path_util.basenameWithoutExtension(filePath);
       
-      // Try to extract author and title from filename patterns
-      Map<String, String> parsedInfo = _parseFilenameForMetadata(filename);
+      // Use the FilenameParser utility to extract information
+      final parsedInfo = FilenameParser.parse(filename, filePath);
       
       return AudiobookMetadata(
         id: path_util.basename(filePath),
-        title: parsedInfo['title'] ?? filename,
-        authors: parsedInfo['author']?.isNotEmpty == true ? [parsedInfo['author']!] : [],
+        title: parsedInfo.title,
+        authors: parsedInfo.hasAuthor ? [parsedInfo.author!] : [],
         description: '',
         publisher: '',
         publishedDate: '',
@@ -168,57 +217,17 @@ class AudioMetadataExtractor {
         ratingsCount: 0,
         thumbnailUrl: '',
         language: '',
-        series: parsedInfo['series'] ?? '',
-        seriesPosition: parsedInfo['seriesPosition'] ?? '',
+        series: parsedInfo.hasSeries ? parsedInfo.series! : '',
+        seriesPosition: parsedInfo.seriesPosition.orEmpty,
         provider: 'Filename Analysis',
       );
     } catch (e) {
-      print('ERROR: Failed to extract M4A/M4B metadata: $e');
+      Logger.error('Failed to extract M4A/M4B metadata', e);
       return null;
     }
   }
   
-  // Helper method to parse a filename for potential metadata
-  Map<String, String> _parseFilenameForMetadata(String filename) {
-    Map<String, String> result = {};
-    
-    // Clean the filename for analysis
-    String cleanName = filename
-      .replaceAll(RegExp(r'\bAudiobook\b|\bUnabridged\b'), '')
-      .replaceAll(RegExp(r'[_\.-]'), ' ')
-      .trim();
-    
-    // Try to parse "Author - Title" pattern
-    var authorTitleMatch = RegExp(r'^(.*?)\s+-\s+(.*)$').firstMatch(cleanName);
-    if (authorTitleMatch != null) {
-      result['author'] = authorTitleMatch.group(1)?.trim() ?? '';
-      result['title'] = authorTitleMatch.group(2)?.trim() ?? '';
-      return result;
-    }
-    
-    // Try to parse "Title by Author" pattern
-    var titleByAuthorMatch = RegExp(r'^(.*?)\s+by\s+(.*)$', caseSensitive: false).firstMatch(cleanName);
-    if (titleByAuthorMatch != null) {
-      result['title'] = titleByAuthorMatch.group(1)?.trim() ?? '';
-      result['author'] = titleByAuthorMatch.group(2)?.trim() ?? '';
-      return result;
-    }
-    
-    // Try to parse "Series Name Book X - Title" pattern
-    var seriesMatch = RegExp(r'^(.*?)\s+Book\s+(\d+)\s+-\s+(.*)$', caseSensitive: false).firstMatch(cleanName);
-    if (seriesMatch != null) {
-      result['series'] = seriesMatch.group(1)?.trim() ?? '';
-      result['seriesPosition'] = seriesMatch.group(2)?.trim() ?? '';
-      result['title'] = seriesMatch.group(3)?.trim() ?? '';
-      return result;
-    }
-    
-    // If no pattern matched, just use the whole string as title
-    result['title'] = cleanName;
-    return result;
-  }
-  
-  // Write metadata back to an audio file
+  /// Write metadata back to an audio file
   Future<bool> writeMetadataToFile(String filePath, AudiobookMetadata metadata) async {
     try {
       final ext = path_util.extension(filePath).toLowerCase();
@@ -229,56 +238,72 @@ class AudioMetadataExtractor {
         return await _writeMetadataToM4a(filePath, metadata);
       }
       
-      print('LOG: Unsupported file format for writing metadata: $ext');
+      Logger.warning('Unsupported file format for writing metadata: $ext');
       return false;
     } catch (e) {
-      print('ERROR: Failed to write metadata to file: $e');
+      Logger.error('Failed to write metadata to file', e);
       return false;
     }
   }
   
-  // Write metadata to MP3 files
+  /// Write metadata to MP3 files
   Future<bool> _writeMetadataToMp3(String filePath, AudiobookMetadata metadata) async {
     try {
       // This would typically use a method to write ID3 tags
       // Since we don't have direct access to implement that here,
       // we'll log what would be written
       
-      print('LOG: Would write the following metadata to MP3 file: $filePath');
-      print('LOG: Title: ${metadata.title}');
-      print('LOG: Artist: ${metadata.authorsFormatted}');
-      print('LOG: Album: ${metadata.series.isNotEmpty ? "${metadata.series} Book ${metadata.seriesPosition}" : ""}');
-      print('LOG: Year: ${metadata.year}');
-      print('LOG: Genre: ${metadata.categories.isNotEmpty ? metadata.categories.first : "Audiobook"}');
-      print('LOG: Comment: ${metadata.description}');
+      Logger.log('Writing metadata to MP3 file: $filePath');
+      Logger.debug('Title: ${metadata.title}');
+      Logger.debug('Artist: ${metadata.authorsFormatted}');
+      
+      String albumValue = '';
+      if (metadata.series.isNotEmpty) {
+        albumValue = metadata.seriesPosition.isNotEmpty
+            ? "${metadata.series} Book ${metadata.seriesPosition}"
+            : metadata.series;
+      }
+      
+      Logger.debug('Album: $albumValue');
+      Logger.debug('Year: ${metadata.year}');
+      Logger.debug('Genre: ${metadata.categories.isNotEmpty ? metadata.categories.first : "Audiobook"}');
+      Logger.debug('Comment: ${metadata.description}');
       
       // Placeholder for actual implementation
       return true;
     } catch (e) {
-      print('ERROR: Failed to write MP3 metadata: $e');
+      Logger.error('Failed to write MP3 metadata', e);
       return false;
     }
   }
   
-  // Write metadata to M4A/M4B files
+  /// Write metadata to M4A/M4B files
   Future<bool> _writeMetadataToM4a(String filePath, AudiobookMetadata metadata) async {
     try {
       // This would typically use FFmpeg or another native plugin
       // Since we don't have direct access to implement that here,
       // we'll log what would be written
       
-      print('LOG: Would write the following metadata to M4A/M4B file: $filePath');
-      print('LOG: Title: ${metadata.title}');
-      print('LOG: Artist: ${metadata.authorsFormatted}');
-      print('LOG: Album: ${metadata.series.isNotEmpty ? "${metadata.series} Book ${metadata.seriesPosition}" : ""}');
-      print('LOG: Year: ${metadata.year}');
-      print('LOG: Genre: ${metadata.categories.isNotEmpty ? metadata.categories.first : "Audiobook"}');
-      print('LOG: Comment: ${metadata.description}');
+      Logger.log('Writing metadata to M4A/M4B file: $filePath');
+      Logger.debug('Title: ${metadata.title}');
+      Logger.debug('Artist: ${metadata.authorsFormatted}');
+      
+      String albumValue = '';
+      if (metadata.series.isNotEmpty) {
+        albumValue = metadata.seriesPosition.isNotEmpty
+            ? "${metadata.series} Book ${metadata.seriesPosition}"
+            : metadata.series;
+      }
+      
+      Logger.debug('Album: $albumValue');
+      Logger.debug('Year: ${metadata.year}');
+      Logger.debug('Genre: ${metadata.categories.isNotEmpty ? metadata.categories.first : "Audiobook"}');
+      Logger.debug('Comment: ${metadata.description}');
       
       // Placeholder for actual implementation
       return true;
     } catch (e) {
-      print('ERROR: Failed to write M4A/M4B metadata: $e');
+      Logger.error('Failed to write M4A/M4B metadata', e);
       return false;
     }
   }

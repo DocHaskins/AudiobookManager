@@ -1,3 +1,5 @@
+import 'package:audiobook_organizer/utils/logger.dart';
+
 class AudiobookMetadata {
   final String id;
   final String title;
@@ -84,7 +86,7 @@ class AudiobookMetadata {
   
   // Convert to a Map for storage
   Map<String, dynamic> toMap() {
-    return {
+    final Map<String, dynamic> map = {
       'id': id,
       'title': title,
       'authors': authors.join('|'),
@@ -100,6 +102,11 @@ class AudiobookMetadata {
       'seriesPosition': seriesPosition,
       'provider': provider,
     };
+    
+    // Log the metadata being saved
+    Logger.debug('Converting metadata to map: Title: $title, Thumbnail: $thumbnailUrl');
+    
+    return map;
   }
   
   factory AudiobookMetadata.fromMap(Map<String, dynamic> map) {

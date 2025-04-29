@@ -2,32 +2,37 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
+import 'package:path/path.dart' as path_util;
 import 'package:crypto/crypto.dart';
 
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
 
+/// Caches metadata for faster lookup in future sessions
 class MetadataCache {
+  // File name constants
   static const String _cacheFileName = 'metadata_cache.json';
+  
+  // Cache memory storage
   Map<String, AudiobookMetadata> _cache = {};
   bool _initialized = false;
   
-  // Initialize the cache
+  /// Initialize the cache
   Future<void> initialize() async {
     if (_initialized) return;
     
     try {
       await _loadCache();
       _initialized = true;
-      print('LOG: Metadata cache initialized with ${_cache.length} entries');
+      Logger.log('Metadata cache initialized with ${_cache.length} entries');
     } catch (e) {
-      print('ERROR: Failed to initialize metadata cache: $e');
+      Logger.error('Failed to initialize metadata cache', e);
       _cache = {};
       _initialized = true;
     }
   }
   
-  // Generate a unique key for each query
+  /// Generate a unique key for each query
   String _generateKey(String query) {
     // Use a hash to ensure consistent keys
     final bytes = utf8.encode(query.toLowerCase().trim());
@@ -35,18 +40,38 @@ class MetadataCache {
     return digest.toString();
   }
   
+  /// Get the cache file path
   Future<String> _getCacheFilePath() async {
-    final directory = await getApplicationDocumentsDirectory();
-    return path.join(directory.path, _cacheFileName);
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      return path_util.join(directory.path, _cacheFileName);
+    } catch (e) {
+      Logger.error('Failed to get cache file path', e);
+      rethrow;
+    }
   }
   
+  /// Ensure the directory exists for the given file path
+  Future<void> _ensureDirectoryExists(String filePath) async {
+    try {
+      final dir = Directory(path_util.dirname(filePath));
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+    } catch (e) {
+      Logger.error('Failed to create directory for cache', e);
+      rethrow;
+    }
+  }
+  
+  /// Load the cache from disk
   Future<void> _loadCache() async {
     try {
       final filePath = await _getCacheFilePath();
       final file = File(filePath);
       
       if (!await file.exists()) {
-        print('LOG: No metadata cache found at $filePath');
+        Logger.debug('No metadata cache found at $filePath');
         _cache = {};
         return;
       }
@@ -57,60 +82,28 @@ class MetadataCache {
       _cache = {};
       cacheJson.forEach((key, value) {
         try {
-          // Create metadata safely
-          _cache[key] = _createMetadataFromMap(value);
+          if (value is Map<String, dynamic>) {
+            _cache[key] = AudiobookMetadata.fromMap(value);
+          }
         } catch (e) {
-          print('ERROR: Failed to parse cached metadata for key "$key": $e');
+          Logger.error('Failed to parse cached metadata for key "$key"', e);
         }
       });
       
-      print('LOG: Loaded ${_cache.length} items from metadata cache');
+      Logger.log('Loaded ${_cache.length} items from metadata cache');
     } catch (e) {
-      print('ERROR: Failed to load metadata cache: $e');
+      Logger.error('Failed to load metadata cache', e);
       _cache = {};
     }
   }
   
-  // Helper method to safely create AudiobookMetadata from Map
-  AudiobookMetadata _createMetadataFromMap(Map<String, dynamic> map) {
-    // Safely extract lists from serialized data
-    List<String> extractStringList(String serialized) {
-      if (serialized.isEmpty) return [];
-      return serialized.split('|').where((s) => s.isNotEmpty).toList();
-    }
-    
-    // Handle the categories and authors fields with safer parsing
-    final String authorsStr = map['authors'] as String? ?? '';
-    final String categoriesStr = map['categories'] as String? ?? '';
-    
-    return AudiobookMetadata(
-      id: map['id'] as String? ?? '',
-      title: map['title'] as String? ?? 'Unknown Title',
-      authors: extractStringList(authorsStr),
-      description: map['description'] as String? ?? '',
-      publisher: map['publisher'] as String? ?? '',
-      publishedDate: map['publishedDate'] as String? ?? '',
-      categories: extractStringList(categoriesStr),
-      averageRating: (map['averageRating'] as num?)?.toDouble() ?? 0.0,
-      ratingsCount: (map['ratingsCount'] as num?)?.toInt() ?? 0,
-      thumbnailUrl: map['thumbnailUrl'] as String? ?? '',
-      language: map['language'] as String? ?? '',
-      series: map['series'] as String? ?? '',
-      seriesPosition: map['seriesPosition'] as String? ?? '',
-      provider: map['provider'] as String? ?? 'Unknown',
-    );
-  }
-  
+  /// Save the cache to disk
   Future<void> _saveCache() async {
     try {
       final filePath = await _getCacheFilePath();
-      final file = File(filePath);
+      await _ensureDirectoryExists(filePath);
       
-      // Create directory if it doesn't exist
-      final dir = Directory(path.dirname(filePath));
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
+      final file = File(filePath);
       
       // Convert cache to JSON
       final Map<String, dynamic> cacheJson = {};
@@ -120,71 +113,98 @@ class MetadataCache {
       
       // Write to file
       await file.writeAsString(jsonEncode(cacheJson));
-      print('LOG: Saved ${_cache.length} items to metadata cache');
+      Logger.log('Saved ${_cache.length} items to metadata cache');
     } catch (e) {
-      print('ERROR: Failed to save metadata cache: $e');
+      Logger.error('Failed to save metadata cache', e);
     }
   }
   
+  /// Save metadata for a search query
   Future<void> saveMetadata(String query, AudiobookMetadata metadata) async {
     await initialize();
     
-    final key = _generateKey(query);
-    _cache[key] = metadata;
-    
-    await _saveCache();
+    try {
+      final key = _generateKey(query);
+      _cache[key] = metadata;
+      
+      await _saveCache();
+    } catch (e) {
+      Logger.error('Failed to save metadata for query: $query', e);
+    }
   }
   
+  /// Get metadata for a search query
   Future<AudiobookMetadata?> getMetadata(String query) async {
     await initialize();
     
-    final key = _generateKey(query);
-    return _cache[key];
+    try {
+      final key = _generateKey(query);
+      return _cache[key];
+    } catch (e) {
+      Logger.error('Failed to get metadata for query: $query', e);
+      return null;
+    }
   }
   
+  /// Check if metadata exists for a query
   Future<bool> hasMetadata(String query) async {
     await initialize();
     
-    final key = _generateKey(query);
-    return _cache.containsKey(key);
+    try {
+      final key = _generateKey(query);
+      return _cache.containsKey(key);
+    } catch (e) {
+      Logger.error('Failed to check metadata for query: $query', e);
+      return false;
+    }
   }
   
+  /// Clear all cached metadata
   Future<void> clearCache() async {
     await initialize();
     
-    _cache = {};
-    
     try {
+      _cache = {};
+      
       final filePath = await _getCacheFilePath();
       final file = File(filePath);
       if (await file.exists()) {
         await file.delete();
-        print('LOG: Metadata cache file deleted');
+        Logger.log('Metadata cache file deleted');
       }
     } catch (e) {
-      print('ERROR: Failed to delete metadata cache file: $e');
+      Logger.error('Failed to delete metadata cache file', e);
     }
   }
   
-  // Add a method to save metadata specifically for a file path
+  /// Save metadata for a specific file path
   Future<void> saveMetadataForFile(String filePath, AudiobookMetadata metadata) async {
     await initialize();
     
-    final key = 'file:' + _generateKey(filePath);
-    _cache[key] = metadata;
-    
-    await _saveCache();
+    try {
+      final key = 'file:${_generateKey(filePath)}';
+      _cache[key] = metadata;
+      
+      await _saveCache();
+    } catch (e) {
+      Logger.error('Failed to save metadata for file: $filePath', e);
+    }
   }
   
-  // Get metadata specifically for a file path
+  /// Get metadata for a specific file path
   Future<AudiobookMetadata?> getMetadataForFile(String filePath) async {
     await initialize();
     
-    final key = 'file:' + _generateKey(filePath);
-    return _cache[key];
+    try {
+      final key = 'file:${_generateKey(filePath)}';
+      return _cache[key];
+    } catch (e) {
+      Logger.error('Failed to get metadata for file: $filePath', e);
+      return null;
+    }
   }
   
-  // Get current cache size
+  /// Get current cache size
   Future<int> getCacheSize() async {
     await initialize();
     return _cache.length;

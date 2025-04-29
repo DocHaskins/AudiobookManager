@@ -158,9 +158,9 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
     try {
       final scanner = Provider.of<AudiobookScanner>(context, listen: false);
       
-      // Get library view books (those with complete metadata) 
-      // - note that matchOnline is false by default now
-      final libraryResults = await scanner.scanForLibraryView(directory);
+      // Get library view books (those with COMPLETE metadata)
+      // Change matchOnline to true so we attempt to get full metadata immediately
+      final libraryResults = await scanner.scanForLibraryView(directory, matchOnline: true);
       
       // Get files view (files needing metadata review)
       final filesResults = await scanner.scanForFilesView(directory);
@@ -196,13 +196,13 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
           ),
         );
         
-        // If we have files needing metadata and we're on the Library tab, show a message
-        if (filesResults.isNotEmpty && _tabController.index == 0) {
+        // If we have files needing metadata, show a message about processing them
+        if (filesResults.isNotEmpty) {
           Future.delayed(const Duration(milliseconds: 500), () {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: const Text('Files needing metadata were found. Switch to the Files tab to process them.'),
+                  content: const Text('Files needing complete metadata were found. Switch to the Files tab to find online metadata.'),
                   action: SnackBarAction(
                     label: 'SWITCH',
                     onPressed: () {
@@ -380,11 +380,13 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
       final scanner = Provider.of<AudiobookScanner>(context, listen: false);
       final processedCount = await scanner.processFilesWithOnlineMetadata(_filesNeedingReview);
       
-      // Reload library to reflect changes
+      // Force reload library to update UI state
       await _loadLibrary();
       
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Processed $processedCount files with online metadata')),
+        SnackBar(
+          content: Text('Processed $processedCount files with online metadata.'),
+        ),
       );
     } catch (e) {
       print('ERROR: Failed to process pending files: $e');

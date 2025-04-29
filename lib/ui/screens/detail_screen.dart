@@ -1,6 +1,5 @@
 // File: lib/ui/screens/detail_screen.dart
 import 'package:flutter/material.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:path/path.dart' as path_util;
 import 'package:provider/provider.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
@@ -9,6 +8,7 @@ import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/ui/widgets/image_loader_widget.dart';
 import 'package:audiobook_organizer/ui/widgets/file_metadata_editor.dart';
 import 'package:audiobook_organizer/ui/widgets/manual_metadata_search_dialog.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
 import 'package:audiobook_organizer/services/providers/google_books_provider.dart';
 import 'package:audiobook_organizer/services/providers/open_library_provider.dart';
 
@@ -50,7 +50,6 @@ class _DetailScreenState extends State<DetailScreen> {
       await _book.extractFileMetadata();
       
       setState(() {
-        // Create a new book instance with the updated fileMetadata
         _book = AudiobookFile(
           path: _book.path,
           filename: _book.filename,
@@ -63,6 +62,9 @@ class _DetailScreenState extends State<DetailScreen> {
         _hasChanges = true;
         _isLoading = false;
       });
+
+      // Add this line here:
+      _refreshBookState();
       
       if (_book.hasFileMetadata && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -132,6 +134,9 @@ class _DetailScreenState extends State<DetailScreen> {
           _hasChanges = true;
         });
         
+        // Add this line here:
+        _refreshBookState();
+        
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -192,6 +197,31 @@ class _DetailScreenState extends State<DetailScreen> {
       );
       
       if (result != null) {
+        Logger.log('Selected metadata: ${result.title} with thumbnail: ${result.thumbnailUrl}');
+        
+        // Create a copy of the selected metadata to ensure we're working with a new instance
+        final selectedMetadata = AudiobookMetadata(
+          id: result.id,
+          title: result.title,
+          authors: List<String>.from(result.authors),
+          description: result.description,
+          publisher: result.publisher,
+          publishedDate: result.publishedDate,
+          categories: List<String>.from(result.categories),
+          averageRating: result.averageRating,
+          ratingsCount: result.ratingsCount,
+          thumbnailUrl: result.thumbnailUrl,
+          language: result.language,
+          series: result.series,
+          seriesPosition: result.seriesPosition,
+          provider: result.provider,
+        );
+        
+        // Save to metadata cache for future use
+        final matcher = Provider.of<MetadataMatcher>(context, listen: false);
+        await matcher.saveMetadataToCache(_book.path, selectedMetadata);
+        
+        // Update the book state with the new metadata
         setState(() {
           _book = AudiobookFile(
             path: _book.path,
@@ -199,17 +229,25 @@ class _DetailScreenState extends State<DetailScreen> {
             extension: _book.extension,
             size: _book.size,
             lastModified: _book.lastModified,
-            metadata: result,
+            metadata: selectedMetadata,
             fileMetadata: _book.fileMetadata,
           );
           _hasChanges = true;
         });
-        
+
+        // Add this line here:
+        _refreshBookState();
+
+        // Show a confirmation message
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Selected metadata for "${result.title}"'),
+            content: Text('Selected metadata for "${selectedMetadata.title}"'),
+            duration: const Duration(seconds: 4),
           ),
         );
+        
+        // Offer to save to file automatically
+        _offerToSaveMetadata(selectedMetadata);
       }
     } catch (e) {
       print('ERROR: Failed in manual metadata search: $e');
@@ -225,9 +263,38 @@ class _DetailScreenState extends State<DetailScreen> {
     }
   }
   
-  // Save metadata to file
+  void _offerToSaveMetadata(AudiobookMetadata metadata) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Would you like to save this metadata to the file?'),
+          action: SnackBarAction(
+            label: 'SAVE',
+            onPressed: () {
+              _saveMetadataToFile();
+            },
+          ),
+          duration: const Duration(seconds: 10),
+        ),
+      );
+    }
+  }
+
+  void _refreshBookState() {
+    setState(() {
+      _book = AudiobookFile(
+        path: _book.path,
+        filename: _book.filename,
+        extension: _book.extension,
+        size: _book.size,
+        lastModified: _book.lastModified,
+        metadata: _book.metadata,
+        fileMetadata: _book.fileMetadata,
+      );
+    });
+  }
+
   Future<void> _saveMetadataToFile() async {
-    // Determine which metadata to use
     final metadataToSave = _book.metadata ?? _book.fileMetadata;
     if (metadataToSave == null) return;
     
@@ -250,7 +317,11 @@ class _DetailScreenState extends State<DetailScreen> {
             fileMetadata: metadataToSave, // Update file metadata to match
           );
           _hasChanges = true;
+          _isLoading = false;
         });
+        
+        // Add this line here:
+        _refreshBookState();
         
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -260,6 +331,10 @@ class _DetailScreenState extends State<DetailScreen> {
           );
         }
       } else {
+        setState(() {
+          _isLoading = false;
+        });
+        
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -272,6 +347,10 @@ class _DetailScreenState extends State<DetailScreen> {
     } catch (e) {
       print('ERROR: Failed to save metadata to file: $e');
       
+      setState(() {
+        _isLoading = false;
+      });
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -280,10 +359,6 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
         );
       }
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
     }
   }
   

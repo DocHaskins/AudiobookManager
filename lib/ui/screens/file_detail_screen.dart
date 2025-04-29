@@ -3,8 +3,6 @@
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:path/path.dart' as path_util;
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
@@ -13,6 +11,8 @@ import 'package:audiobook_organizer/services/providers/google_books_provider.dar
 import 'package:audiobook_organizer/services/providers/open_library_provider.dart';
 import 'package:audiobook_organizer/ui/widgets/file_metadata_editor.dart';
 import 'package:audiobook_organizer/ui/widgets/manual_metadata_search_dialog.dart';
+import 'package:audiobook_organizer/utils/metadata_manager.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
 
 class FileDetailScreen extends StatefulWidget {
   final AudiobookFile file;
@@ -91,15 +91,36 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
       
       List<MetadataProvider> providers = [googleProvider, openLibraryProvider];
       
-      // Use the showDialog method directly if you prefer not to use the static method
-      // Or ensure the ManualMetadataSearchDialog has the static show method implemented
+      // Show the dialog and wait for a result
       final result = await ManualMetadataSearchDialog.show(
         context: context,
         initialQuery: query,
         providers: providers,
       );
       
+      // Check if we got a result (not canceled)
       if (result != null) {
+        Logger.log('Selected metadata for "${result.title}" - thumbnail: ${result.thumbnailUrl}');
+        
+        // Create a copy of the selected metadata to ensure we're working with a new instance
+        final selectedMetadata = AudiobookMetadata(
+          id: result.id,
+          title: result.title,
+          authors: List<String>.from(result.authors),
+          description: result.description,
+          publisher: result.publisher,
+          publishedDate: result.publishedDate,
+          categories: List<String>.from(result.categories),
+          averageRating: result.averageRating,
+          ratingsCount: result.ratingsCount,
+          thumbnailUrl: result.thumbnailUrl,
+          language: result.language,
+          series: result.series,
+          seriesPosition: result.seriesPosition,
+          provider: result.provider,
+        );
+        
+        // Update the file with the selected metadata
         setState(() {
           _file = AudiobookFile(
             path: _file.path,
@@ -107,11 +128,38 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
             extension: _file.extension,
             size: _file.size,
             lastModified: _file.lastModified,
-            metadata: result,
+            metadata: selectedMetadata,
             fileMetadata: _file.fileMetadata,
           );
           _hasChanges = true;
         });
+        
+        // Save to cache for future use
+        final matcher = Provider.of<MetadataMatcher>(context, listen: false);
+        await matcher.saveMetadataToCache(_file.path, selectedMetadata);
+        
+        // Immediately save to file to persist the changes
+        await _saveMetadataToFile(selectedMetadata);
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Metadata for "${selectedMetadata.title}" applied successfully'),
+            ),
+          );
+        }
+        
+        // Check if file now has complete metadata
+        if (MetadataManager.isMetadataComplete(selectedMetadata)) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('File now has complete metadata and will be moved to the Library'),
+                duration: Duration(seconds: 4),
+              ),
+            );
+          }
+        }
       }
     } catch (e) {
       print('ERROR: Failed to search for metadata: $e');
@@ -130,7 +178,21 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
       });
     }
   }
-  
+
+  void _refreshBookState() {
+    setState(() {
+      _file = AudiobookFile(
+        path: _file.path,
+        filename: _file.filename,
+        extension: _file.extension,
+        size: _file.size,
+        lastModified: _file.lastModified,
+        metadata: _file.metadata,
+        fileMetadata: _file.fileMetadata,
+      );
+    });
+  }
+
   Future<void> _automaticallyFindMetadata() async {
     setState(() {
       _isLoading = true;
@@ -246,7 +308,31 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
   }
   
   void _handleMetadataUpdated(AudiobookMetadata metadata) {
+    setState(() {
+      _file = AudiobookFile(
+        path: _file.path,
+        filename: _file.filename,
+        extension: _file.extension,
+        size: _file.size,
+        lastModified: _file.lastModified,
+        metadata: metadata,
+        fileMetadata: _file.fileMetadata,
+      );
+      _hasChanges = true;
+    });
+    
+    // Save updates to file
     _saveMetadataToFile(metadata);
+    
+    // Check if this file now has complete metadata
+    if (MetadataManager.isMetadataComplete(metadata)) {
+      // Let the user know this file is ready for the library
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('File now has complete metadata and will be moved to the Library'),
+        ),
+      );
+    }
   }
   
   void _handleSearchRequested(String query) {

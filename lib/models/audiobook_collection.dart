@@ -1,6 +1,7 @@
 // File: lib/models/audiobook_collection.dart
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
 
 /// Represents a collection of audio files that belong to the same audiobook
 class AudiobookCollection {
@@ -31,13 +32,10 @@ class AudiobookCollection {
   DateTime get lastModified {
     if (files.isEmpty) return DateTime.now();
     
-    DateTime latest = files.first.lastModified;
-    for (var file in files) {
-      if (file.lastModified.isAfter(latest)) {
-        latest = file.lastModified;
-      }
-    }
-    return latest;
+    return files.fold(
+      files.first.lastModified, 
+      (latest, file) => file.lastModified.isAfter(latest) ? file.lastModified : latest
+    );
   }
   
   /// Check if the collection has metadata
@@ -56,11 +54,15 @@ class AudiobookCollection {
   factory AudiobookCollection.fromFiles(List<AudiobookFile> files, String title) {
     String? dirPath;
     if (files.isNotEmpty) {
-      // Extract directory from the first file
-      final path = files.first.path;
-      final lastSeparator = path.lastIndexOf(RegExp(r'[/\\]'));
-      if (lastSeparator != -1) {
-        dirPath = path.substring(0, lastSeparator);
+      try {
+        // Extract directory from the first file
+        final path = files.first.path;
+        final lastSeparator = path.lastIndexOf(RegExp(r'[/\\]'));
+        if (lastSeparator != -1) {
+          dirPath = path.substring(0, lastSeparator);
+        }
+      } catch (e) {
+        Logger.error("Error extracting directory path", e);
       }
     }
     
@@ -74,6 +76,7 @@ class AudiobookCollection {
   /// Update metadata for the collection
   void updateMetadata(AudiobookMetadata metadata) {
     this.metadata = metadata;
+    Logger.debug("Updated collection metadata: $title");
   }
   
   /// Add a file to the collection
@@ -83,24 +86,42 @@ class AudiobookCollection {
   
   /// Sort files by their chapter or track number
   void sortFiles() {
-    // Extract numbers from filenames
-    final regexNumber = RegExp(r'(\d+)');
-    
-    files.sort((a, b) {
-      // Try to extract numbers from the filenames
-      final matchA = regexNumber.firstMatch(a.filename);
-      final matchB = regexNumber.firstMatch(b.filename);
+    try {
+      // Extract numbers from filenames
+      final regexNumber = RegExp(r'(\d+)');
       
-      if (matchA != null && matchB != null) {
-        try {
-          final numA = int.parse(matchA.group(1)!);
-          final numB = int.parse(matchB.group(1)!);
-          return numA.compareTo(numB);
-        } catch (_) {}
-      }
+      files.sort((a, b) {
+        // Try to extract numbers from the filenames
+        final matchA = regexNumber.firstMatch(a.filename);
+        final matchB = regexNumber.firstMatch(b.filename);
+        
+        if (matchA != null && matchB != null) {
+          try {
+              final numA = int.parse(matchA.group(1)!);
+              final numB = int.parse(matchB.group(1)!);
+              return numA.compareTo(numB);
+          } catch (e) {
+              Logger.error("Error parsing numbers from filenames", e);
+          }
+        }
+        
+        // Fall back to alphabetical sorting
+        return a.filename.compareTo(b.filename);
+      });
       
-      // Fall back to alphabetical sorting
-      return a.filename.compareTo(b.filename);
-    });
+      Logger.debug("Files sorted successfully for: $title");
+    } catch (e) {
+      Logger.error("Error sorting files", e);
+    }
+  }
+  
+  /// Get files that are missing metadata
+  List<AudiobookFile> get filesNeedingMetadata {
+    return files.where((file) => file.needsMetadataReview).toList();
+  }
+  
+  /// Check if any files need metadata review
+  bool get hasIncompleteMetadata {
+    return files.any((file) => file.needsMetadataReview);
   }
 }
