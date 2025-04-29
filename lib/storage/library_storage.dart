@@ -57,7 +57,7 @@ class LibraryStorage {
       }
     } catch (e) {
       Logger.error('Failed to create directory', e);
-      throw e;
+      rethrow;
     }
   }
   

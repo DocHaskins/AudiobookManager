@@ -78,7 +78,7 @@ class CollectionListItem extends StatelessWidget {
                     right: 0,
                     child: Container(
                       padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
+                      decoration: const BoxDecoration(
                         color: Colors.indigo,
                         shape: BoxShape.circle,
                       ),

@@ -144,9 +144,7 @@ class AudiobookFile {
       if (success) {
         // Update our own metadata references
         fileMetadata = metadataToWrite;
-        if (metadata == null) {
-          metadata = metadataToWrite;
-        }
+        metadata ??= metadataToWrite;
         Logger.log('Successfully wrote metadata to file: $path');
       } else {
         Logger.warning('Failed to write metadata to file: $path');

@@ -1,11 +1,8 @@
 // File: lib/utils/metadata_manager.dart
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
-import 'package:audiobook_organizer/utils/logger.dart';
 
 /// Utility class for handling metadata operations
 class MetadataManager {
-  /// Get a value from metadata with priority order (online > file > default)
-  /// Generic method to handle the common pattern of getting values with fallbacks
   static T? getValueWithPriority<T>(
     AudiobookMetadata? onlineMetadata,
     AudiobookMetadata? fileMetadata,
@@ -16,7 +13,7 @@ class MetadataManager {
     if (onlineMetadata != null) {
       final value = getter(onlineMetadata);
       // For strings, check not empty; for other types just check not null
-      if (value != null && (!(value is String) || (value as String).isNotEmpty)) {
+      if (value != null && (value is! String || (value as String).isNotEmpty)) {
         return value;
       }
     }
@@ -24,7 +21,7 @@ class MetadataManager {
     // Fall back to file metadata
     if (fileMetadata != null) {
       final value = getter(fileMetadata);
-      if (value != null && (!(value is String) || (value as String).isNotEmpty)) {
+      if (value != null && (value is! String || (value as String).isNotEmpty)) {
         return value;
       }
     }

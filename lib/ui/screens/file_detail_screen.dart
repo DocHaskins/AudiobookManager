@@ -57,19 +57,21 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
     });
     
     try {
-      final fileMetadata = await _file.extractFileMetadata();
-      
-      setState(() {
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('ERROR: Failed to extract file metadata: $e');
-      
-      setState(() {
-        _isLoading = false;
-      });
+      await _file.extractFileMetadata();
       
       if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      Logger.error('Failed to extract file metadata', e);
+      
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error extracting file metadata: $e'),
@@ -99,7 +101,7 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
       );
       
       // Check if we got a result (not canceled)
-      if (result != null) {
+      if (result != null && mounted) {
         Logger.log('Selected metadata for "${result.title}" - thumbnail: ${result.thumbnailUrl}');
         
         // Create a copy of the selected metadata to ensure we're working with a new instance
@@ -141,6 +143,9 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
         // Immediately save to file to persist the changes
         await _saveMetadataToFile(selectedMetadata);
         
+        // Important: Refresh the file state to ensure all properties are updated
+        _refreshBookState();
+        
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -152,17 +157,25 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
         // Check if file now has complete metadata
         if (MetadataManager.isMetadataComplete(selectedMetadata)) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('File now has complete metadata and will be moved to the Library'),
-                duration: Duration(seconds: 4),
-              ),
-            );
+            // Add a delay to allow time for the UI to update
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('File now has complete metadata and will be moved to the Library'),
+                    duration: Duration(seconds: 4),
+                  ),
+                );
+              }
+            });
+            
+            // Return with success to trigger library reload
+            Navigator.pop(context, true);
           }
         }
       }
     } catch (e) {
-      print('ERROR: Failed to search for metadata: $e');
+      Logger.error('Failed to search for metadata', e);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -173,9 +186,11 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
         );
       }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -202,6 +217,8 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
       final matcher = Provider.of<MetadataMatcher>(context, listen: false);
       final metadata = await matcher.matchFile(_file);
       
+      if (!mounted) return;
+      
       if (metadata != null) {
         setState(() {
           _file = AudiobookFile(
@@ -216,24 +233,20 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
           _hasChanges = true;
         });
         
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Found metadata for "${metadata.title}"'),
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Found metadata for "${metadata.title}"'),
+          ),
+        );
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No matching metadata found'),
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No matching metadata found'),
+          ),
+        );
       }
     } catch (e) {
-      print('ERROR: Failed to find metadata: $e');
+      Logger.error('Failed to find metadata', e);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -244,9 +257,11 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
         );
       }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
   
@@ -258,6 +273,8 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
     try {
       final success = await _file.writeMetadataToFile(metadata);
       
+      if (!mounted) return;
+      
       if (success) {
         setState(() {
           _file = AudiobookFile(
@@ -267,30 +284,29 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
             size: _file.size,
             lastModified: _file.lastModified,
             metadata: metadata,
-            fileMetadata: metadata, // Update file metadata as well
+            fileMetadata: metadata, // Update file metadata as well - this is crucial
           );
           _hasChanges = true;
         });
         
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Metadata saved to file successfully'),
-            ),
-          );
-        }
+        // Make sure to refresh the state
+        _refreshBookState();
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Metadata saved to file successfully'),
+          ),
+        );
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to save metadata to file'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to save metadata to file'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
-      print('ERROR: Failed to save metadata to file: $e');
+      Logger.error('Failed to save metadata to file', e);
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -301,9 +317,11 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
         );
       }
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
   
@@ -345,7 +363,7 @@ class _FileDetailScreenState extends State<FileDetailScreen> {
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('Edit File Metadata'),
+        title: const Text('Edit File Metadata'),
         actions: [
           // Find metadata button
           TextButton.icon(

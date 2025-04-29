@@ -173,7 +173,6 @@ class BookListItem extends StatelessWidget {
     
     // If there's rating data, show stars
     if ((book.metadata?.averageRating ?? 0) > 0) {
-      final rating = book.metadata!.averageRating.round();
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [

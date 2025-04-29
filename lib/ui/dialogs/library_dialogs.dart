@@ -571,17 +571,18 @@ class LibraryDialogs {
     );
   }
   
-  // Show library statistics dialog
-  static void showLibraryStats({
+  static Future<void> showLibraryStats({
     required BuildContext context,
     required List<AudiobookFile> individualBooks,
     required List<AudiobookCollection> collections,
     required List<String> genres,
   }) async {
-    final metadataCache = Provider.of<MetadataCache>(context, listen: false);
-    final cacheSize = await metadataCache.getCacheSize();
+    final currentContext = context;
     
-    // Calculate total file count
+    final metadataCache = Provider.of<MetadataCache>(currentContext, listen: false);
+    final cacheSize = await metadataCache.getCacheSize();
+    if (!currentContext.mounted) return;
+
     int collectionFiles = collections.fold(
       0, (sum, collection) => sum + collection.fileCount);
     final totalFiles = individualBooks.length + collectionFiles;
@@ -598,8 +599,8 @@ class LibraryDialogs {
     }
     
     showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
+      context: currentContext, 
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Library Statistics'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -616,7 +617,7 @@ class LibraryDialogs {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Close'),
           ),
         ],

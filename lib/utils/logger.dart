@@ -41,10 +41,10 @@ class Logger {
           
       if (record.error != null) {
         // ignore: avoid_print
-        print('${record.level.name}: $message - ${record.error}\n${record.stackTrace ?? ""}');
+        Logger.debug('${record.level.name}: $message - ${record.error}\n${record.stackTrace ?? ""}');
       } else {
         // ignore: avoid_print
-        print('${record.level.name}: $message');
+        Logger.debug('${record.level.name}: $message');
       }
     });
     

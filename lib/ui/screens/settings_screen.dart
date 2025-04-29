@@ -11,6 +11,7 @@ import 'package:audiobook_organizer/services/providers/google_books_provider.dar
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
 import 'package:audiobook_organizer/storage/library_storage.dart';
 import 'package:audiobook_organizer/main.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -56,7 +57,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     
     try {
       final prefs = Provider.of<UserPreferences>(context, listen: false);
-      final themeProvider = Provider.of<ThemeModeProvider>(context, listen: false);
       
       final apiKey = await prefs.getApiKey();
       final defaultDir = await prefs.getDefaultDirectory();
@@ -64,6 +64,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final includeSubfolders = await prefs.getIncludeSubfolders();
       final autoMatchNewFiles = await prefs.getAutoMatchNewFiles();
       final useDarkMode = await prefs.getUseDarkMode();
+      
+      if (!mounted) return;
       
       setState(() {
         _apiKeyController.text = apiKey ?? '';
@@ -75,20 +77,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      print('Error loading preferences: $e');
+      Logger.error('Error loading preferences', e);
+      
+      if (!mounted) return;
       
       setState(() {
         _isLoading = false;
       });
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading settings: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading settings: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
@@ -100,7 +102,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _supportedExtensions = scanner.supportedExtensions;
       });
     } catch (e) {
-      print('Error loading supported extensions: $e');
+      Logger.error('Error loading supported extensions', e);
     }
   }
   
@@ -114,6 +116,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final prefs = Provider.of<UserPreferences>(context, listen: false);
       final themeProvider = Provider.of<ThemeModeProvider>(context, listen: false);
+      final googleProvider = Provider.of<GoogleBooksProvider>(context, listen: false);
       
       await prefs.saveApiKey(_apiKeyController.text.trim());
       await prefs.saveNamingPattern(_namingPatternController.text.trim());
@@ -124,41 +127,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (_defaultDirectory != null) {
         await prefs.saveDefaultDirectory(_defaultDirectory!);
       }
-      
       // Update the theme mode
       themeProvider.setThemeMode(_useDarkMode ? ThemeMode.dark : ThemeMode.light);
-      
-      // Update the GoogleBooksProvider with the new API key
-      final googleProvider = Provider.of<GoogleBooksProvider>(context, listen: false);
       googleProvider.updateApiKey(_apiKeyController.text.trim());
       
+      if (!mounted) return;
+      
       setState(() {
         _isLoading = false;
       });
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Settings saved'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Settings saved'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     } catch (e) {
-      print('Error saving preferences: $e');
+      Logger.error('Error saving preferences', e);
+      
+      if (!mounted) return;
       
       setState(() {
         _isLoading = false;
       });
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error saving settings: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving settings: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
@@ -174,16 +173,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
         });
       }
     } catch (e) {
-      print('Error selecting directory: $e');
+      Logger.error('Error selecting directory', e);
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error selecting directory: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error selecting directory: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
@@ -210,6 +209,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       // Try a simple search to test the API key
       final results = await googleProvider.search('Harry Potter');
       
+      if (!mounted) return;
+      
       setState(() {
         _isTestingApiKey = false;
         if (results.isNotEmpty) {
@@ -221,6 +222,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       });
     } catch (e) {
+      if (!mounted) return;
+      
       setState(() {
         _isTestingApiKey = false;
         _apiKeyTestResult = 'Error: ${e.toString()}';
@@ -234,32 +237,39 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final metadataCache = Provider.of<MetadataCache>(context, listen: false);
       await metadataCache.clearCache();
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Metadata cache cleared'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } catch (e) {
-      print('Error clearing metadata cache: $e');
+      if (!mounted) return;
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error clearing metadata cache: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Metadata cache cleared'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      Logger.error('Error clearing metadata cache', e);
+      
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error clearing metadata cache: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
   Future<void> _resetAllSettings() async {
+    if (!mounted) return;
+    
+    // Get provider instances before any async operations
+    final prefs = Provider.of<UserPreferences>(context, listen: false);
+    final metadataCache = Provider.of<MetadataCache>(context, listen: false);
+    final libraryStorage = Provider.of<LibraryStorage>(context, listen: false);
+    
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Reset Settings'),
         content: const Text(
           'This will reset all settings to their default values and clear your library. '
@@ -267,11 +277,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(dialogContext, false),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
             ),
@@ -281,58 +291,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     
+    // Check if widget is still mounted after the dialog
+    if (!mounted) return;
+    
     if (confirm == true) {
       setState(() {
         _isLoading = true;
       });
       
       try {
-        print('Starting library reset process...');
+        Logger.log('Starting library reset process...');
         
         // Reset user preferences
-        final prefs = Provider.of<UserPreferences>(context, listen: false);
         await prefs.resetAllSettings();
-        print('User preferences reset...');
+        Logger.log('User preferences reset...');
         
         // Clear the metadata cache
-        final metadataCache = Provider.of<MetadataCache>(context, listen: false);
         await metadataCache.clearCache();
-        print('Metadata cache cleared...');
+        Logger.log('Metadata cache cleared...');
         
         // Clear the library storage
-        final libraryStorage = Provider.of<LibraryStorage>(context, listen: false);
         await libraryStorage.clearLibrary();
-        print('Library storage cleared...');
+        Logger.log('Library storage cleared...');
         
-        // Reload preferences
         await _loadPreferences();
         
-        // Force app to reload library screen when returning
-        Navigator.of(context).pop(true); // Return true to indicate changes
+        if (!mounted) return;
         
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('All settings reset to defaults and library cleared'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        }
+        Navigator.of(context).pop(true);
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('All settings reset to defaults and library cleared'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       } catch (e) {
-        print('Error resetting settings and library: $e');
+        Logger.error('Error resetting settings and library', e);
+        
+        if (!mounted) return;
         
         setState(() {
           _isLoading = false;
         });
         
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error resetting settings: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error resetting settings: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
   }
@@ -472,10 +480,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
                   color: _apiKeyValid == true
-                      ? Colors.green.withOpacity(0.1)
+                      ? Colors.green.withAlpha(26)
                       : _apiKeyValid == false
-                          ? Colors.red.withOpacity(0.1)
-                          : Colors.orange.withOpacity(0.1),
+                          ? Colors.red.withAlpha(26)
+                          : Colors.orange.withAlpha(26),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
@@ -811,7 +819,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Text(
                 '© 2025 AudioBook Organizer',
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurface.withOpacity(0.7),
+                  color: colorScheme.onSurface.withAlpha(179),
                 ),
               ),
             ),

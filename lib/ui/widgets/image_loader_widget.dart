@@ -82,7 +82,7 @@ class BookCoverImage extends StatelessWidget {
           Icon(
             Icons.menu_book,
             size: height / 3,
-            color: theme.primaryColor.withOpacity(0.5),
+            color: theme.primaryColor.withAlpha(128),
           ),
           if (bookTitle != 'Unknown Book')
             Padding(

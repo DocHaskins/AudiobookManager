@@ -23,19 +23,19 @@ class ParsedFilename {
 /// Utility class for parsing filenames to extract metadata information
 class FilenameParser {
   // Common RegExp patterns as static constants
-  static final RegExp _AUTHOR_TITLE_PATTERN = RegExp(r'^(.*?)\s+-\s+(.*)$');
-  static final RegExp _TITLE_BY_AUTHOR_PATTERN = RegExp(r'^(.*?)\s+by\s+(.*)$', caseSensitive: false);
-  static final RegExp _SERIES_BOOK_PATTERN = RegExp(r'^(.*?)\s+Book\s+(\d+)\s+-\s+(.*)$', caseSensitive: false);
-  static final RegExp _SERIES_NUMBER_TITLE_PATTERN = RegExp(r'^(?:Book\s+)?(\d+)\s*[-_:]\s*(.+)$');
-  static final RegExp _CHAPTER_PREFIX_PATTERN = RegExp(r'^(?:Chapter|Track|Part|CD|Disc)\s*\d+\s*[-_:]\s*', caseSensitive: false);
-  static final RegExp _OF_PREFIX_PATTERN = RegExp(r'^of\s+\d+\s*[-_:]\s*', caseSensitive: false);
-  static final RegExp _NUMBER_PREFIX_PATTERN = RegExp(r'^\d+\s*[-_:]\s*', caseSensitive: false);
+  static final RegExp _authorTitlePattern = RegExp(r'^(.*?)\s+-\s+(.*)$');
+  static final RegExp _titleByAuthorPattern = RegExp(r'^(.*?)\s+by\s+(.*)$', caseSensitive: false);
+  static final RegExp _seriesBookPattern = RegExp(r'^(.*?)\s+Book\s+(\d+)\s+-\s+(.*)$', caseSensitive: false);
+  static final RegExp _seriesNumberTitlePattern = RegExp(r'^(?:Book\s+)?(\d+)\s*[-_:]\s*(.+)$');
+  static final RegExp _chapterPrefixPattern = RegExp(r'^(?:Chapter|Track|Part|CD|Disc)\s*\d+\s*[-_:]\s*', caseSensitive: false);
+  static final RegExp _ofPrefixPattern = RegExp(r'^of\s+\d+\s*[-_:]\s*', caseSensitive: false);
+  static final RegExp _numberPrefixPattern = RegExp(r'^\d+\s*[-_:]\s*', caseSensitive: false);
   
   // List of generic folder names to ignore for directory parsing
-  static final List<String> _GENERIC_FOLDERS = ['audio', 'audiobooks', 'books', 'files', 'media', 'library'];
+  static final List<String> _genericFolders = ['audio', 'audiobooks', 'books', 'files', 'media', 'library'];
   
   // List of keywords that suggest text is part of title, not author
-  static final List<String> _TITLE_KEYWORDS = ['book', 'part', 'volume', 'chapter', 'series'];
+  static final List<String> _titleKeywords = ['book', 'part', 'volume', 'chapter', 'series'];
   
   /// Parse a filename to extract potential metadata components
   static ParsedFilename parse(String filename, String filePath) {
@@ -48,7 +48,7 @@ class FilenameParser {
     // Try different parsing patterns
     
     // 1. Try "Author - Title" pattern
-    var authorTitleMatch = _AUTHOR_TITLE_PATTERN.firstMatch(cleanName);
+    var authorTitleMatch = _authorTitlePattern.firstMatch(cleanName);
     if (authorTitleMatch != null) {
       final authorPart = authorTitleMatch.group(1)?.trim() ?? '';
       final titlePart = authorTitleMatch.group(2)?.trim() ?? '';
@@ -63,7 +63,7 @@ class FilenameParser {
     }
     
     // 2. Try "Title by Author" pattern
-    var titleByAuthorMatch = _TITLE_BY_AUTHOR_PATTERN.firstMatch(cleanName);
+    var titleByAuthorMatch = _titleByAuthorPattern.firstMatch(cleanName);
     if (titleByAuthorMatch != null) {
       return ParsedFilename(
         title: titleByAuthorMatch.group(1)?.trim() ?? '',
@@ -72,7 +72,7 @@ class FilenameParser {
     }
     
     // 3. Try "Series Name Book X - Title" pattern
-    var seriesMatch = _SERIES_BOOK_PATTERN.firstMatch(cleanName);
+    var seriesMatch = _seriesBookPattern.firstMatch(cleanName);
     if (seriesMatch != null) {
       return ParsedFilename(
         title: seriesMatch.group(3)?.trim() ?? '',
@@ -102,19 +102,19 @@ class FilenameParser {
   /// Clean a filename for display purposes removing common prefixes
   static String cleanForDisplay(String filename) {
     // Handle series numbering in filenames
-    final seriesMatch = _SERIES_NUMBER_TITLE_PATTERN.firstMatch(filename);
+    final seriesMatch = _seriesNumberTitlePattern.firstMatch(filename);
     if (seriesMatch != null) {
       return seriesMatch.group(2) ?? filename;
     }
     
     // Remove common prefixes
     String cleaned = filename
-      .replaceFirst(_CHAPTER_PREFIX_PATTERN, '')
-      .replaceFirst(_OF_PREFIX_PATTERN, '')
-      .replaceFirst(_NUMBER_PREFIX_PATTERN, '');
+      .replaceFirst(_chapterPrefixPattern, '')
+      .replaceFirst(_ofPrefixPattern, '')
+      .replaceFirst(_numberPrefixPattern, '');
       
     // Try to extract just the title part if in "Author - Title" format
-    final authorMatch = _AUTHOR_TITLE_PATTERN.firstMatch(cleaned);
+    final authorMatch = _authorTitlePattern.firstMatch(cleaned);
     if (authorMatch != null) {
       final authorPart = authorMatch.group(1);
       final titlePart = authorMatch.group(2);
@@ -133,7 +133,7 @@ class FilenameParser {
   /// Extract author information from a filename or path
   static String extractAuthor(String filename, String filePath) {
     // 1. Look for "Author - Title" pattern
-    final authorMatch = _AUTHOR_TITLE_PATTERN.firstMatch(filename);
+    final authorMatch = _authorTitlePattern.firstMatch(filename);
     if (authorMatch != null && authorMatch.group(1) != null) {
       final authorPart = authorMatch.group(1)!;
       
@@ -165,7 +165,7 @@ class FilenameParser {
   /// Check if a string likely contains title components rather than author name
   static bool _looksLikeTitle(String text) {
     final lowerText = text.toLowerCase();
-    return _TITLE_KEYWORDS.any((keyword) => lowerText.contains(keyword));
+    return _titleKeywords.any((keyword) => lowerText.contains(keyword));
   }
   
   /// Try to extract metadata from the directory name
@@ -174,7 +174,7 @@ class FilenameParser {
       final parentDir = path_util.basename(path_util.dirname(filePath));
       
       // Skip if directory is too generic
-      if (_GENERIC_FOLDERS.contains(parentDir.toLowerCase())) {
+      if (_genericFolders.contains(parentDir.toLowerCase())) {
         return null;
       }
       

@@ -3,6 +3,7 @@ import 'dart:async'; // For timeout handling
 import 'package:http/http.dart' as http;
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
 
 class OpenLibraryProvider implements MetadataProvider {
   final http.Client _client;
@@ -40,14 +41,14 @@ class OpenLibraryProvider implements MetadataProvider {
           .cast<AudiobookMetadata>()
           .toList();
       } else {
-        print('API Error: ${response.statusCode} - ${response.body}');
+        Logger.debug('API Error: ${response.statusCode} - ${response.body}');
         return [];
       }
     } on TimeoutException catch (e) {
-      print('API request timed out: $e');
+      Logger.debug('API request timed out: $e');
       return []; // Return empty list instead of throwing to prevent UI lockups
     } catch (e) {
-      print('Error searching Open Library: $e');
+      Logger.debug('Error searching Open Library: $e');
       return []; // Return empty list instead of throwing to prevent UI lockups
     }
   }
@@ -68,14 +69,14 @@ class OpenLibraryProvider implements MetadataProvider {
         final data = json.decode(response.body);
         return _parseOpenLibraryBookDetails(data, id);
       } else {
-        print('API Error: ${response.statusCode} - ${response.body}');
+        Logger.debug('API Error: ${response.statusCode} - ${response.body}');
         return null;
       }
     } on TimeoutException catch (e) {
-      print('API request timed out: $e');
+      Logger.debug('API request timed out: $e');
       return null;
     } catch (e) {
-      print('Error fetching book by ID: $e');
+      Logger.debug('Error fetching book by ID: $e');
       return null;
     }
   }
@@ -95,13 +96,13 @@ class OpenLibraryProvider implements MetadataProvider {
         if (coverId != null) {
           // Use large cover when available
           thumbnailUrl = '$coverUrl/id/$coverId-L.jpg';
-          print('LOG: OpenLibrary thumbnail URL: $thumbnailUrl');
+          Logger.debug('LOG: OpenLibrary thumbnail URL: $thumbnailUrl');
         }
       } else if (doc.containsKey('cover_edition_key')) {
         final editionKey = doc['cover_edition_key'];
         if (editionKey != null) {
           thumbnailUrl = '$coverUrl/olid/$editionKey-L.jpg';
-          print('LOG: OpenLibrary edition thumbnail URL: $thumbnailUrl');
+          Logger.debug('LOG: OpenLibrary edition thumbnail URL: $thumbnailUrl');
         }
       }
       
@@ -143,7 +144,7 @@ class OpenLibraryProvider implements MetadataProvider {
         provider: 'Open Library',
       );
     } catch (e) {
-      print('Error parsing OpenLibrary book: $e');
+      Logger.debug('Error parsing OpenLibrary book: $e');
       return null;
     }
   }
@@ -182,10 +183,10 @@ class OpenLibraryProvider implements MetadataProvider {
       if (data.containsKey('covers') && data['covers'] is List && (data['covers'] as List).isNotEmpty) {
         final coverId = (data['covers'] as List).first;
         thumbnailUrl = '$coverUrl/id/$coverId-L.jpg';
-        print('LOG: Using OpenLibrary work cover ID: $coverId');
+        Logger.debug('LOG: Using OpenLibrary work cover ID: $coverId');
       }
       
-      print('LOG: OpenLibrary details thumbnail URL: $thumbnailUrl');
+      Logger.debug('LOG: OpenLibrary details thumbnail URL: $thumbnailUrl');
       
       // Creating a basic metadata object with available info
       return AudiobookMetadata(
@@ -205,7 +206,7 @@ class OpenLibraryProvider implements MetadataProvider {
         provider: 'Open Library',
       );
     } catch (e) {
-      print('Error parsing OpenLibrary book details: $e');
+      Logger.debug('Error parsing OpenLibrary book details: $e');
       return null;
     }
   }

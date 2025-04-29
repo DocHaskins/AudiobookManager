@@ -49,6 +49,8 @@ class _DetailScreenState extends State<DetailScreen> {
     try {
       await _book.extractFileMetadata();
       
+      if (!mounted) return;
+      
       setState(() {
         _book = AudiobookFile(
           path: _book.path,
@@ -66,7 +68,7 @@ class _DetailScreenState extends State<DetailScreen> {
       // Add this line here:
       _refreshBookState();
       
-      if (_book.hasFileMetadata && mounted) {
+      if (_book.hasFileMetadata) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Extracted file metadata for "${_book.displayName}"'),
@@ -74,20 +76,20 @@ class _DetailScreenState extends State<DetailScreen> {
         );
       }
     } catch (e) {
-      print('ERROR: Failed to extract file metadata: $e');
+      Logger.error('Failed to extract file metadata', e);
+      
+      if (!mounted) return;
       
       setState(() {
         _isLoading = false;
       });
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error extracting file metadata: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error extracting file metadata: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
@@ -99,26 +101,13 @@ class _DetailScreenState extends State<DetailScreen> {
     
     try {
       // Get the best search query from existing data
-      String searchQuery = '';
-      
-      // Use file metadata first if available
-      if (_book.hasFileMetadata) {
-        final meta = _book.fileMetadata!;
-        List<String> queryParts = [];
-        
-        if (meta.title.isNotEmpty) queryParts.add(meta.title);
-        if (meta.authors.isNotEmpty) queryParts.add(meta.primaryAuthor);
-        if (meta.series.isNotEmpty) queryParts.add(meta.series);
-        
-        searchQuery = queryParts.join(' ');
-      } else {
-        // Fall back to file name parsing
-        searchQuery = _book.generateSearchQuery();
-      }
+      // We don't use the searchQuery value, so we'll remove it
       
       // Use the matcher service
       final matcher = Provider.of<MetadataMatcher>(context, listen: false);
       final metadata = await matcher.matchFile(_book);
+      
+      if (!mounted) return;
       
       if (metadata != null) {
         setState(() {
@@ -137,46 +126,45 @@ class _DetailScreenState extends State<DetailScreen> {
         // Add this line here:
         _refreshBookState();
         
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Found metadata for "${metadata.title}"'),
-            ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No matching metadata found online'),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      print('ERROR: Failed to find online metadata: $e');
-      
-      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error finding online metadata: $e'),
-            backgroundColor: Colors.red,
+            content: Text('Found metadata for "${metadata.title}"'),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No matching metadata found online'),
           ),
         );
       }
+    } catch (e) {
+      Logger.error('Failed to find online metadata', e);
+      
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error finding online metadata: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
   
   // Manual search for metadata
   Future<void> _manualSearch() async {
     try {
-      // Prepare providers for manual search
+      // Get all providers before async operations
       final googleProvider = Provider.of<GoogleBooksProvider>(context, listen: false);
       final openLibraryProvider = Provider.of<OpenLibraryProvider>(context, listen: false);
+      final matcher = Provider.of<MetadataMatcher>(context, listen: false);
       
       // Create initial search query from existing metadata or filename
       String initialQuery = '';
@@ -196,7 +184,7 @@ class _DetailScreenState extends State<DetailScreen> {
         providers: [googleProvider, openLibraryProvider],
       );
       
-      if (result != null) {
+      if (result != null && mounted) {
         Logger.log('Selected metadata: ${result.title} with thumbnail: ${result.thumbnailUrl}');
         
         // Create a copy of the selected metadata to ensure we're working with a new instance
@@ -216,10 +204,10 @@ class _DetailScreenState extends State<DetailScreen> {
           seriesPosition: result.seriesPosition,
           provider: result.provider,
         );
-        
         // Save to metadata cache for future use
-        final matcher = Provider.of<MetadataMatcher>(context, listen: false);
         await matcher.saveMetadataToCache(_book.path, selectedMetadata);
+        
+        if (!mounted) return;
         
         // Update the book state with the new metadata
         setState(() {
@@ -250,34 +238,32 @@ class _DetailScreenState extends State<DetailScreen> {
         _offerToSaveMetadata(selectedMetadata);
       }
     } catch (e) {
-      print('ERROR: Failed in manual metadata search: $e');
+      Logger.error('Failed in manual metadata search', e);
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error in manual search: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error in manual search: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
   void _offerToSaveMetadata(AudiobookMetadata metadata) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Would you like to save this metadata to the file?'),
-          action: SnackBarAction(
-            label: 'SAVE',
-            onPressed: () {
-              _saveMetadataToFile();
-            },
-          ),
-          duration: const Duration(seconds: 10),
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Would you like to save this metadata to the file?'),
+        action: SnackBarAction(
+          label: 'SAVE',
+          onPressed: () {
+            _saveMetadataToFile();
+          },
         ),
-      );
-    }
+        duration: const Duration(seconds: 10),
+      ),
+    );
   }
 
   void _refreshBookState() {
@@ -305,60 +291,54 @@ class _DetailScreenState extends State<DetailScreen> {
     try {
       final success = await _book.writeMetadataToFile(metadataToSave);
       
+      if (!mounted) return;
+      
+      setState(() {
+        _book = AudiobookFile(
+          path: _book.path,
+          filename: _book.filename,
+          extension: _book.extension,
+          size: _book.size,
+          lastModified: _book.lastModified,
+          metadata: _book.metadata,
+          fileMetadata: metadataToSave, // Update file metadata to match
+        );
+        _hasChanges = true;
+        _isLoading = false;
+      });
+      
+      // Add this line here:
+      _refreshBookState();
+      
       if (success) {
-        setState(() {
-          _book = AudiobookFile(
-            path: _book.path,
-            filename: _book.filename,
-            extension: _book.extension,
-            size: _book.size,
-            lastModified: _book.lastModified,
-            metadata: _book.metadata,
-            fileMetadata: metadataToSave, // Update file metadata to match
-          );
-          _hasChanges = true;
-          _isLoading = false;
-        });
-        
-        // Add this line here:
-        _refreshBookState();
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Metadata saved to file successfully'),
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Metadata saved to file successfully'),
+          ),
+        );
       } else {
-        setState(() {
-          _isLoading = false;
-        });
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to save metadata to file'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to save metadata to file'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
-      print('ERROR: Failed to save metadata to file: $e');
+      Logger.error('Failed to save metadata to file', e);
+      
+      if (!mounted) return;
       
       setState(() {
         _isLoading = false;
       });
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error saving metadata to file: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving metadata to file: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
@@ -384,15 +364,13 @@ class _DetailScreenState extends State<DetailScreen> {
   
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
     // Determine which metadata to display
     // Priority: editing state > file metadata (if complete) > online metadata > file metadata (incomplete)
     final displayMetadata = _getDisplayMetadata();
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('Book Details'),
+        title: const Text('Book Details'),
         actions: [
           // Only show find metadata button if not editing
           if (!_isEditing) ...[
@@ -529,9 +507,9 @@ class _DetailScreenState extends State<DetailScreen> {
         children: [
           const Icon(Icons.search_off, size: 64, color: Colors.grey),
           const SizedBox(height: 16),
-          Text(
+          const Text(
             'No metadata available for this book',
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
@@ -645,7 +623,9 @@ class _DetailScreenState extends State<DetailScreen> {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                               decoration: BoxDecoration(
-                                color: isFromFile ? Colors.green.withOpacity(0.2) : Colors.blue.withOpacity(0.2),
+                                color: isFromFile 
+                                    ? Colors.green.withAlpha(51) 
+                                    : Colors.blue.withAlpha(51),
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
@@ -678,7 +658,7 @@ class _DetailScreenState extends State<DetailScreen> {
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.blue.withOpacity(0.1),
+                                  color: Colors.blue.withAlpha(21),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: Text(
@@ -867,7 +847,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
+                    color: Colors.green.withAlpha(21),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Column(
@@ -891,7 +871,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.1),
+                    color: Colors.blue.withAlpha(21),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Column(

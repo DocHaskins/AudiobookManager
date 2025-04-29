@@ -4,6 +4,7 @@ import 'dart:async'; // For timeout handling
 import 'package:http/http.dart' as http;
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
 
 class GoogleBooksProvider implements MetadataProvider {
   String apiKey = '';
@@ -50,17 +51,17 @@ class GoogleBooksProvider implements MetadataProvider {
           .cast<AudiobookMetadata>() // Cast to the correct type
           .toList();
       } else {
-        print('API Error: ${response.statusCode} - ${response.body}');
+        Logger.error('API Error: ${response.statusCode} - ${response.body}');
         if (response.statusCode == 403 || response.statusCode == 401) {
           throw Exception('API key is invalid or quota exceeded');
         }
         return [];
       }
     } on TimeoutException catch (e) {
-      print('API request timed out: $e');
+      Logger.error('API request timed out', e);
       throw Exception('Connection timed out. Please check your internet connection and try again.');
     } catch (e) {
-      print('Error searching Google Books: $e');
+      Logger.error('Error searching Google Books', e);
       rethrow; // Rethrow to allow callers to handle the error
     }
   }
@@ -84,17 +85,17 @@ class GoogleBooksProvider implements MetadataProvider {
         final data = json.decode(response.body);
         return _parseBookData(data);
       } else {
-        print('API Error: ${response.statusCode} - ${response.body}');
+        Logger.error('API Error: ${response.statusCode} - ${response.body}');
         if (response.statusCode == 403 || response.statusCode == 401) {
           throw Exception('API key is invalid or quota exceeded');
         }
         return null;
       }
     } on TimeoutException catch (e) {
-      print('API request timed out: $e');
+      Logger.error('API request timed out', e);
       throw Exception('Connection timed out. Please check your internet connection and try again.');
     } catch (e) {
-      print('Error fetching book by ID: $e');
+      Logger.error('Error fetching book by ID', e);
       rethrow; // Rethrow to allow callers to handle the error
     }
   }
@@ -125,9 +126,9 @@ class GoogleBooksProvider implements MetadataProvider {
         }
         
         // Log the thumbnail URL for debugging
-        print('LOG: Extracted thumbnail URL: $thumbnailUrl');
+        Logger.debug('Extracted thumbnail URL: $thumbnailUrl');
       } else {
-        print('LOG: No image links found in Google Books response');
+        Logger.debug('No image links found in Google Books response');
       }
       
       // Extract authors list safely
@@ -181,7 +182,7 @@ class GoogleBooksProvider implements MetadataProvider {
         provider: 'Google Books',
       );
     } catch (e) {
-      print('Error parsing Google Books data: $e');
+      Logger.error('Error parsing Google Books data', e);
       return null;
     }
   }

@@ -1,6 +1,8 @@
 name: audiobook_organizer
 description: An audiobook organization tool for Windows
 version: 1.0.0+1
+# Mark package as not for publishing since it uses git dependencies
+publish_to: none
 
 environment:
   sdk: ">=2.19.0 <3.0.0"

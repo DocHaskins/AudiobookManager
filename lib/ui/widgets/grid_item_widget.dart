@@ -24,8 +24,8 @@ class AudiobookGridItem extends StatelessWidget {
     }
     
     // Fallback for unsupported types
-    return Card(
-      child: const Center(
+    return const Card(
+      child: Center(
         child: Text('Unsupported item type'),
       ),
     );

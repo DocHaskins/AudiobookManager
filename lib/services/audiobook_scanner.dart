@@ -12,6 +12,7 @@ import 'package:audiobook_organizer/utils/metadata_manager.dart';
 
 /// Service for scanning directories and finding audiobook files
 class AudiobookScanner {
+  final Map<String, List<AudiobookFile>> _cachedScans = {};
   // Static constants for supported file formats
   static final List<String> _supportedExtensions = [
     '.mp3', '.m4a', '.m4b', '.aac', '.flac', '.ogg', '.wma', '.wav', '.opus'
@@ -194,18 +195,18 @@ class AudiobookScanner {
           // Debug what's missing
           if (file.metadata != null) {
             final meta = file.metadata!;
-            Logger.log('Online metadata: title=${meta.title.isNotEmpty}, ' +
-                      'authors=${meta.authors.isNotEmpty}, ' +
-                      'thumbnail=${meta.thumbnailUrl.isNotEmpty}, ' +
-                      'desc=${meta.description.isNotEmpty}, ' +
+            Logger.log('Online metadata: title=${meta.title.isNotEmpty}, '
+                      'authors=${meta.authors.isNotEmpty}, '
+                      'thumbnail=${meta.thumbnailUrl.isNotEmpty}, '
+                      'desc=${meta.description.isNotEmpty}, '
                       'series=${meta.series.isNotEmpty}');
           }
           if (file.fileMetadata != null) {
             final meta = file.fileMetadata!;
-            Logger.log('File metadata: title=${meta.title.isNotEmpty}, ' +
-                      'authors=${meta.authors.isNotEmpty}, ' +
-                      'thumbnail=${meta.thumbnailUrl.isNotEmpty}, ' +
-                      'desc=${meta.description.isNotEmpty}, ' +
+            Logger.log('File metadata: title=${meta.title.isNotEmpty}, '
+                      'authors=${meta.authors.isNotEmpty}, '
+                      'thumbnail=${meta.thumbnailUrl.isNotEmpty}, '
+                      'desc=${meta.description.isNotEmpty}, '
                       'series=${meta.series.isNotEmpty}');
           }
         }
@@ -236,7 +237,6 @@ class AudiobookScanner {
     return file.fileMetadata ?? file.metadata!;
   }
   
-  /// Get files needing metadata review (for Files view)
   Future<List<AudiobookFile>> scanForFilesView(
     String dirPath, 
     {bool? recursive}
@@ -251,6 +251,14 @@ class AudiobookScanner {
       Logger.log('Extracting metadata for ${allFiles.length} files');
       for (var file in allFiles) {
         await file.extractFileMetadata();
+        
+        // Also check for cached online metadata
+        if (metadataMatcher != null) {
+          final cachedMetadata = await metadataMatcher!.getMetadataFromCache(file.path);
+          if (cachedMetadata != null) {
+            file.metadata = cachedMetadata;  // Assign the cached metadata to the file
+          }
+        }
       }
       
       // Filter for files needing metadata review
@@ -459,8 +467,15 @@ class AudiobookScanner {
   
   /// Scan a directory for audiobook files
   Future<List<AudiobookFile>> scanDirectory(String dirPath, {bool? recursive}) async {
-    List<AudiobookFile> results = [];
+    // Check if we already scanned this directory with the same recursion settings
+    final cacheKey = "$dirPath:${recursive ?? true}";
+    if (_cachedScans.containsKey(cacheKey)) {
+      Logger.log('Using cached scan results for: $dirPath');
+      return _cachedScans[cacheKey]!;
+    }
     
+    // Original scanning code
+    List<AudiobookFile> results = [];
     try {
       final dir = Directory(dirPath);
       if (!await dir.exists()) {
@@ -516,6 +531,9 @@ class AudiobookScanner {
       }
       
       Logger.log('Found ${results.length} audiobook files in directory: $dirPath');
+      
+      // Cache the results
+      _cachedScans[cacheKey] = results;
     } catch (e) {
       Logger.error('Error scanning directory', e);
     }

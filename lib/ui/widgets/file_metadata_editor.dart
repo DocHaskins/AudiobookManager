@@ -2,8 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
-import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
-import 'package:path/path.dart' as path_util;
 
 class FileMetadataEditor extends StatefulWidget {
   final AudiobookFile file;
@@ -18,10 +16,10 @@ class FileMetadataEditor extends StatefulWidget {
   }) : super(key: key);
   
   @override
-  _FileMetadataEditorState createState() => _FileMetadataEditorState();
+  FileMetadataEditorState createState() => FileMetadataEditorState();
 }
 
-class _FileMetadataEditorState extends State<FileMetadataEditor> {
+class FileMetadataEditorState extends State<FileMetadataEditor> {
   late TextEditingController titleController;
   late TextEditingController authorController;
   late TextEditingController seriesController;

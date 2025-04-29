@@ -5,7 +5,6 @@ import 'package:file_selector/file_selector.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_collection.dart';
 import 'package:audiobook_organizer/services/audiobook_scanner.dart';
-import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/storage/library_storage.dart';
 import 'package:audiobook_organizer/ui/widgets/library_sidebar.dart';
 import 'package:audiobook_organizer/ui/widgets/book_grid_item.dart';
@@ -15,6 +14,7 @@ import 'package:audiobook_organizer/ui/widgets/collection_list_item.dart';
 import 'package:audiobook_organizer/ui/dialogs/library_dialogs.dart';
 import 'package:audiobook_organizer/ui/screens/detail_screen.dart';
 import 'package:audiobook_organizer/ui/screens/file_detail_screen.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({Key? key}) : super(key: key);
@@ -97,6 +97,8 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         }
       }
       
+      if (!mounted) return;
+      
       setState(() {
         _individualBooks = completeBooks;
         _filesNeedingReview = incompleteBooks;
@@ -107,22 +109,22 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         _extractGenres();
       });
       
-      print('LOG: Loaded ${_individualBooks.length} books, ${_collections.length} collections, and ${_filesNeedingReview.length} files needing review');
+      Logger.log('Loaded ${_individualBooks.length} books, ${_collections.length} collections, and ${_filesNeedingReview.length} files needing review');
     } catch (e) {
-      print('ERROR: Failed to load library: $e');
+      Logger.error('Failed to load library', e);
+      
+      if (!mounted) return;
       
       setState(() {
         _isLoading = false;
       });
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading library: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading library: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
@@ -148,6 +150,7 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   
   // Scan a directory for audiobooks
   Future<void> _scanDirectory() async {
+    final scanner = Provider.of<AudiobookScanner>(context, listen: false);
     final String? directory = await getDirectoryPath();
     if (directory == null) return;
     
@@ -156,14 +159,11 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
     });
     
     try {
-      final scanner = Provider.of<AudiobookScanner>(context, listen: false);
       
-      // Get library view books (those with COMPLETE metadata)
-      // Change matchOnline to true so we attempt to get full metadata immediately
       final libraryResults = await scanner.scanForLibraryView(directory, matchOnline: true);
-      
-      // Get files view (files needing metadata review)
       final filesResults = await scanner.scanForFilesView(directory);
+      
+      if (!mounted) return;
       
       // Update state
       setState(() {
@@ -188,49 +188,48 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
       // Save the library
       await _saveLibrary();
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Scanned directory: $directory\nFound ${libraryResults.length} complete items and ${filesResults.length} files needing metadata'),
-            duration: const Duration(seconds: 4),
-          ),
-        );
-        
-        // If we have files needing metadata, show a message about processing them
-        if (filesResults.isNotEmpty) {
-          Future.delayed(const Duration(milliseconds: 500), () {
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: const Text('Files needing complete metadata were found. Switch to the Files tab to find online metadata.'),
-                  action: SnackBarAction(
-                    label: 'SWITCH',
-                    onPressed: () {
-                      _tabController.animateTo(1); // Switch to Files tab
-                    },
-                  ),
-                  duration: const Duration(seconds: 6),
-                ),
-              );
-            }
-          });
-        }
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Scanned directory: $directory\nFound ${libraryResults.length} complete items and ${filesResults.length} files needing metadata'),
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      
+      if (filesResults.isNotEmpty) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (!mounted) return;
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Files needing complete metadata were found. Switch to the Files tab to find online metadata.'),
+              action: SnackBarAction(
+                label: 'SWITCH',
+                onPressed: () {
+                  _tabController.animateTo(1); // Switch to Files tab
+                },
+              ),
+              duration: const Duration(seconds: 6),
+            ),
+          );
+        });
       }
     } catch (e) {
-      print('ERROR: Error scanning directory: $e');
+      Logger.error('Error scanning directory', e);
+      
+      if (!mounted) return;
       
       setState(() {
         _isLoading = false;
       });
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error scanning directory: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error scanning directory: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
@@ -243,16 +242,16 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         _collections
       );
     } catch (e) {
-      print('ERROR: Failed to save library: $e');
+      Logger.error('Failed to save library', e);
       
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error saving library: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving library: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
   
@@ -311,7 +310,7 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         ),
       );
       
-      if (result == true) {
+      if (result == true && mounted) {
         await _loadLibrary();
       }
     } else {
@@ -323,7 +322,7 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         ),
       );
       
-      if (result == true) {
+      if (result == true && mounted) {
         await _loadLibrary();
       }
     }
@@ -335,7 +334,7 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
       collection: collection,
     );
     
-    if (result != null) {
+    if (result != null && mounted) {
       // Handle different actions based on result
       switch (result['action']) {
         case 'open_file':
@@ -355,14 +354,6 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
       await _loadLibrary();
     }
   }
-  
-  Widget _buildProcessPendingButton() {
-    return ElevatedButton.icon(
-      onPressed: _processPendingFiles,
-      icon: const Icon(Icons.cloud_download),
-      label: const Text('Match Online Metadata'),
-    );
-  }
 
   Future<void> _processPendingFiles() async {
     if (_filesNeedingReview.isEmpty) {
@@ -380,8 +371,12 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
       final scanner = Provider.of<AudiobookScanner>(context, listen: false);
       final processedCount = await scanner.processFilesWithOnlineMetadata(_filesNeedingReview);
       
+      if (!mounted) return;
+      
       // Force reload library to update UI state
       await _loadLibrary();
+      
+      if (!mounted) return;
       
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -389,7 +384,9 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         ),
       );
     } catch (e) {
-      print('ERROR: Failed to process pending files: $e');
+      Logger.error('Failed to process pending files', e);
+      
+      if (!mounted) return;
       
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -398,15 +395,16 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         ),
       );
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
   
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final items = _getFilteredItems();
     
     return Scaffold(
@@ -431,7 +429,7 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
                 prefixIcon: const Icon(Icons.search),
                 contentPadding: EdgeInsets.zero,
                 filled: true,
-                fillColor: Colors.white.withOpacity(0.2),
+                fillColor: Colors.white.withAlpha(51), // 0.2 opacity = 51/255
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(20),
                   borderSide: BorderSide.none,
@@ -461,7 +459,7 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
             icon: const Icon(Icons.settings),
             onPressed: () async {
               final result = await Navigator.pushNamed(context, '/settings');
-              if (result == true) {
+              if (result == true && mounted) {
                 // Settings changed, reload library
                 _loadLibrary();
               }
