@@ -48,10 +48,10 @@ class FilenameParser {
     // Try different parsing patterns
     
     // 1. Try "Author - Title" pattern
-    var authorTitleMatch = _authorTitlePattern.firstMatch(cleanName);
+    var authorTitleMatch = RegExp(r'^(.*?)\s+-\s+(.*)$').firstMatch(cleanName);
     if (authorTitleMatch != null) {
       final authorPart = authorTitleMatch.group(1)?.trim() ?? '';
-      final titlePart = authorTitleMatch.group(2)?.trim() ?? '';
+      final titlePart = authorTitleMatch.group(2)?.trim() ?? ''; 
       
       // Check if the author part contains words that suggest it's not an author
       if (!_looksLikeTitle(authorPart)) {

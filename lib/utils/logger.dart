@@ -1,5 +1,7 @@
 // File: lib/utils/logger.dart
 import 'package:logging/logging.dart' as logging;
+import 'dart:io' show Platform;
+import 'dart:developer' as developer;
 
 /// Log levels supported by the application
 enum LogLevel { debug, info, warning, error }
@@ -10,9 +12,19 @@ class Logger {
   static final _logger = logging.Logger('AudiobookOrganizer');
   static bool _initialized = false;
   
+  // Flag to determine if we're in debug mode
+  static bool _isDebugMode = false;
+  
   /// Initialize the logger with appropriate handlers and level
-  static void initialize({LogLevel minimumLevel = LogLevel.info, bool includeTimestamp = true}) {
+  static void initialize({
+    LogLevel minimumLevel = LogLevel.info, 
+    bool includeTimestamp = true,
+    bool? isDebugMode,
+  }) {
     if (_initialized) return;
+    
+    // Set debug mode - if not explicitly provided, try to detect
+    _isDebugMode = isDebugMode ?? _detectDebugMode();
     
     // Set up the logging level
     logging.hierarchicalLoggingEnabled = true;
@@ -38,17 +50,67 @@ class Logger {
       final message = includeTimestamp 
           ? '${record.time}: ${record.message}'
           : record.message;
-          
+      
+      // Format message with error information if present
+      String formattedMessage;
       if (record.error != null) {
-        // ignore: avoid_print
-        Logger.debug('${record.level.name}: $message - ${record.error}\n${record.stackTrace ?? ""}');
+        formattedMessage = '${record.level.name}: $message - ${record.error}\n${record.stackTrace ?? ""}';
       } else {
-        // ignore: avoid_print
-        Logger.debug('${record.level.name}: $message');
+        formattedMessage = '${record.level.name}: $message';
       }
+      
+      // Output to appropriate channel based on environment
+      _logToConsole(formattedMessage, record.level);
     });
     
     _initialized = true;
+  }
+  
+  /// Attempt to detect if we're running in debug mode
+  static bool _detectDebugMode() {
+    // Various methods to detect debug mode
+    
+    // Check for common environment variables
+    if (Platform.environment.containsKey('FLUTTER_DEBUG') || 
+        Platform.environment.containsKey('DEBUG_MODE')) {
+      return true;
+    }
+    
+    // In a real app, you'd use more sophisticated detection:
+    // 1. In Flutter: const bool kDebugMode = !bool.fromEnvironment('dart.vm.product');
+    // 2. In pure Dart: check VM flags or assert behavior
+    
+    // For Visual Studio integration, we'll use a simple assertion check
+    // This works because assertions are only enabled in debug mode
+    bool isDebug = false;
+    assert(() {
+      isDebug = true;
+      return true;
+    }());
+    
+    return isDebug;
+  }
+  
+  /// Log to the appropriate console based on platform and environment
+  static void _logToConsole(String message, logging.Level level) {
+    // Always log to developer console in debug mode
+    if (_isDebugMode) {
+      // For Visual Studio debug console integration
+      if (Platform.isWindows) {
+        // Windows console logging works well with print for VS debug console
+        // ignore: avoid_print
+        print(message);
+      } else {
+        // For other platforms, use developer.log which shows better in IDEs
+        final name = level.name.toLowerCase();
+        developer.log(message, name: name);
+      }
+    }
+    
+    // For non-debug mode, we could implement other logging strategies:
+    // - Write to log files
+    // - Send to crash reporting service
+    // - etc.
   }
   
   /// Ensure logger is initialized before use
@@ -62,6 +124,11 @@ class Logger {
   static void debug(String message) {
     _ensureInitialized();
     _logger.fine(message);
+    
+    // Direct debug output for Visual Studio when in debug mode
+    if (_isDebugMode) {
+      _logToConsole('DEBUG: $message', logging.Level.FINE);
+    }
   }
   
   /// Log an informational message
@@ -81,4 +148,7 @@ class Logger {
     _ensureInitialized();
     _logger.severe(message, error, stackTrace);
   }
+  
+  /// Check if currently in debug mode
+  static bool get isDebugMode => _isDebugMode;
 }

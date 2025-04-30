@@ -20,6 +20,9 @@ class AudioMetadataExtractor {
     'year': ['Year', 'TYER', 'TYE'],
     'genre': ['Genre', 'TCON', 'TCO'],
     'comment': ['Comment', 'COMM'],
+    'length': ['Length', 'TLEN'],  // Duration in milliseconds
+    'picture': ['Picture', 'APIC'], // Embedded album art
+    'bitrate': ['TBPM'],  // Might store bitrate in some files
   };
   
   // Patterns for extracting series information from album field
@@ -28,7 +31,7 @@ class AudioMetadataExtractor {
   
   /// Constructor
   AudioMetadataExtractor() {
-    Logger.debug('AudioMetadataExtractor initialized');
+    //Logger.debug('AudioMetadataExtractor initialized');
   }
   
   /// Check if the file type is supported for metadata extraction
@@ -69,6 +72,10 @@ class AudioMetadataExtractor {
         return null;
       }
       
+      // Get file stats for audio quality information
+      final fileStats = await file.stat();
+      final fileSize = fileStats.size;
+      
       final bytes = await file.readAsBytes();
       final mp3Data = MP3Instance(bytes);
       
@@ -84,12 +91,78 @@ class AudioMetadataExtractor {
       final title = _getTagValue(metaTags, _id3TagNames['title']!);
       final artist = _getTagValue(metaTags, _id3TagNames['artist']!);
       final album = _getTagValue(metaTags, _id3TagNames['album']!);
+      //final contributingArtists = _getTagValue(metaTags, ['TPE2', 'TP2']);
       final year = _getTagValue(metaTags, _id3TagNames['year']!);
       final genre = _getTagValue(metaTags, _id3TagNames['genre']!);
       final comment = _getTagValue(metaTags, _id3TagNames['comment']!);
+      // Logger.log('Extracted raw metadata:');
+      // Logger.log('Title: $title');
+      // Logger.log('Artist: $artist');
+      // Logger.log('Album: $album');
+      // Logger.log('Contributing Artists: $contributingArtists');
+      String finalTitle = title ?? '';
+      //List<String> finalAuthors = _extractAuthors(artist);
+
+      // Extract audio quality information
+      String? audioDuration;
+      String? bitrate;
+      int? channels = 2; // Default to stereo
+      String? sampleRate;
+      
+      // Try to extract duration from metadata
+      final lengthTag = _getTagValue(metaTags, _id3TagNames['length']!);
+      if (lengthTag != null && lengthTag.isNotEmpty) {
+        try {
+          final durationMs = int.parse(lengthTag);
+          final durationSec = durationMs ~/ 1000;
+          final hours = durationSec ~/ 3600;
+          final minutes = (durationSec % 3600) ~/ 60;
+          final seconds = durationSec % 60;
+          audioDuration = '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+        } catch (e) {
+          Logger.debug('Error parsing duration: $e');
+        }
+      }
+      
+      // Since MP3Instance doesn't expose bitrate directly, estimate from file size
+      // Standard MP3 bitrates: 128kbps, 192kbps, 256kbps, 320kbps
+      if (fileSize > 0) {
+        // Heuristic: Roughly estimate bitrate based on file size per minute
+        // This won't be accurate but gives a ballpark figure
+        // Try to use duration if available to make a better estimate
+        
+        // First try to determine if this is a high quality file
+        // Common bitrates for audiobooks: 64, 128, 192, 256
+        if (fileSize > 15 * 1024 * 1024) {  // If over 15MB
+          bitrate = '192kbps';  // Likely higher quality
+        } else {
+          bitrate = '128kbps';  // Standard quality
+        }
+      }
+      
+      // If duration not found in metadata, estimate it from file size and estimated bitrate
+      if (audioDuration == null && bitrate != null) {
+        try {
+          final bitrateValue = int.parse(bitrate.replaceAll('kbps', ''));
+          if (bitrateValue > 0) {
+            // Estimate duration in seconds: fileSize (bytes) / (bitrate (kbps) * 125)
+            final estimatedDurationSec = fileSize ~/ (bitrateValue * 125);
+            final hours = estimatedDurationSec ~/ 3600;
+            final minutes = (estimatedDurationSec % 3600) ~/ 60;
+            final seconds = estimatedDurationSec % 60;
+            audioDuration = '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+          }
+        } catch (e) {
+          Logger.debug('Error estimating duration: $e');
+        }
+      }
+      
+      // Standard sample rate for MP3 is 44.1kHz
+      sampleRate = '44.1kHz';
       
       Logger.log('Extracted metadata from file: $filePath');
       Logger.debug('Title: $title, Artist: $artist, Album: $album');
+      Logger.debug('Audio Quality: Duration: $audioDuration, Bitrate: $bitrate');
       
       // Try to extract series information from the album field
       final seriesInfo = _extractSeriesInfo(album);
@@ -99,9 +172,27 @@ class AudioMetadataExtractor {
       // Create a list of authors by splitting the artist field if it contains multiple authors
       List<String> authors = _extractAuthors(artist);
       
+      // Extract or check for cover art
+      bool hasCoverArt = _checkForCoverArt(metaTags);
+      String thumbnailUrl = '';
+      
+      // If we have embedded cover art, extract it
+      if (hasCoverArt) {
+        try {
+          // Ideally, extract and write the cover to an external file
+          // For now, just note that it's available
+          Logger.debug('File has embedded cover art');
+          
+          // In a real implementation, you'd extract and save the image to a local file
+          // thumbnailUrl = await _extractAndSaveCoverArt(metaTags, filePath);
+        } catch (e) {
+          Logger.error('Error extracting cover art', e);
+        }
+      }
+      
       return AudiobookMetadata(
-        id: path_util.basename(filePath), // Use filename as ID for local metadata
-        title: title.isNotEmptyOrNull ? title! : path_util.basenameWithoutExtension(filePath),
+        id: path_util.basename(filePath),
+        title: title.isNotEmptyOrNull ? finalTitle : path_util.basenameWithoutExtension(filePath),
         authors: authors,
         description: comment.orEmpty,
         publisher: '',
@@ -109,15 +200,36 @@ class AudioMetadataExtractor {
         categories: genre.isNotEmptyOrNull ? [genre!] : [],
         averageRating: 0.0,
         ratingsCount: 0,
-        thumbnailUrl: '',
+        thumbnailUrl: thumbnailUrl,
         language: '',
         series: series,
         seriesPosition: seriesPosition,
+        // Add audio quality information
+        audioDuration: audioDuration,
+        bitrate: bitrate,
+        channels: channels,
+        sampleRate: sampleRate,
+        fileFormat: 'MP3',
         provider: 'File Metadata',
       );
     } catch (e) {
       Logger.error('Failed to extract MP3 metadata', e);
       return null;
+    }
+  }
+  
+  /// Helper method to check if the file has embedded cover art
+  bool _checkForCoverArt(Map<String, dynamic> metaTags) {
+    try {
+      for (final tagName in _id3TagNames['picture']!) {
+        if (metaTags.containsKey(tagName) && metaTags[tagName] != null) {
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      Logger.error('Error checking for cover art', e);
+      return false;
     }
   }
   
@@ -196,14 +308,56 @@ class AudioMetadataExtractor {
   /// Extract metadata from M4A/M4B files
   Future<AudiobookMetadata?> _extractM4aMetadata(String filePath) async {
     try {
+      // Get file stats for audio quality information
+      final file = File(filePath);
+      final fileStats = await file.stat();
+      final fileSize = fileStats.size;
+      
       // This implementation would typically use FFmpeg or another native plugin
       // Since we don't have direct access to implement that here,
-      // we'll use the FilenameParser to extract info from the filename
+      // we'll use the FilenameParser to extract info from the filename and make educated
+      // guesses about audio quality based on file size and type
       
       final filename = path_util.basenameWithoutExtension(filePath);
+      final extension = path_util.extension(filePath).toLowerCase();
       
       // Use the FilenameParser utility to extract information
       final parsedInfo = FilenameParser.parse(filename, filePath);
+      
+      // Make reasonable assumptions for M4B audiobooks
+      String? audioDuration;
+      String? bitrate;
+      int? channels = 2; // Most audiobooks are stereo
+      String? sampleRate = '44.1kHz'; // Common for audiobooks
+      
+      // M4B files are often higher quality than MP3
+      if (extension == '.m4b') {
+        bitrate = '256kbps'; // Common for M4B files
+        
+        // Estimate duration (highly approximate) - improved heuristic
+        // M4B audiobooks can be long, estimate based on typical audiobook narration speed
+        // Average 150 words per minute, 9000 words per hour, ~1MB per hour at 256kbps
+        final estimatedHours = fileSize / (1024 * 1024); // Rough estimate in hours
+        
+        if (estimatedHours > 0) {
+          final hours = estimatedHours.floor();
+          final minutes = ((estimatedHours - hours) * 60).floor();
+          final seconds = (((estimatedHours - hours) * 60 - minutes) * 60).floor();
+          audioDuration = '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+        }
+      } else if (extension == '.m4a') {
+        bitrate = '192kbps'; // Common for M4A files
+        
+        // Similar estimation for M4A
+        final estimatedHours = fileSize / (1024 * 1024 * 0.8); // Slightly different ratio
+        
+        if (estimatedHours > 0) {
+          final hours = estimatedHours.floor();
+          final minutes = ((estimatedHours - hours) * 60).floor();
+          final seconds = (((estimatedHours - hours) * 60 - minutes) * 60).floor();
+          audioDuration = '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+        }
+      }
       
       return AudiobookMetadata(
         id: path_util.basename(filePath),
@@ -219,6 +373,12 @@ class AudioMetadataExtractor {
         language: '',
         series: parsedInfo.hasSeries ? parsedInfo.series! : '',
         seriesPosition: parsedInfo.seriesPosition.orEmpty,
+        // Add audio quality information
+        audioDuration: audioDuration,
+        bitrate: bitrate,
+        channels: channels,
+        sampleRate: sampleRate,
+        fileFormat: extension == '.m4b' ? 'M4B' : 'M4A',
         provider: 'Filename Analysis',
       );
     } catch (e) {
@@ -269,6 +429,13 @@ class AudioMetadataExtractor {
       Logger.debug('Genre: ${metadata.categories.isNotEmpty ? metadata.categories.first : "Audiobook"}');
       Logger.debug('Comment: ${metadata.description}');
       
+      // If we have a cover image URL, download and embed it
+      if (metadata.thumbnailUrl.isNotEmpty) {
+        Logger.debug('Cover URL: ${metadata.thumbnailUrl}');
+        // In a real implementation, you'd download and embed the image
+        // await _downloadAndEmbedCoverArt(metadata.thumbnailUrl, filePath);
+      }
+      
       // Placeholder for actual implementation
       return true;
     } catch (e) {
@@ -300,11 +467,34 @@ class AudioMetadataExtractor {
       Logger.debug('Genre: ${metadata.categories.isNotEmpty ? metadata.categories.first : "Audiobook"}');
       Logger.debug('Comment: ${metadata.description}');
       
+      
       // Placeholder for actual implementation
       return true;
     } catch (e) {
       Logger.error('Failed to write M4A/M4B metadata', e);
       return false;
+    }
+  }
+  
+  
+  /// Extract and save cover art from metadata (placeholder implementation)
+  Future<String?> extractAndSaveCoverArt(Map<String, dynamic> metaTags, String filePath) async {
+    try {
+      // This would extract the cover art data from the APIC tag
+      // and save it to a file in the same directory as the audio file
+      
+      final directory = path_util.dirname(filePath);
+      final filename = path_util.basenameWithoutExtension(filePath);
+      final coverPath = '$directory/$filename.jpg';
+      
+      Logger.log('Extracting cover art to: $coverPath');
+      
+      // In a real implementation, you'd extract the image data and write it to the file
+      
+      return coverPath;
+    } catch (e) {
+      Logger.error('Error extracting and saving cover art', e);
+      return null;
     }
   }
 }

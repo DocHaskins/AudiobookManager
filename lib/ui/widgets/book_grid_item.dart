@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
+import 'dart:io';
 
 class BookGridItem extends StatelessWidget {
   final AudiobookFile book;
@@ -30,39 +31,9 @@ class BookGridItem extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Cover image
+            // Cover image - FIXED to handle both metadata and fileMetadata
             Expanded(
-              child: book.metadata?.thumbnailUrl.isNotEmpty ?? false
-                ? Hero(
-                    tag: 'book-cover-${book.path}',
-                    child: CachedNetworkImage(
-                      imageUrl: book.metadata!.thumbnailUrl,
-                      fit: BoxFit.cover,
-                      width: double.infinity,
-                      placeholder: (context, url) => Container(
-                        color: Colors.grey.shade200,
-                        child: const Center(
-                          child: CircularProgressIndicator(),
-                        ),
-                      ),
-                      errorWidget: (context, url, error) => Container(
-                        color: Colors.grey.shade200,
-                        child: const Center(
-                          child: Icon(Icons.audiotrack, size: 48),
-                        ),
-                      ),
-                    ),
-                  )
-                : Container(
-                    color: Colors.grey.shade200,
-                    child: Center(
-                      child: Icon(
-                        Icons.audiotrack,
-                        size: 48,
-                        color: Colors.grey.shade700,
-                      ),
-                    ),
-                  ),
+              child: _buildCoverImage(),
             ),
             
             // Book info
@@ -108,11 +79,92 @@ class BookGridItem extends StatelessWidget {
     );
   }
   
+  // New method to get the best available cover URL from either metadata or fileMetadata
+  String? _getCoverUrl() {
+    // First try online metadata
+    if (book.metadata?.thumbnailUrl.isNotEmpty ?? false) {
+      return book.metadata!.thumbnailUrl;
+    }
+    
+    // Then try file metadata
+    if (book.fileMetadata?.thumbnailUrl.isNotEmpty ?? false) {
+      return book.fileMetadata!.thumbnailUrl;
+    }
+    
+    return null;
+  }
+  
+  // New method to build cover image that handles both local and network images
+  Widget _buildCoverImage() {
+    final coverUrl = _getCoverUrl();
+    
+    if (coverUrl == null || coverUrl.isEmpty) {
+      return Container(
+        color: Colors.grey.shade200,
+        child: Center(
+          child: Icon(
+            Icons.audiotrack,
+            size: 48,
+            color: Colors.grey.shade700,
+          ),
+        ),
+      );
+    }
+    
+    // Check if it's a local file path
+    if (coverUrl.startsWith('/') || coverUrl.contains(':\\')) {
+      return Hero(
+        tag: 'book-cover-${book.path}',
+        child: Image.file(
+          File(coverUrl),
+          fit: BoxFit.cover,
+          width: double.infinity,
+          errorBuilder: (context, error, stackTrace) => Container(
+            color: Colors.grey.shade200,
+            child: Center(
+              child: Icon(
+                Icons.audiotrack,
+                size: 48,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    
+    // Otherwise handle as network image
+    return Hero(
+      tag: 'book-cover-${book.path}',
+      child: CachedNetworkImage(
+        imageUrl: coverUrl,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        placeholder: (context, url) => Container(
+          color: Colors.grey.shade200,
+          child: const Center(
+            child: CircularProgressIndicator(),
+          ),
+        ),
+        errorWidget: (context, url, error) => Container(
+          color: Colors.grey.shade200,
+          child: Center(
+            child: Icon(
+              Icons.audiotrack,
+              size: 48,
+              color: Colors.grey.shade700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  
   Widget _buildInfoBadges(BuildContext context) {
     final badges = <Widget>[];
     
     // Pending badge
-    if (!book.hasMetadata) {
+    if (!book.hasMetadata && !book.hasFileMetadata) {
       badges.add(
         Container(
           padding: const EdgeInsets.symmetric(
@@ -132,7 +184,7 @@ class BookGridItem extends StatelessWidget {
     }
     
     // File metadata badge
-    if (book.hasFileMetadata) {
+    if (book.hasFileMetadata && !book.hasMetadata) {
       badges.add(
         Container(
           padding: const EdgeInsets.symmetric(
@@ -151,11 +203,15 @@ class BookGridItem extends StatelessWidget {
       );
     }
     
+    // Get series from best available metadata
+    final seriesInfo = book.metadata?.series ?? book.fileMetadata?.series ?? '';
+    final seriesPosition = book.metadata?.seriesPosition ?? book.fileMetadata?.seriesPosition ?? '';
+    
     // Series badge
-    if (book.metadata?.series.isNotEmpty ?? false) {
-      final seriesText = book.metadata!.seriesPosition.isNotEmpty
-          ? '${book.metadata!.series} #${book.metadata!.seriesPosition}'
-          : book.metadata!.series;
+    if (seriesInfo.isNotEmpty) {
+      final seriesText = seriesPosition.isNotEmpty
+          ? '$seriesInfo #$seriesPosition'
+          : seriesInfo;
       
       badges.add(
         Container(

@@ -12,8 +12,7 @@ import 'package:audiobook_organizer/ui/widgets/book_list_item.dart';
 import 'package:audiobook_organizer/ui/widgets/collection_grid_item.dart';
 import 'package:audiobook_organizer/ui/widgets/collection_list_item.dart';
 import 'package:audiobook_organizer/ui/dialogs/library_dialogs.dart';
-import 'package:audiobook_organizer/ui/screens/detail_screen.dart';
-import 'package:audiobook_organizer/ui/screens/file_detail_screen.dart';
+import 'package:audiobook_organizer/ui/widgets/book_detail_panel.dart'; // Import the new widget
 import 'package:audiobook_organizer/utils/logger.dart';
 
 class LibraryScreen extends StatefulWidget {
@@ -301,30 +300,81 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   }
   
   void _openBookDetails(AudiobookFile book) async {
-    if (_tabController.index == 0) {
-      // Library tab - open detail view
-      final result = await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => DetailScreen(audiobook: book),
-        ),
-      );
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => BookDetailPanel(
+        book: book,
+        onClose: () => Navigator.pop(context, false),
+        onUpdateMetadata: (metadata) async {
+          // Create updated book with new metadata
+          final updatedBook = AudiobookFile(
+            path: book.path,
+            filename: book.filename,
+            extension: book.extension,
+            size: book.size,
+            lastModified: book.lastModified,
+            metadata: metadata,
+            fileMetadata: book.fileMetadata,
+          );
+          
+          // IMPORTANT: Update the book in the appropriate list
+          setState(() {
+            // Update in _individualBooks list
+            final bookIndex = _individualBooks.indexWhere((b) => b.path == book.path);
+            if (bookIndex >= 0) {
+              _individualBooks[bookIndex] = updatedBook;
+            }
+            
+            // Update in _filesNeedingReview list if it exists there
+            final fileIndex = _filesNeedingReview.indexWhere((f) => f.path == book.path);
+            if (fileIndex >= 0) {
+              _filesNeedingReview[fileIndex] = updatedBook;
+            }
+          });
+          
+          // Save to file if in files tab
+          if (_tabController.index == 1) {
+            try {
+              await updatedBook.writeMetadataToFile(metadata);
+              
+              // If in Files tab and now has complete metadata, potentially move to Library
+              if (updatedBook.hasCompleteMetadata) {
+                // Show a notification
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('File now has complete metadata and will be moved to the Library'),
+                    duration: Duration(seconds: 4),
+                  ),
+                );
+              }
+            } catch (e) {
+              Logger.error('Failed to save metadata to file', e);
+              
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Error saving metadata to file: $e'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
+          
+          // Save the updated library to storage
+          await _saveLibrary();
+          
+          // Close dialog with true result to indicate changes were made
+          Navigator.pop(context, true);
+        },
+      ),
+    );
+    
+    if (result == true && mounted) {
+      // DON'T reload library here - we've already updated it in memory
+      // and saved it to storage with _saveLibrary()
+      // await _loadLibrary();
       
-      if (result == true && mounted) {
-        await _loadLibrary();
-      }
-    } else {
-      // Files tab - open file detail/edit view
-      final result = await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => FileDetailScreen(file: book),
-        ),
-      );
-      
-      if (result == true && mounted) {
-        await _loadLibrary();
-      }
+      // Instead, just refresh UI if needed
+      setState(() {});
     }
   }
   

@@ -185,31 +185,28 @@ class AudiobookFile {
 
   /// Generate a search query for online metadata
   String generateSearchQuery() {
-    // First try to use file metadata if available
+    if (filename.contains(" - ")) {
+      return filename;
+    }
+    
+    // For files with metadata, create a properly formatted search query
     if (fileMetadata != null) {
       List<String> queryParts = [];
       
       if (fileMetadata!.title.isNotEmpty) {
-        queryParts.add(fileMetadata!.title);
+        queryParts.add(fileMetadata!.title); // Use complete title
       }
       
       if (fileMetadata!.authors.isNotEmpty) {
-        queryParts.add(fileMetadata!.authors.join(' '));
-      }
-      
-      if (fileMetadata!.series.isNotEmpty) {
-        queryParts.add(fileMetadata!.series);
+        queryParts.add(fileMetadata!.authors.first); // Use first author
       }
       
       if (queryParts.isNotEmpty) {
-        final query = queryParts.join(' ');
-        Logger.debug('Generated search query from file metadata: $query');
-        return query;
+        return queryParts.join(" - ");
       }
     }
     
-    // Fall back to filename parsing if file metadata is unavailable
-    final parsed = FilenameParser.parse(filename, path);
-    return FilenameParser.generateSearchQuery(parsed);
+    // Fallback to just the filename
+    return filename;
   }
 }

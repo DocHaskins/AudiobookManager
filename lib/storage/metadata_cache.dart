@@ -1,4 +1,5 @@
 // File: lib/storage/metadata_cache.dart
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
@@ -13,9 +14,13 @@ class MetadataCache {
   // File name constants
   static const String _cacheFileName = 'metadata_cache.json';
   
-  // Cache memory storage
   Map<String, AudiobookMetadata> _cache = {};
   bool _initialized = false;
+  
+  // Add these new fields
+  Timer? _saveTimer;
+  Map<String, Map<String, dynamic>> _serializedCache = {};
+  bool _isDirty = false;
   
   /// Initialize the cache
   Future<void> initialize() async {
@@ -73,17 +78,21 @@ class MetadataCache {
       if (!await file.exists()) {
         Logger.debug('No metadata cache found at $filePath');
         _cache = {};
+        _serializedCache = {};
         return;
       }
       
       final String content = await file.readAsString();
-      final Map<String, dynamic> cacheJson = jsonDecode(content);
+      final Map<String, dynamic> decoded = jsonDecode(content);
       
       _cache = {};
-      cacheJson.forEach((key, value) {
+      _serializedCache = {};
+      
+      decoded.forEach((key, value) {
         try {
           if (value is Map<String, dynamic>) {
             _cache[key] = AudiobookMetadata.fromMap(value);
+            _serializedCache[key] = value;
           }
         } catch (e) {
           Logger.error('Failed to parse cached metadata for key "$key"', e);
@@ -94,6 +103,7 @@ class MetadataCache {
     } catch (e) {
       Logger.error('Failed to load metadata cache', e);
       _cache = {};
+      _serializedCache = {};
     }
   }
   
@@ -105,14 +115,11 @@ class MetadataCache {
       
       final file = File(filePath);
       
-      // Convert cache to JSON
-      final Map<String, dynamic> cacheJson = {};
-      _cache.forEach((key, metadata) {
-        cacheJson[key] = metadata.toMap();
-      });
+      // Use the pre-serialized cache
+      final jsonString = jsonEncode(_serializedCache);
       
       // Write to file
-      await file.writeAsString(jsonEncode(cacheJson));
+      await file.writeAsString(jsonString);
       Logger.log('Saved ${_cache.length} items to metadata cache');
     } catch (e) {
       Logger.error('Failed to save metadata cache', e);
@@ -127,7 +134,14 @@ class MetadataCache {
       final key = _generateKey(query);
       _cache[key] = metadata;
       
-      await _saveCache();
+      // Pre-serialize the metadata
+      _serializedCache[key] = metadata.toMap();
+      
+      _isDirty = true;
+      _scheduleSave();
+      
+      // Log just once
+      Logger.log('Added "${metadata.title}" to metadata cache for query: $query');
     } catch (e) {
       Logger.error('Failed to save metadata for query: $query', e);
     }
@@ -185,12 +199,32 @@ class MetadataCache {
       final key = 'file:${_generateKey(filePath)}';
       _cache[key] = metadata;
       
-      await _saveCache();
+      // Use already serialized version if available
+      _serializedCache[key] = _serializedCache.values.firstWhere(
+        (m) => m['id'] == metadata.id,
+        orElse: () => metadata.toMap()
+      );
+      
+      _isDirty = true;
+      _scheduleSave();
     } catch (e) {
       Logger.error('Failed to save metadata for file: $filePath', e);
     }
   }
-  
+
+  void _scheduleSave() {
+    // Cancel any pending save
+    _saveTimer?.cancel();
+    
+    // Schedule a new save after a delay
+    _saveTimer = Timer(Duration(milliseconds: 300), () {
+      if (_isDirty) {
+        _saveCache();
+        _isDirty = false;
+      }
+    });
+  }
+
   /// Get metadata for a specific file path
   Future<AudiobookMetadata?> getMetadataForFile(String filePath) async {
     await initialize();

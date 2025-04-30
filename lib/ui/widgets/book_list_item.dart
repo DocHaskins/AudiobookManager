@@ -2,6 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
+import 'dart:io';
 
 class BookListItem extends StatelessWidget {
   final AudiobookFile book;
@@ -26,45 +27,11 @@ class BookListItem extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: ListTile(
-            // Cover thumbnail
+            // Cover thumbnail - FIXED to handle both metadata and fileMetadata
             leading: SizedBox(
               width: 56,
               height: 56,
-              child: book.metadata?.thumbnailUrl.isNotEmpty ?? false
-                ? Hero(
-                    tag: 'book-cover-${book.path}',
-                    child: CachedNetworkImage(
-                      imageUrl: book.metadata!.thumbnailUrl,
-                      fit: BoxFit.cover,
-                      placeholder: (context, url) => Container(
-                        color: Colors.grey.shade200,
-                        child: const Center(
-                          child: SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                            ),
-                          ),
-                        ),
-                      ),
-                      errorWidget: (context, url, error) => Container(
-                        color: Colors.grey.shade200,
-                        child: const Center(
-                          child: Icon(Icons.audiotrack, size: 32),
-                        ),
-                      ),
-                    ),
-                  )
-                : Container(
-                    color: Colors.grey.shade200,
-                    child: const Center(
-                      child: Icon(
-                        Icons.audiotrack,
-                        size: 32,
-                      ),
-                    ),
-                  ),
+              child: _buildCoverImage(),
             ),
             
             // Title and author
@@ -94,14 +61,97 @@ class BookListItem extends StatelessWidget {
     );
   }
   
+  // New method to get the best available cover URL from either metadata or fileMetadata
+  String? _getCoverUrl() {
+    // First try online metadata
+    if (book.metadata?.thumbnailUrl.isNotEmpty ?? false) {
+      return book.metadata!.thumbnailUrl;
+    }
+    
+    // Then try file metadata
+    if (book.fileMetadata?.thumbnailUrl.isNotEmpty ?? false) {
+      return book.fileMetadata!.thumbnailUrl;
+    }
+    
+    return null;
+  }
+  
+  // New method to build cover image that handles both local and network images
+  Widget _buildCoverImage() {
+    final coverUrl = _getCoverUrl();
+    
+    if (coverUrl == null || coverUrl.isEmpty) {
+      return Container(
+        color: Colors.grey.shade200,
+        child: const Center(
+          child: Icon(
+            Icons.audiotrack,
+            size: 32,
+          ),
+        ),
+      );
+    }
+    
+    // Check if it's a local file path
+    if (coverUrl.startsWith('/') || coverUrl.contains(':\\')) {
+      return Hero(
+        tag: 'book-cover-${book.path}',
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: Image.file(
+            File(coverUrl),
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: Colors.grey.shade200,
+              child: const Center(
+                child: Icon(Icons.audiotrack, size: 32),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    
+    // Otherwise handle as network image
+    return Hero(
+      tag: 'book-cover-${book.path}',
+      child: CachedNetworkImage(
+        imageUrl: coverUrl,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => Container(
+          color: Colors.grey.shade200,
+          child: const Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+              ),
+            ),
+          ),
+        ),
+        errorWidget: (context, url, error) => Container(
+          color: Colors.grey.shade200,
+          child: const Center(
+            child: Icon(Icons.audiotrack, size: 32),
+          ),
+        ),
+      ),
+    );
+  }
+  
   Widget _buildInfoBadges(BuildContext context) {
     final badges = <Widget>[];
     
+    // Get series from best available metadata
+    final seriesInfo = book.metadata?.series ?? book.fileMetadata?.series ?? '';
+    final seriesPosition = book.metadata?.seriesPosition ?? book.fileMetadata?.seriesPosition ?? '';
+    
     // Series badge
-    if (book.metadata?.series.isNotEmpty ?? false) {
-      final seriesText = book.metadata!.seriesPosition.isNotEmpty
-          ? '${book.metadata!.series} #${book.metadata!.seriesPosition}'
-          : book.metadata!.series;
+    if (seriesInfo.isNotEmpty) {
+      final seriesText = seriesPosition.isNotEmpty
+          ? '$seriesInfo #$seriesPosition'
+          : seriesInfo;
       
       badges.add(
         Container(
@@ -136,7 +186,7 @@ class BookListItem extends StatelessWidget {
   
   Widget _buildStatusIndicator(BuildContext context) {
     // Pending status
-    if (!book.hasMetadata) {
+    if (!book.hasMetadata && !book.hasFileMetadata) {
       return Container(
         padding: const EdgeInsets.symmetric(
           horizontal: 8,
@@ -154,7 +204,7 @@ class BookListItem extends StatelessWidget {
     }
     
     // File metadata indicator
-    if (book.hasFileMetadata) {
+    if (book.hasFileMetadata && !book.hasMetadata) {
       return Container(
         padding: const EdgeInsets.symmetric(
           horizontal: 8,
@@ -172,12 +222,13 @@ class BookListItem extends StatelessWidget {
     }
     
     // If there's rating data, show stars
-    if ((book.metadata?.averageRating ?? 0) > 0) {
+    final rating = book.metadata?.averageRating ?? 0;
+    if (rating > 0) {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            book.metadata!.averageRating.toStringAsFixed(1),
+            rating.toStringAsFixed(1),
             style: const TextStyle(fontSize: 12),
           ),
           const SizedBox(width: 4),

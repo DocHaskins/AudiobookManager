@@ -126,7 +126,7 @@ class GoogleBooksProvider implements MetadataProvider {
         }
         
         // Log the thumbnail URL for debugging
-        Logger.debug('Extracted thumbnail URL: $thumbnailUrl');
+        //Logger.debug('Extracted thumbnail URL: $thumbnailUrl');
       } else {
         Logger.debug('No image links found in Google Books response');
       }
