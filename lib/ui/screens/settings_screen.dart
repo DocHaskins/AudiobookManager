@@ -8,8 +8,7 @@ import 'dart:io';
 import 'package:audiobook_organizer/storage/user_preferences.dart';
 import 'package:audiobook_organizer/services/audiobook_scanner.dart';
 import 'package:audiobook_organizer/services/providers/google_books_provider.dart';
-import 'package:audiobook_organizer/storage/metadata_cache.dart';
-import 'package:audiobook_organizer/storage/library_storage.dart';
+import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
 import 'package:audiobook_organizer/main.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
@@ -234,8 +233,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   
   Future<void> _clearMetadataCache() async {
     try {
-      final metadataCache = Provider.of<MetadataCache>(context, listen: false);
-      await metadataCache.clearCache();
+      // Use the storage manager to clear cache
+      final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
+      await storageManager.clearAll();
       
       if (!mounted) return;
       
@@ -264,8 +264,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     
     // Get provider instances before any async operations
     final prefs = Provider.of<UserPreferences>(context, listen: false);
-    final metadataCache = Provider.of<MetadataCache>(context, listen: false);
-    final libraryStorage = Provider.of<LibraryStorage>(context, listen: false);
+    final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
     
     final confirm = await showDialog<bool>(
       context: context,
@@ -306,13 +305,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         await prefs.resetAllSettings();
         Logger.log('User preferences reset...');
         
-        // Clear the metadata cache
-        await metadataCache.clearCache();
-        Logger.log('Metadata cache cleared...');
-        
-        // Clear the library storage
-        await libraryStorage.clearLibrary();
-        Logger.log('Library storage cleared...');
+        // Clear library and metadata using the storage manager
+        await storageManager.clearAll();
+        Logger.log('Library storage and metadata cache cleared...');
         
         await _loadPreferences();
         

@@ -6,12 +6,14 @@ import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_collection.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/storage/user_preferences.dart';
+import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
 /// Service for scanning directories and finding audiobook files
 class AudiobookScanner {
   final Map<String, List<AudiobookFile>> _cachedScans = {};
+  
   // Static constants for supported file formats
   static final List<String> _supportedExtensions = [
     '.mp3', '.m4a', '.m4b', '.aac', '.flac', '.ogg', '.wma', '.wav', '.opus'
@@ -28,7 +30,7 @@ class AudiobookScanner {
     'incomplete',
     'working',
     'in progress',
-    'covers',  // Exclude our covers directories
+    'covers',
   ];
   
   // Actual list of excluded directories (can be modified at runtime)
@@ -47,17 +49,20 @@ class AudiobookScanner {
     RegExp(r'^of\s+(\d+)', caseSensitive: false),
   ];
   
-  
   // Use nullable UserPreferences for backward compatibility
   final UserPreferences? _userPreferences;
   
   // Optional metadata matcher
   final MetadataMatcher? metadataMatcher;
   
+  // Use storage manager instead of library storage
+  final AudiobookStorageManager? storageManager;
+  
   /// Default constructor
   AudiobookScanner({
     UserPreferences? userPreferences,
-    this.metadataMatcher
+    this.metadataMatcher,
+    this.storageManager,
   }) : _userPreferences = userPreferences {
     Logger.log('AudiobookScanner initialized');
   }
@@ -102,7 +107,7 @@ class AudiobookScanner {
     return _supportedExtensions.contains(ext);
   }
   
-  /// Improved scan method for library view
+  /// Improved scan method for library view that avoids duplicates and doesn't save to storage
   Future<Map<String, List<AudiobookFile>>> scanForLibraryView(
     String dirPath, 
     {bool? recursive, bool matchOnline = true}
@@ -112,6 +117,56 @@ class AudiobookScanner {
     try {
       // Get all audiobook files
       List<AudiobookFile> allFiles = await scanDirectory(dirPath, recursive: recursive);
+      
+      // Filter out files that are already in the library if storage manager is available
+      if (storageManager != null) {
+        List<AudiobookFile> newFiles = [];
+        int skippedCount = 0;
+        
+        for (var file in allFiles) {
+          if (!await storageManager!.hasAudiobook(file.path)) {
+            newFiles.add(file);
+          } else {
+            skippedCount++;
+          }
+        }
+        
+        if (skippedCount > 0) {
+          Logger.log('Skipped $skippedCount files that are already in the library');
+          allFiles = newFiles;
+        }
+      }
+      
+      // If no new files to process, return early
+      if (allFiles.isEmpty) {
+        Logger.log('No new audiobook files to process');
+        
+        // Load existing books from storage if available
+        if (storageManager != null) {
+          final libraryData = await storageManager!.loadLibrary();
+          final existingBooks = libraryData['audiobooks'] as List<AudiobookFile>;
+          
+          // Group existing books by their title/series
+          for (var book in existingBooks) {
+            if (book.hasCompleteMetadata) {
+              final metadata = book.metadata ?? book.fileMetadata!;
+              
+              String key;
+              if (metadata.series.isNotEmpty) {
+                key = '${metadata.series}${metadata.seriesPosition.isNotEmpty ? " ${metadata.seriesPosition}" : ""} - ${metadata.title}';
+              } else {
+                key = metadata.title;
+              }
+              
+              completeBooks.putIfAbsent(key, () => []).add(book);
+            }
+          }
+          
+          return completeBooks;
+        }
+        
+        return {};
+      }
       
       // First, extract basic metadata from all files
       Logger.log('Extracting file metadata for ${allFiles.length} files');
@@ -154,7 +209,7 @@ class AudiobookScanner {
           // Debug what's missing
           if (file.metadata != null) {
             final meta = file.metadata!;
-            Logger.log('Online metadata: title=${meta.title.isNotEmpty}, '
+            Logger.debug('Online metadata: title=${meta.title.isNotEmpty}, '
                       'authors=${meta.authors.isNotEmpty}, '
                       'thumbnail=${meta.thumbnailUrl.isNotEmpty}, '
                       'desc=${meta.description.isNotEmpty}, '
@@ -162,7 +217,7 @@ class AudiobookScanner {
           }
           if (file.fileMetadata != null) {
             final meta = file.fileMetadata!;
-            Logger.log('File metadata: title=${meta.title.isNotEmpty}, '
+            Logger.debug('File metadata: title=${meta.title.isNotEmpty}, '
                       'authors=${meta.authors.isNotEmpty}, '
                       'thumbnail=${meta.thumbnailUrl.isNotEmpty}, '
                       'desc=${meta.description.isNotEmpty}, '
@@ -172,6 +227,7 @@ class AudiobookScanner {
       }
       
       Logger.log('Found ${completeBooks.length} books with complete metadata');
+      
     } catch (e) {
       Logger.error('Error scanning for library view', e);
     }
@@ -190,18 +246,29 @@ class AudiobookScanner {
       // Get all audiobook files
       List<AudiobookFile> allFiles = await scanDirectory(dirPath, recursive: recursive);
       
+      // Filter out files that already have complete metadata in the library
+      if (storageManager != null) {
+        List<AudiobookFile> filesToCheck = [];
+        int skippedCount = 0;
+        
+        for (var file in allFiles) {
+          if (!await storageManager!.hasAudiobook(file.path)) {
+            filesToCheck.add(file);
+          } else {
+            skippedCount++;
+          }
+        }
+        
+        if (skippedCount > 0) {
+          Logger.log('Skipped $skippedCount files that are already in the library');
+          allFiles = filesToCheck;
+        }
+      }
+      
       // Extract metadata from all files (but don't do online matching yet)
       Logger.log('Extracting metadata for ${allFiles.length} files');
       for (var file in allFiles) {
         await file.extractFileMetadata();
-        
-        // Also check for cached online metadata
-        if (metadataMatcher != null) {
-          final cachedMetadata = await metadataMatcher!.getMetadataFromCache(file.path);
-          if (cachedMetadata != null) {
-            file.metadata = cachedMetadata;
-          }
-        }
       }
       
       // Filter for files needing metadata review
@@ -212,6 +279,7 @@ class AudiobookScanner {
       }
       
       Logger.log('Found ${incompleteFiles.length} files needing metadata review');
+      
     } catch (e) {
       Logger.error('Error scanning for files view', e);
     }
@@ -235,6 +303,7 @@ class AudiobookScanner {
           processedCount++;
         }
       }
+      
       
       Logger.log('Successfully processed $processedCount files with online metadata');
     } catch (e) {
@@ -368,6 +437,7 @@ class AudiobookScanner {
       }
       
       Logger.log('Created ${collections.length} audiobook collections');
+      
     } catch (e) {
       Logger.error('Error creating collections', e);
     }

@@ -7,6 +7,7 @@ import 'package:audiobook_organizer/models/audiobook_collection.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:provider/provider.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
+import 'package:audiobook_organizer/ui/widgets/book_detail_panel.dart';
 
 class LibraryDialogs {
   // Show book context menu
@@ -490,83 +491,9 @@ class LibraryDialogs {
   }) async {
     return showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(collection.displayName),
-        content: SizedBox(
-          width: double.maxFinite,
-          height: 400,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Collection metadata section
-              if (collection.metadata != null) ...[
-                ListTile(
-                  leading: collection.metadata?.thumbnailUrl.isNotEmpty ?? false
-                    ? CachedNetworkImage(
-                        imageUrl: collection.metadata!.thumbnailUrl,
-                        width: 40,
-                        height: 40,
-                        fit: BoxFit.cover,
-                      )
-                    : const Icon(Icons.library_books),
-                  title: Text(collection.metadata!.title),
-                  subtitle: Text(collection.metadata!.authorsFormatted),
-                ),
-                const Divider(),
-              ],
-              
-              // File list
-              Expanded(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: collection.files.length,
-                  itemBuilder: (context, index) {
-                    final file = collection.files[index];
-                    return ListTile(
-                      leading: const Icon(Icons.audiotrack),
-                      title: Text(
-                        path.basename(file.path),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.remove_circle_outline),
-                        onPressed: () {
-                          Navigator.pop(context, {'action': 'remove_file', 'file': file});
-                        },
-                        tooltip: 'Remove from collection',
-                      ),
-                      onTap: () {
-                        Navigator.pop(context, {'action': 'open_file', 'file': file});
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-          TextButton(
-            onPressed: () {
-              // Open metadata search dialog for the entire collection
-              Navigator.pop(context, {'action': 'find_metadata'});
-            },
-            child: const Text('Find Metadata'),
-          ),
-          if (collection.metadata != null)
-            TextButton(
-              onPressed: () {
-                // Apply collection metadata to all files
-                Navigator.pop(context, {'action': 'apply_metadata'});
-              },
-              child: const Text('Apply to All Files'),
-            ),
-        ],
+      builder: (context) => BookDetailPanel(
+        item: collection,
+        onClose: () => Navigator.pop(context),
       ),
     );
   }

@@ -15,6 +15,10 @@ class LibraryStorage {
   static const String _libraryFileName = 'audiobook_library.json';
   static const String _collectionsFileName = 'audiobook_collections.json';
   
+  // In-memory cache of path-to-book mappings to prevent duplicates
+  final Map<String, AudiobookFile> _pathToBookCache = {};
+  final Map<String, AudiobookCollection> _titleToCollectionCache = {};
+  
   /// Get the application documents directory
   Future<Directory> _getApplicationDirectory() async {
     try {
@@ -97,15 +101,39 @@ class LibraryStorage {
       final filePath = await _getLibraryFilePath();
       await _ensureDirectoryExists(filePath);
       
+      // First, load existing books if the cache is empty
+      if (_pathToBookCache.isEmpty) {
+        await loadAudiobooks();
+      }
+      
+      // Add new books to the cache, avoiding duplicates
+      int newBooks = 0;
+      for (final book in audiobooks) {
+        if (!_pathToBookCache.containsKey(book.path)) {
+          _pathToBookCache[book.path] = book;
+          newBooks++;
+        } else {
+          // Update metadata if it's changed
+          final existingBook = _pathToBookCache[book.path]!;
+          if (book.metadata != null && 
+             (existingBook.metadata == null || 
+              existingBook.metadata!.id != book.metadata!.id)) {
+            _pathToBookCache[book.path] = book;
+            Logger.debug('Updated metadata for existing book: ${book.path}');
+          }
+        }
+      }
+      
       final file = File(filePath);
       
-      // Convert each AudiobookFile to JSON
+      // Convert only the unique books in the cache to JSON
       final List<Map<String, dynamic>> audiobooksJson = 
-          audiobooks.map(_audiobookToJson).toList();
+          _pathToBookCache.values.map(_audiobookToJson).toList();
       
       // Write to file
       await file.writeAsString(jsonEncode(audiobooksJson));
-      Logger.log('Saved ${audiobooks.length} audiobooks to library storage');
+      
+      Logger.log('Saved library with ${_pathToBookCache.length} audiobooks (${newBooks} new)');
     } catch (e) {
       Logger.error('Failed to save audiobooks', e);
     }
@@ -117,10 +145,33 @@ class LibraryStorage {
       final filePath = await _getCollectionsFilePath();
       await _ensureDirectoryExists(filePath);
       
+      // First, load existing collections if the cache is empty
+      if (_titleToCollectionCache.isEmpty) {
+        await loadCollections();
+      }
+      
+      // Add new collections to the cache, avoiding duplicates
+      int newCollections = 0;
+      for (final collection in collections) {
+        // Use a unique key based on title and file paths
+        final key = collection.title;
+        if (!_titleToCollectionCache.containsKey(key)) {
+          _titleToCollectionCache[key] = collection;
+          newCollections++;
+        } else {
+          // Update if metadata has changed
+          if (collection.metadata != null && 
+              _titleToCollectionCache[key]!.metadata?.id != collection.metadata?.id) {
+            _titleToCollectionCache[key] = collection;
+            Logger.debug('Updated metadata for existing collection: ${collection.title}');
+          }
+        }
+      }
+      
       final file = File(filePath);
       
       // Convert each AudiobookCollection to JSON
-      final List<Map<String, dynamic>> collectionsJson = collections.map((collection) {
+      final List<Map<String, dynamic>> collectionsJson = _titleToCollectionCache.values.map((collection) {
         return {
           'title': collection.title,
           'directoryPath': collection.directoryPath,
@@ -131,7 +182,7 @@ class LibraryStorage {
       
       // Write to file
       await file.writeAsString(jsonEncode(collectionsJson));
-      Logger.log('Saved ${collections.length} collections to storage');
+      Logger.log('Saved ${_titleToCollectionCache.length} collections to storage (${newCollections} new)');
     } catch (e) {
       Logger.error('Failed to save collections', e);
     }
@@ -145,20 +196,31 @@ class LibraryStorage {
       
       if (!await file.exists()) {
         Logger.debug('No saved audiobooks found at $filePath');
+        // Clear the cache if file doesn't exist
+        _pathToBookCache.clear();
         return [];
       }
       
       final String content = await file.readAsString();
       final List<dynamic> audiobooksJson = jsonDecode(content);
       
+      // Clear existing cache
+      _pathToBookCache.clear();
+      
       final audiobooks = audiobooksJson
           .map<AudiobookFile>((json) => _jsonToAudiobook(json))
           .toList();
+      
+      // Rebuild the cache
+      for (final book in audiobooks) {
+        _pathToBookCache[book.path] = book;
+      }
       
       Logger.log('Loaded ${audiobooks.length} audiobooks from storage');
       return audiobooks;
     } catch (e) {
       Logger.error('Failed to load audiobooks', e);
+      _pathToBookCache.clear();
       return [];
     }
   }
@@ -171,18 +233,23 @@ class LibraryStorage {
       
       if (!await file.exists()) {
         Logger.debug('No saved collections found at $filePath');
+        // Clear the cache if file doesn't exist
+        _titleToCollectionCache.clear();
         return [];
       }
       
       final String content = await file.readAsString();
       final List<dynamic> collectionsJson = jsonDecode(content);
       
+      // Clear existing cache
+      _titleToCollectionCache.clear();
+      
       final collections = collectionsJson.map<AudiobookCollection>((json) {
         final List<AudiobookFile> files = (json['files'] as List)
             .map<AudiobookFile>((fileJson) => _jsonToAudiobook(fileJson))
             .toList();
         
-        return AudiobookCollection(
+        final collection = AudiobookCollection(
           title: json['title'],
           files: files,
           directoryPath: json['directoryPath'],
@@ -190,12 +257,18 @@ class LibraryStorage {
               ? AudiobookMetadata.fromMap(json['metadata']) 
               : null,
         );
+        
+        // Add to cache
+        _titleToCollectionCache[collection.title] = collection;
+        
+        return collection;
       }).toList();
       
       Logger.log('Loaded ${collections.length} collections from storage');
       return collections;
     } catch (e) {
       Logger.error('Failed to load collections', e);
+      _titleToCollectionCache.clear();
       return [];
     }
   }
@@ -204,6 +277,7 @@ class LibraryStorage {
   Future<List<AudiobookFile>> validateAudiobooks(List<AudiobookFile> audiobooks) async {
     try {
       final List<AudiobookFile> validBooks = [];
+      final Set<String> invalidPaths = {};
       
       for (var book in audiobooks) {
         final file = File(book.path);
@@ -211,7 +285,13 @@ class LibraryStorage {
           validBooks.add(book);
         } else {
           Logger.debug('File no longer exists: ${book.path}');
+          invalidPaths.add(book.path);
         }
+      }
+      
+      // Also remove invalid paths from the cache
+      for (final path in invalidPaths) {
+        _pathToBookCache.remove(path);
       }
       
       Logger.log('Validated ${validBooks.length} of ${audiobooks.length} audiobooks');
@@ -226,6 +306,7 @@ class LibraryStorage {
   Future<List<AudiobookCollection>> validateCollections(List<AudiobookCollection> collections) async {
     try {
       List<AudiobookCollection> validCollections = [];
+      Set<String> invalidCollectionTitles = {};
       
       for (var collection in collections) {
         final List<AudiobookFile> validFiles = [];
@@ -248,7 +329,13 @@ class LibraryStorage {
           ));
         } else {
           Logger.debug('Collection has no valid files: ${collection.title}');
+          invalidCollectionTitles.add(collection.title);
         }
+      }
+      
+      // Remove invalid collections from cache
+      for (final title in invalidCollectionTitles) {
+        _titleToCollectionCache.remove(title);
       }
       
       Logger.log('Validated ${validCollections.length} of ${collections.length} collections');
@@ -298,6 +385,16 @@ class LibraryStorage {
     }
   }
   
+  /// Check if a file is already in the library
+  bool hasAudiobook(String filePath) {
+    return _pathToBookCache.containsKey(filePath);
+  }
+  
+  /// Check if a collection is already in the library
+  bool hasCollection(String title) {
+    return _titleToCollectionCache.containsKey(title);
+  }
+  
   /// Clear the entire library
   Future<void> clearLibrary() async {
     try {
@@ -318,6 +415,10 @@ class LibraryStorage {
         await collectionsFile.delete();
         Logger.log('Deleted collections storage file');
       }
+      
+      // Clear in-memory caches
+      _pathToBookCache.clear();
+      _titleToCollectionCache.clear();
       
       Logger.log('Library storage cleared successfully');
     } catch (e) {

@@ -15,12 +15,10 @@ class MetadataCache {
   static const String _cacheFileName = 'metadata_cache.json';
   
   Map<String, AudiobookMetadata> _cache = {};
-  bool _initialized = false;
-  
-  // Add these new fields
-  Timer? _saveTimer;
   Map<String, Map<String, dynamic>> _serializedCache = {};
+  bool _initialized = false;
   bool _isDirty = false;
+  Timer? _saveTimer;
   
   /// Initialize the cache
   Future<void> initialize() async {
@@ -33,6 +31,7 @@ class MetadataCache {
     } catch (e) {
       Logger.error('Failed to initialize metadata cache', e);
       _cache = {};
+      _serializedCache = {};
       _initialized = true;
     }
   }
@@ -126,12 +125,59 @@ class MetadataCache {
     }
   }
   
+  /// Save metadata efficiently to reduce redundant operations
+  Future<void> saveMetadataEfficiently(String key, AudiobookMetadata metadata, {String? alternateKey}) async {
+    await initialize();
+    
+    try {
+      final primaryKey = _generateKey(key);
+      
+      // Serialize metadata only once
+      final Map<String, dynamic> serialized = metadata.toMap();
+      
+      // Update primary key
+      _cache[primaryKey] = metadata;
+      _serializedCache[primaryKey] = serialized;
+      
+      // Update alternate key if provided
+      if (alternateKey != null) {
+        final altKey = _generateKey(alternateKey);
+        _cache[altKey] = metadata;
+        _serializedCache[altKey] = serialized; // Reuse the same serialized data
+      }
+      
+      _isDirty = true;
+      _scheduleSave();
+      
+      Logger.debug('Efficiently saved metadata for "${metadata.title}" under keys: $key${alternateKey != null ? ', $alternateKey' : ''}');
+    } catch (e) {
+      Logger.error('Failed to save metadata efficiently for key: $key', e);
+    }
+  }
+  
   /// Save metadata for a search query
   Future<void> saveMetadata(String query, AudiobookMetadata metadata) async {
     await initialize();
     
     try {
       final key = _generateKey(query);
+      
+      // Check if we already have metadata for this key
+      final existingMetadata = _cache[key];
+      
+      // If existing metadata has a thumbnail but new one doesn't, preserve it
+      if (existingMetadata != null && 
+          existingMetadata.thumbnailUrl.isNotEmpty &&
+          metadata.thumbnailUrl.isEmpty) {
+        // Create updated metadata with the existing thumbnail
+        metadata = metadata.copyWith(
+          thumbnailUrl: existingMetadata.thumbnailUrl
+        );
+        
+        Logger.debug('Preserved existing thumbnail for "${metadata.title}" in cache');
+      }
+      
+      // Update the cache
       _cache[key] = metadata;
       
       // Pre-serialize the metadata
@@ -140,8 +186,8 @@ class MetadataCache {
       _isDirty = true;
       _scheduleSave();
       
-      // Log just once
-      Logger.log('Added "${metadata.title}" to metadata cache for query: $query');
+      // Reduced logging verbosity 
+      Logger.debug('Saved metadata for "${metadata.title}" with query: $query');
     } catch (e) {
       Logger.error('Failed to save metadata for query: $query', e);
     }
@@ -153,7 +199,9 @@ class MetadataCache {
     
     try {
       final key = _generateKey(query);
-      return _cache[key];
+      final metadata = _cache[key];
+      
+      return metadata;
     } catch (e) {
       Logger.error('Failed to get metadata for query: $query', e);
       return null;
@@ -179,6 +227,7 @@ class MetadataCache {
     
     try {
       _cache = {};
+      _serializedCache = {};
       
       final filePath = await _getCacheFilePath();
       final file = File(filePath);
@@ -186,6 +235,9 @@ class MetadataCache {
         await file.delete();
         Logger.log('Metadata cache file deleted');
       }
+      
+      _isDirty = false;
+      _saveTimer?.cancel();
     } catch (e) {
       Logger.error('Failed to delete metadata cache file', e);
     }
@@ -197,16 +249,33 @@ class MetadataCache {
     
     try {
       final key = 'file:${_generateKey(filePath)}';
+      
+      // Check if we already have metadata for this key
+      final existingMetadata = _cache[key];
+      
+      // If existing metadata has a thumbnail but new one doesn't, preserve it
+      if (existingMetadata != null && 
+          existingMetadata.thumbnailUrl.isNotEmpty &&
+          metadata.thumbnailUrl.isEmpty) {
+        // Create updated metadata with the existing thumbnail
+        metadata = metadata.copyWith(
+          thumbnailUrl: existingMetadata.thumbnailUrl
+        );
+        
+        Logger.debug('Preserved existing thumbnail for file: $filePath');
+      }
+      
+      // Update the cache
       _cache[key] = metadata;
       
-      // Use already serialized version if available
-      _serializedCache[key] = _serializedCache.values.firstWhere(
-        (m) => m['id'] == metadata.id,
-        orElse: () => metadata.toMap()
-      );
+      // Pre-serialize the metadata - make sure to use the updated metadata
+      _serializedCache[key] = metadata.toMap();
       
       _isDirty = true;
       _scheduleSave();
+      
+      // Reduce log verbosity
+      Logger.debug('Saved metadata for file: $filePath');
     } catch (e) {
       Logger.error('Failed to save metadata for file: $filePath', e);
     }
@@ -231,7 +300,14 @@ class MetadataCache {
     
     try {
       final key = 'file:${_generateKey(filePath)}';
-      return _cache[key];
+      final metadata = _cache[key];
+      
+      // Reduce log verbosity
+      if (metadata != null) {
+        Logger.debug('Retrieved metadata for file: $filePath');
+      }
+      
+      return metadata;
     } catch (e) {
       Logger.error('Failed to get metadata for file: $filePath', e);
       return null;

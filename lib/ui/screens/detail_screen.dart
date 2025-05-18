@@ -204,8 +204,6 @@ class _DetailScreenState extends State<DetailScreen> {
           seriesPosition: result.seriesPosition,
           provider: result.provider,
         );
-        // Save to metadata cache for future use
-        await matcher.saveMetadataToCache(_book.path, selectedMetadata);
         
         if (!mounted) return;
         

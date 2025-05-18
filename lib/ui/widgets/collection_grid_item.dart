@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:audiobook_organizer/models/audiobook_collection.dart';
+import 'package:audiobook_organizer/models/audiobook_file.dart';
+import 'dart:io';
 
 class CollectionGridItem extends StatelessWidget {
   final AudiobookCollection collection;
@@ -37,26 +39,28 @@ class CollectionGridItem extends StatelessWidget {
                 children: [
                   // Cover image or placeholder
                   collection.metadata?.thumbnailUrl.isNotEmpty ?? false
-                    ? Hero(
-                        tag: 'collection-${collection.title}',
-                        child: CachedNetworkImage(
-                          imageUrl: collection.metadata!.thumbnailUrl,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          placeholder: (context, url) => Container(
-                            color: Colors.indigo.shade100,
-                            child: const Center(
-                              child: CircularProgressIndicator(),
+                    ? (collection.metadata!.thumbnailUrl == 'tiled' 
+                        ? _buildTiledCoverDisplay()
+                        : Hero(
+                            tag: 'collection-${collection.title}',
+                            child: CachedNetworkImage(
+                              imageUrl: collection.metadata!.thumbnailUrl,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              placeholder: (context, url) => Container(
+                                color: Colors.indigo.shade100,
+                                child: const Center(
+                                  child: CircularProgressIndicator(),
+                                ),
+                              ),
+                              errorWidget: (context, url, error) => Container(
+                                color: Colors.indigo.shade100,
+                                child: const Center(
+                                  child: Icon(Icons.library_books, size: 48),
+                                ),
+                              ),
                             ),
-                          ),
-                          errorWidget: (context, url, error) => Container(
-                            color: Colors.indigo.shade100,
-                            child: const Center(
-                              child: Icon(Icons.library_books, size: 48),
-                            ),
-                          ),
-                        ),
-                      )
+                          ))
                     : Container(
                         color: Colors.indigo.shade100,
                         child: Center(
@@ -206,6 +210,136 @@ class CollectionGridItem extends StatelessWidget {
       spacing: 4,
       runSpacing: 4,
       children: badges,
+    );
+  }
+  
+  Widget _buildTiledCoverDisplay() {
+    // Get up to 4 books with covers
+    final booksWithCovers = collection.files
+        .where((book) => 
+            (book.metadata?.thumbnailUrl.isNotEmpty ?? false) || 
+            (book.fileMetadata?.thumbnailUrl.isNotEmpty ?? false))
+        .take(4)
+        .toList();
+    
+    // If no books have covers, show default
+    if (booksWithCovers.isEmpty) {
+      return Container(
+        color: Colors.indigo.shade100,
+        child: Center(
+          child: Icon(
+            Icons.library_books,
+            size: 48,
+            color: Colors.indigo.shade800,
+          ),
+        ),
+      );
+    }
+    
+    // Decide layout based on number of books
+    if (booksWithCovers.length == 1) {
+      return _buildBookCoverForTile(booksWithCovers[0]);
+    } else if (booksWithCovers.length == 2) {
+      return Row(
+        children: [
+          Expanded(child: _buildBookCoverForTile(booksWithCovers[0])),
+          Expanded(child: _buildBookCoverForTile(booksWithCovers[1])),
+        ],
+      );
+    } else if (booksWithCovers.length == 3) {
+      return Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _buildBookCoverForTile(booksWithCovers[0])),
+                Expanded(child: _buildBookCoverForTile(booksWithCovers[1])),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _buildBookCoverForTile(booksWithCovers[2]),
+          ),
+        ],
+      );
+    } else {
+      return Column(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _buildBookCoverForTile(booksWithCovers[0])),
+                Expanded(child: _buildBookCoverForTile(booksWithCovers[1])),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _buildBookCoverForTile(booksWithCovers[2])),
+                Expanded(child: _buildBookCoverForTile(booksWithCovers[3])),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+  }
+
+  Widget _buildBookCoverForTile(AudiobookFile book) {
+    final coverUrl = book.metadata?.thumbnailUrl ?? book.fileMetadata?.thumbnailUrl;
+    
+    if (coverUrl == null || coverUrl.isEmpty) {
+      return Container(
+        color: Colors.indigo.shade100,
+        child: Center(
+          child: Icon(
+            Icons.book_rounded,
+            size: 32,
+            color: Colors.indigo.shade800,
+          ),
+        ),
+      );
+    }
+    
+    if (coverUrl.startsWith('/') || coverUrl.contains(':\\')) {
+      return Image.file(
+        File(coverUrl),
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => Container(
+          color: Colors.indigo.shade100,
+          child: Center(
+            child: Icon(
+              Icons.book_rounded,
+              size: 32,
+              color: Colors.indigo.shade800,
+            ),
+          ),
+        ),
+      );
+    }
+    
+    return CachedNetworkImage(
+      imageUrl: coverUrl,
+      fit: BoxFit.cover,
+      placeholder: (context, url) => Container(
+        color: Colors.indigo.shade100,
+        child: const Center(
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+          ),
+        ),
+      ),
+      errorWidget: (context, url, error) => Container(
+        color: Colors.indigo.shade100,
+        child: Center(
+          child: Icon(
+            Icons.book_rounded,
+            size: 32,
+            color: Colors.indigo.shade800,
+          ),
+        ),
+      ),
     );
   }
 }

@@ -5,15 +5,18 @@ import 'package:file_selector/file_selector.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_collection.dart';
 import 'package:audiobook_organizer/services/audiobook_scanner.dart';
-import 'package:audiobook_organizer/storage/library_storage.dart';
+import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
 import 'package:audiobook_organizer/ui/widgets/library_sidebar.dart';
 import 'package:audiobook_organizer/ui/widgets/book_grid_item.dart';
 import 'package:audiobook_organizer/ui/widgets/book_list_item.dart';
 import 'package:audiobook_organizer/ui/widgets/collection_grid_item.dart';
 import 'package:audiobook_organizer/ui/widgets/collection_list_item.dart';
 import 'package:audiobook_organizer/ui/dialogs/library_dialogs.dart';
-import 'package:audiobook_organizer/ui/widgets/book_detail_panel.dart'; // Import the new widget
+import 'package:audiobook_organizer/ui/widgets/book_detail_panel.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
+import 'package:audiobook_organizer/ui/dialogs/manage_collections_dialog.dart';
+import 'package:audiobook_organizer/ui/dialogs/collection_cover_dialog.dart';
+import 'package:audiobook_organizer/ui/screens/detail_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
   const LibraryScreen({Key? key}) : super(key: key);
@@ -78,9 +81,10 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
     });
     
     try {
-      final libraryStorage = Provider.of<LibraryStorage>(context, listen: false);
-      final libraryData = await libraryStorage.loadLibrary();
+      final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
       
+      // First load the library
+      final libraryData = await storageManager.loadLibrary();
       final allBooks = libraryData['audiobooks'] as List<AudiobookFile>;
       final collections = libraryData['collections'] as List<AudiobookCollection>;
       
@@ -88,7 +92,17 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
       final completeBooks = <AudiobookFile>[];
       final incompleteBooks = <AudiobookFile>[];
       
+      // Track unique books by path to avoid duplicates
+      final Set<String> processedPaths = {};
+      
       for (final book in allBooks) {
+        // Skip if we've already processed this book
+        if (processedPaths.contains(book.path)) {
+          continue;
+        }
+        
+        processedPaths.add(book.path);
+        
         if (book.hasCompleteMetadata) {
           completeBooks.add(book);
         } else {
@@ -150,6 +164,7 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   // Scan a directory for audiobooks
   Future<void> _scanDirectory() async {
     final scanner = Provider.of<AudiobookScanner>(context, listen: false);
+    final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
     final String? directory = await getDirectoryPath();
     if (directory == null) return;
     
@@ -158,45 +173,100 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
     });
     
     try {
-      
+      // Get books and files from scanner without saving them to storage
       final libraryResults = await scanner.scanForLibraryView(directory, matchOnline: true);
       final filesResults = await scanner.scanForFilesView(directory);
       
       if (!mounted) return;
       
-      // Update state
-      setState(() {
-        for (final entry in libraryResults.entries) {
-          if (entry.value.length > 1) {
-            // Multiple files - create a collection
-            final collection = AudiobookCollection.fromFiles(entry.value, entry.key);
-            _collections.add(collection);
-          } else if (entry.value.length == 1) {
-            // Single file - add to individual books
-            _individualBooks.add(entry.value.first);
+      // Create a set of paths to check for duplicates
+      final Set<String> existingBookPaths = _individualBooks.map((book) => book.path).toSet();
+      final Set<String> existingCollectionTitles = _collections.map((coll) => coll.title).toSet();
+      final Set<String> existingFilePaths = _filesNeedingReview.map((file) => file.path).toSet();
+      
+      int newBooks = 0;
+      int newCollections = 0;
+      int newFilesNeedingReview = 0;
+      
+      // Since we need to await inside the loop, we need to handle this outside setState
+      final collectionsToAdd = <AudiobookCollection>[];
+      final booksToAdd = <AudiobookFile>[];
+      final filesToAdd = <AudiobookFile>[];
+      
+      // Check collections first
+      for (final entry in libraryResults.entries) {
+        if (entry.value.length > 1) {
+          // Multiple files - create a collection
+          final collection = AudiobookCollection.fromFiles(entry.value, entry.key);
+          
+          // Only add if not a duplicate
+          if (!existingCollectionTitles.contains(collection.title) && 
+              !(await storageManager.hasCollection(collection.title))) {
+            collectionsToAdd.add(collection);
+            existingCollectionTitles.add(collection.title);
+            newCollections++;
+          }
+        } else if (entry.value.length == 1) {
+          // Single file - add to individual books
+          final book = entry.value.first;
+          
+          // Only add if not a duplicate and not currently being processed
+          if (!existingBookPaths.contains(book.path) && 
+              !(await storageManager.hasAudiobook(book.path)) &&
+              !storageManager.isFileBeingProcessed(book.path)) {
+            booksToAdd.add(book);
+            existingBookPaths.add(book.path);
+            newBooks++;
           }
         }
-        
-        _filesNeedingReview.addAll(filesResults);
+      }
+      
+      // Check files needing review
+      for (final file in filesResults) {
+        // Only add if not a duplicate and not currently being processed
+        if (!existingFilePaths.contains(file.path) && 
+            !(await storageManager.hasAudiobook(file.path)) &&
+            !storageManager.isFileBeingProcessed(file.path)) {
+          filesToAdd.add(file);
+          existingFilePaths.add(file.path);
+          newFilesNeedingReview++;
+        }
+      }
+      
+      // Now update state with all the items we've collected
+      if (!mounted) return;
+      
+      setState(() {
+        _collections.addAll(collectionsToAdd);
+        _individualBooks.addAll(booksToAdd);
+        _filesNeedingReview.addAll(filesToAdd);
         _isLoading = false;
       });
       
       // Extract updated genres
       _extractGenres();
       
-      // Save the library
-      await _saveLibrary();
+      // First save new collections
+      if (collectionsToAdd.isNotEmpty) {
+        await storageManager.saveCollections(collectionsToAdd);
+      }
+      
+      // Then save books and files in one batch to avoid duplicate processing
+      final allNewFiles = [...booksToAdd, ...filesToAdd];
+      if (allNewFiles.isNotEmpty) {
+        await storageManager.saveAudiobooks(allNewFiles);
+      }
       
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Scanned directory: $directory\nFound ${libraryResults.length} complete items and ${filesResults.length} files needing metadata'),
+          content: Text('Scanned directory: $directory\nAdded $newBooks new books, $newCollections new collections, and $newFilesNeedingReview new files needing metadata'),
           duration: const Duration(seconds: 4),
         ),
       );
       
-      if (filesResults.isNotEmpty) {
+      if (newFilesNeedingReview > 0) {
         Future.delayed(const Duration(milliseconds: 500), () {
           if (!mounted) return;
           
@@ -235,8 +305,8 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   // Save library to storage
   Future<void> _saveLibrary() async {
     try {
-      final libraryStorage = Provider.of<LibraryStorage>(context, listen: false);
-      await libraryStorage.saveLibrary(
+      final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
+      await storageManager.saveLibrary(
         [..._individualBooks, ..._filesNeedingReview], 
         _collections
       );
@@ -300,84 +370,18 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
   }
   
   void _openBookDetails(AudiobookFile book) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => BookDetailPanel(
-        book: book,
-        onClose: () => Navigator.pop(context, false),
-        onUpdateMetadata: (metadata) async {
-          // Create updated book with new metadata
-          final updatedBook = AudiobookFile(
-            path: book.path,
-            filename: book.filename,
-            extension: book.extension,
-            size: book.size,
-            lastModified: book.lastModified,
-            metadata: metadata,
-            fileMetadata: book.fileMetadata,
-          );
-          
-          // IMPORTANT: Update the book in the appropriate list
-          setState(() {
-            // Update in _individualBooks list
-            final bookIndex = _individualBooks.indexWhere((b) => b.path == book.path);
-            if (bookIndex >= 0) {
-              _individualBooks[bookIndex] = updatedBook;
-            }
-            
-            // Update in _filesNeedingReview list if it exists there
-            final fileIndex = _filesNeedingReview.indexWhere((f) => f.path == book.path);
-            if (fileIndex >= 0) {
-              _filesNeedingReview[fileIndex] = updatedBook;
-            }
-          });
-          
-          // Save to file if in files tab
-          if (_tabController.index == 1) {
-            try {
-              await updatedBook.writeMetadataToFile(metadata);
-              
-              // If in Files tab and now has complete metadata, potentially move to Library
-              if (updatedBook.hasCompleteMetadata) {
-                // Show a notification
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('File now has complete metadata and will be moved to the Library'),
-                    duration: Duration(seconds: 4),
-                  ),
-                );
-              }
-            } catch (e) {
-              Logger.error('Failed to save metadata to file', e);
-              
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Error saving metadata to file: $e'),
-                  backgroundColor: Colors.red,
-                ),
-              );
-            }
-          }
-          
-          // Save the updated library to storage
-          await _saveLibrary();
-          
-          // Close dialog with true result to indicate changes were made
-          Navigator.pop(context, true);
-        },
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DetailScreen(audiobook: book),
       ),
     );
     
     if (result == true && mounted) {
-      // DON'T reload library here - we've already updated it in memory
-      // and saved it to storage with _saveLibrary()
-      // await _loadLibrary();
-      
-      // Instead, just refresh UI if needed
       setState(() {});
     }
   }
-  
+
   void _openCollectionDetails(AudiobookCollection collection) async {
     final result = await LibraryDialogs.showCollectionDetailsDialog(
       context: context,
@@ -404,6 +408,72 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
       await _loadLibrary();
     }
   }
+  
+
+  Future<void> _manageCollections() async {
+    final result = await ManageCollectionsDialog.show(
+      context: context,
+      collections: _collections,
+      allBooks: _individualBooks,
+    );
+    
+    if (result != null && mounted) {
+      final action = result['action'] as String;
+      
+      if (action == 'create') {
+        final newCollection = result['collection'] as AudiobookCollection;
+        
+        // Show dialog to select cover
+        final metadata = await CollectionCoverDialog.show(
+          context: context,
+          collection: newCollection,
+        );
+        
+        if (metadata != null && mounted) {
+          newCollection.updateMetadata(metadata);
+          
+          setState(() {
+            _collections.add(newCollection);
+          });
+          
+          // Save to storage
+          final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
+          await storageManager.saveCollections([newCollection]);
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Collection "${newCollection.title}" created successfully'),
+            ),
+          );
+        }
+      } else if (action == 'update') {
+        final updatedCollection = result['collection'] as AudiobookCollection;
+        
+        // Show dialog to modify cover if needed
+        final metadata = await CollectionCoverDialog.show(
+          context: context,
+          collection: updatedCollection,
+        );
+        
+        if (metadata != null && mounted) {
+          updatedCollection.updateMetadata(metadata);
+          
+          // Save to storage
+          final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
+          await storageManager.saveCollections([updatedCollection]);
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Collection "${updatedCollection.title}" updated successfully'),
+            ),
+          );
+        }
+        
+        // Reload library to reflect changes
+        await _loadLibrary();
+      }
+    }
+  }
 
   Future<void> _processPendingFiles() async {
     if (_filesNeedingReview.isEmpty) {
@@ -419,20 +489,95 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
     
     try {
       final scanner = Provider.of<AudiobookScanner>(context, listen: false);
-      final processedCount = await scanner.processFilesWithOnlineMetadata(_filesNeedingReview);
+      final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
+      
+      // First, filter for files that are not currently being processed
+      final filesToProcess = _filesNeedingReview
+          .where((file) => !storageManager.isFileBeingProcessed(file.path))
+          .toList();
+      
+      if (filesToProcess.isEmpty) {
+        setState(() {
+          _isLoading = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('All files are currently being processed, please wait')),
+        );
+        return;
+      }
+      
+      // Process the files
+      final processedCount = await scanner.processFilesWithOnlineMetadata(filesToProcess);
       
       if (!mounted) return;
       
-      // Force reload library to update UI state
-      await _loadLibrary();
+      // Rather than reloading the entire library, let's update our in-memory lists
+      final completedFiles = <AudiobookFile>[];
+      final remainingIncompleteFiles = <AudiobookFile>[];
+      
+      // Check each file to see if it now has complete metadata
+      for (final file in _filesNeedingReview) {
+        if (file.hasCompleteMetadata) {
+          completedFiles.add(file);
+        } else {
+          remainingIncompleteFiles.add(file);
+        }
+      }
+      
+      // Save processed files to storage ONCE
+      if (filesToProcess.isNotEmpty) {
+        await storageManager.saveAudiobooks(filesToProcess);
+      }
+      
+      // Update state without reloading from disk
+      if (mounted) {
+        setState(() {
+          // Move completed files to individual books
+          _individualBooks.addAll(completedFiles);
+          
+          // Update the files needing review list
+          _filesNeedingReview = remainingIncompleteFiles;
+          
+          _isLoading = false;
+        });
+        
+        // Extract updated genres with the new books
+        _extractGenres();
+      }
       
       if (!mounted) return;
       
+      // Show a message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Processed $processedCount files with online metadata.'),
+          content: Text(
+            completedFiles.isEmpty
+                ? 'Processed $processedCount files, but no files were completed'
+                : 'Processed $processedCount files. ${completedFiles.length} files now have complete metadata and were moved to the Library.',
+          ),
         ),
       );
+      
+      // If all files are now complete, offer to switch to the Library tab
+      if (completedFiles.isNotEmpty && remainingIncompleteFiles.isEmpty) {
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (!mounted) return;
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('All files now have complete metadata. Switch to the Library tab to view them.'),
+              action: SnackBarAction(
+                label: 'SWITCH',
+                onPressed: () {
+                  _tabController.animateTo(0); // Switch to Library tab
+                },
+              ),
+              duration: const Duration(seconds: 6),
+            ),
+          );
+        });
+      }
     } catch (e) {
       Logger.error('Failed to process pending files', e);
       
@@ -555,11 +700,25 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
                 ),
               ],
             ),
-      floatingActionButton: _tabController.index == 0 
-    ? FloatingActionButton.extended(
-        onPressed: _scanDirectory,
-        icon: const Icon(Icons.add),
-        label: const Text('Scan Directory'),
+    floatingActionButton: _tabController.index == 0 
+    ? Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            onPressed: _manageCollections,
+            icon: const Icon(Icons.collections_bookmark),
+            label: const Text('Manage Collections'),
+            heroTag: 'manage_collections',
+          ),
+          const SizedBox(height: 8),
+          FloatingActionButton.extended(
+            onPressed: _scanDirectory,
+            icon: const Icon(Icons.add),
+            label: const Text('Scan Directory'),
+            heroTag: 'scan_directory',
+          ),
+        ],
       )
     : Row(
         mainAxisSize: MainAxisSize.min,

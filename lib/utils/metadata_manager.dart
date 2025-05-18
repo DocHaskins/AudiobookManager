@@ -131,8 +131,8 @@ class MetadataManager {
     final seriesPosition = onlineMetadata.seriesPosition.isNotEmpty ? 
                           onlineMetadata.seriesPosition : fileMetadata.seriesPosition;
                           
-    // For thumbnail, we want to prefer online thumbnails, but if one doesn't exist
-    // and we have an embedded cover image extracted from the file, use that instead
+    // For thumbnail, prioritize any non-empty value
+    // Fix: Ensure we're consistently handling thumbnailUrl in merges
     String thumbnailUrl = "";
     if (onlineMetadata.thumbnailUrl.isNotEmpty) {
       thumbnailUrl = onlineMetadata.thumbnailUrl; // Use online thumbnail if available
@@ -153,7 +153,7 @@ class MetadataManager {
     
     // Log what's being merged
     Logger.debug('Merged metadata: Title=$title, Authors=${authors.join(", ")}, ' 
-                'Using Online Thumbnail=${onlineMetadata.thumbnailUrl.isNotEmpty}');
+                'Using Thumbnail=$thumbnailUrl');
     
     return AudiobookMetadata(
       id: onlineMetadata.id.isNotEmpty ? onlineMetadata.id : fileMetadata.id,
@@ -201,6 +201,7 @@ class MetadataManager {
     AudiobookMetadata metadata,
     String thumbnailUrl,
   ) {
+    // Make sure to preserve other fields when updating thumbnail
     return metadata.copyWith(
       thumbnailUrl: thumbnailUrl,
     );
