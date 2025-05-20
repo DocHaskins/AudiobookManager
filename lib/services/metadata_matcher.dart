@@ -179,33 +179,7 @@ class MetadataMatcher {
           }
         }
       }
-      
-      // 7c: Verify the match makes sense with folder context
-      if (!isValidMatch || !_verifyMatchWithFolderContext(onlineMetadata, folderName, bookNumber)) {
-        Logger.warning('Online match doesn\'t align with file data or folder context - may be incorrect');
-        
-        // Use file metadata instead of mismatched online data
-        Logger.log('Using file metadata instead of mismatched online data');
-        
-        // Enhance file metadata with folder context if needed
-        final enhancedFileMetadata = _enhanceWithFolderContext(fileMetadata, folderName, bookNumber);
-        
-        // Save and return the enhanced file metadata
-        if (storageManager != null) {
-          final success = await storageManager!.updateMetadataForFile(file.path, enhancedFileMetadata);
-          if (success) {
-            file.metadata = enhancedFileMetadata;
-            Logger.log('Saved enhanced file metadata via storage manager');
-            return enhancedFileMetadata;
-          }
-        } else {
-          file.metadata = enhancedFileMetadata;
-          await cache.saveMetadataForFile(file.path, enhancedFileMetadata);
-          Logger.log('Saved enhanced file metadata directly to cache');
-          return enhancedFileMetadata;
-        }
-      }
-      
+
       // 7d: Update folder series mapping
       if (onlineMetadata.series.isNotEmpty) {
         _folderSeriesNames[folderPath] = onlineMetadata.series;
@@ -482,114 +456,6 @@ class MetadataMatcher {
   return null;
 }
 
-  /// Verify if a match aligns with folder context
-  bool _verifyMatchWithFolderContext(
-    AudiobookMetadata metadata,
-    String folderName,
-    int? bookNumber) {
-  
-  final folderLower = folderName.toLowerCase();
-  final title = metadata.title.toLowerCase();
-  final series = metadata.series.toLowerCase();
-  
-  // For specific series handling (like Harry Potter)
-  if (folderLower.contains('harry potter')) {
-    final bool containsHarryPotter = 
-        title.contains('harry potter') || series.contains('harry potter');
-    
-    final bool hasRowlingAuthor = metadata.authors.any((author) => 
-        author.toLowerCase().contains('rowling'));
-    
-    if (!containsHarryPotter) {
-      Logger.warning('Folder is Harry Potter but match doesn\'t contain Harry Potter in title or series');
-      return false;
-    }
-    
-    if (!hasRowlingAuthor) {
-      Logger.warning('Harry Potter book without Rowling as author');
-      return false;
-    }
-    
-    return true;
-  }
-  
-  // For Hunger Games series
-  if (folderLower.contains('hunger games')) {
-    if (bookNumber != null) {
-      if (bookNumber == 2 && !title.contains('catching fire')) {
-        Logger.warning('Book 2 of Hunger Games should be "Catching Fire"');
-        return false;
-      } else if (bookNumber == 3 && !title.contains('mockingjay')) {
-        Logger.warning('Book 3 of Hunger Games should be "Mockingjay"');
-        return false;
-      }
-    }
-  }
-  
-  // Generic verification - must contain folder name in title or series
-  if (!title.contains(folderLower) && !series.contains(folderLower)) {
-    // Only warn if folder name is significant
-    if (folderLower.length > 4) {
-      Logger.warning('Match doesn\'t contain folder name in title or series');
-      return false;
-    }
-  }
-  
-  // Book number check if available
-  if (bookNumber != null && metadata.seriesPosition.isNotEmpty) {
-    final metadataBookNum = int.tryParse(metadata.seriesPosition);
-    if (metadataBookNum != null && metadataBookNum != bookNumber) {
-      Logger.warning('Book number mismatch: file indicates #$bookNumber but metadata shows #${metadata.seriesPosition}');
-      
-      // For sequels (book 2+), this is critical - reject the match
-      if (bookNumber > 1) {
-        return false;
-      }
-      
-      // For book 1, still verify there's no explicit wrong book number in the title
-      if (metadata.title.toLowerCase().contains('book ${metadataBookNum}') ||
-          metadata.title.toLowerCase().contains('book ${metadataBookNum.toString()}')) {
-        return false;
-      }
-    }
-  }
-  
-  // Title verification - ensure it contains book identifiers for sequels
-  if (bookNumber != null && bookNumber > 1) {
-    final bookIdentifiers = [
-      'book $bookNumber',
-      'book ${bookNumber.toString()}',
-      'book #$bookNumber',
-      'vol $bookNumber',
-      'volume $bookNumber',
-      'part $bookNumber'
-    ];
-    
-    // For sequels, either the title or series info should contain book number indicators
-    bool hasBookIdentifier = bookIdentifiers.any((identifier) => 
-        metadata.title.toLowerCase().contains(identifier.toLowerCase()) || 
-        metadata.series.toLowerCase().contains(identifier.toLowerCase()));
-    
-    // For non-standard sequel naming (like "Catching Fire" instead of "Book 2")
-    // Allow if it's a known series with established naming patterns
-    bool isEstablishedSequel = false;
-    
-    if (folderLower.contains('hunger games')) {
-      if (bookNumber == 2 && title.contains('catching fire')) {
-        isEstablishedSequel = true;
-      } else if (bookNumber == 3 && title.contains('mockingjay')) {
-        isEstablishedSequel = true;
-      }
-    }
-    
-    if (!hasBookIdentifier && !isEstablishedSequel) {
-      Logger.warning('Sequel (Book $bookNumber) matched with result lacking book number indicators');
-      return false;
-    }
-  }
-  
-  return true;
-}
 
   /// Enhance metadata with folder context information
   AudiobookMetadata _enhanceWithFolderContext(
