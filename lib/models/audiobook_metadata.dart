@@ -1,5 +1,86 @@
-// File: lib/models/audiobook_metadata.dart
-import 'package:audiobook_organizer/utils/logger.dart';
+// lib/models/audiobook_metadata.dart
+
+class AudiobookBookmark {
+  final String id;
+  final String title;
+  final Duration position;
+  final DateTime createdAt;
+  final String? note;
+
+  AudiobookBookmark({
+    required this.id,
+    required this.title,
+    required this.position,
+    required this.createdAt,
+    this.note,
+  });
+
+  // Convert to JSON
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'position': position.inSeconds,
+      'createdAt': createdAt.toIso8601String(),
+      'note': note,
+    };
+  }
+
+  // Create from JSON
+  factory AudiobookBookmark.fromJson(Map<String, dynamic> json) {
+    return AudiobookBookmark(
+      id: json['id'] ?? '',
+      title: json['title'] ?? '',
+      position: Duration(seconds: json['position'] ?? 0),
+      createdAt: json['createdAt'] != null 
+          ? DateTime.parse(json['createdAt']) 
+          : DateTime.now(),
+      note: json['note'],
+    );
+  }
+}
+
+class AudiobookNote {
+  final String id;
+  final String content;
+  final DateTime createdAt;
+  final Duration? position; // Optional - note could be general or position-specific
+  final String? chapter;
+
+  AudiobookNote({
+    required this.id,
+    required this.content,
+    required this.createdAt,
+    this.position,
+    this.chapter,
+  });
+
+  // Convert to JSON
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'content': content,
+      'createdAt': createdAt.toIso8601String(),
+      'position': position?.inSeconds,
+      'chapter': chapter,
+    };
+  }
+
+  // Create from JSON
+  factory AudiobookNote.fromJson(Map<String, dynamic> json) {
+    return AudiobookNote(
+      id: json['id'] ?? '',
+      content: json['content'] ?? '',
+      createdAt: json['createdAt'] != null 
+          ? DateTime.parse(json['createdAt']) 
+          : DateTime.now(),
+      position: json['position'] != null 
+          ? Duration(seconds: json['position']) 
+          : null,
+      chapter: json['chapter'],
+    );
+  }
+}
 
 class AudiobookMetadata {
   final String id;
@@ -15,14 +96,21 @@ class AudiobookMetadata {
   final String language;
   final String series;
   final String seriesPosition;
-  final String provider; // Which API provided this metadata
+  final Duration? audioDuration;
+  final int? bitrate;
+  final int? channels;
+  final int? sampleRate;
+  final String fileFormat;
+  final String provider;
   
-  // Audio quality information
-  final String? audioDuration;   // e.g. "08:27:59"
-  final String? bitrate;         // e.g. "192kbps"
-  final int? channels;           // e.g. 2 for stereo
-  final String? sampleRate;      // e.g. "44.1kHz"
-  final String? fileFormat;      // e.g. "MP3", "M4B"
+  // User-specific fields
+  final int userRating;
+  final DateTime? lastPlayedPosition;
+  final Duration? playbackPosition;
+  final List<String> userTags;
+  final bool isFavorite;
+  final List<AudiobookBookmark> bookmarks;
+  final List<AudiobookNote> notes;
   
   AudiobookMetadata({
     required this.id,
@@ -42,207 +130,31 @@ class AudiobookMetadata {
     this.bitrate,
     this.channels,
     this.sampleRate,
-    this.fileFormat,
-    required this.provider,
+    this.fileFormat = '',
+    this.provider = '',
+    this.userRating = 0,
+    this.lastPlayedPosition,
+    this.playbackPosition,
+    this.userTags = const [],
+    this.isFavorite = false,
+    this.bookmarks = const [],
+    this.notes = const [],
   });
   
-  // Factory to create from Google Books API response
-  factory AudiobookMetadata.fromGoogleBooks(Map<String, dynamic> data) {
-    var volumeInfo = data['volumeInfo'] ?? {};
-    var imageLinks = volumeInfo['imageLinks'] ?? {};
-    
-    // Prioritize larger images when available 
-    String thumbnailUrl = '';
-    if (imageLinks.isNotEmpty) {
-      thumbnailUrl = imageLinks['extraLarge'] ?? 
-                   imageLinks['large'] ?? 
-                   imageLinks['medium'] ?? 
-                   imageLinks['small'] ?? 
-                   imageLinks['thumbnail'] ?? 
-                   imageLinks['smallThumbnail'] ?? '';
-      
-      // Ensure URL uses HTTPS
-      if (thumbnailUrl.isNotEmpty && thumbnailUrl.startsWith('http:')) {
-        thumbnailUrl = thumbnailUrl.replaceFirst('http:', 'https:');
-      }
-    }
-    
-    // Try to extract series information from title or subtitle
-    String series = '';
-    String seriesPosition = '';
-    
-    final title = volumeInfo['title'] as String? ?? '';
-    final seriesMatch = RegExp(r'(.*?)\s*(?:\(|\[)?(Book|#)?\s*(\d+)(?:\)|\])?\s*$').firstMatch(title);
-    if (seriesMatch != null) {
-      series = seriesMatch.group(1)?.trim() ?? '';
-      seriesPosition = seriesMatch.group(3) ?? '';
-    }
-    
-    return AudiobookMetadata(
-      id: data['id'] ?? '',
-      title: volumeInfo['title'] ?? 'Unknown Title',
-      authors: List<String>.from(volumeInfo['authors'] ?? []),
-      description: volumeInfo['description'] ?? '',
-      publisher: volumeInfo['publisher'] ?? '',
-      publishedDate: volumeInfo['publishedDate'] ?? '',
-      categories: List<String>.from(volumeInfo['categories'] ?? []),
-      averageRating: (volumeInfo['averageRating'] as num?)?.toDouble() ?? 0.0,
-      ratingsCount: volumeInfo['ratingsCount'] ?? 0,
-      thumbnailUrl: thumbnailUrl,
-      language: volumeInfo['language'] ?? '',
-      series: series,
-      seriesPosition: seriesPosition,
-      audioDuration: null,
-      bitrate: null,
-      channels: null,
-      sampleRate: null,
-      fileFormat: null,
-      provider: 'Google Books',
-    );
-  }
+  // Get formatted authors string
+  String get authorsFormatted => authors.isEmpty ? 'Unknown' : authors.join(', ');
   
-  // Factory to create from Open Library API response
-  factory AudiobookMetadata.fromOpenLibrary(Map<String, dynamic> data) {
-    // Extract cover image
-    String thumbnailUrl = '';
-    if (data.containsKey('cover_i')) {
-      final coverId = data['cover_i'];
-      if (coverId != null) {
-        // Use large cover when available
-        thumbnailUrl = 'https://covers.openlibrary.org/b/id/$coverId-L.jpg';
-      }
-    } else if (data.containsKey('cover_edition_key')) {
-      final editionKey = data['cover_edition_key'];
-      if (editionKey != null) {
-        thumbnailUrl = 'https://covers.openlibrary.org/b/olid/$editionKey-L.jpg';
-      }
-    }
+  // Get formatted duration string
+  String get durationFormatted {
+    if (audioDuration == null) return 'Unknown';
     
-    // Extract series info from title
-    final title = data['title'] as String? ?? 'Unknown Title';
-    final seriesInfo = _extractSeriesInfo(title);
+    final hours = audioDuration!.inHours;
+    final minutes = audioDuration!.inMinutes.remainder(60);
+    final seconds = audioDuration!.inSeconds.remainder(60);
     
-    return AudiobookMetadata(
-      id: data['key'] as String? ?? '',
-      title: title,
-      authors: List<String>.from(
-        (data['author_name'] ?? []).map((name) => name.toString())
-      ),
-      description: data['description'] ?? '',
-      publisher: (data['publisher'] as List<dynamic>?)?.isNotEmpty ?? false 
-        ? data['publisher'][0] 
-        : '',
-      publishedDate: data['publish_date'] != null && (data['publish_date'] as List).isNotEmpty
-        ? data['publish_date'][0]
-        : '',
-      categories: List<String>.from(data['subject'] ?? []),
-      averageRating: 0.0, // Not provided by Open Library
-      ratingsCount: 0, // Not provided by Open Library
-      thumbnailUrl: thumbnailUrl,
-      language: '', // May need additional parsing
-      series: seriesInfo['series'] ?? '',
-      seriesPosition: seriesInfo['position'] ?? '',
-      // Online sources don't provide audio quality info
-      audioDuration: null,
-      bitrate: null,
-      channels: null,
-      sampleRate: null,
-      fileFormat: null,
-      provider: 'Open Library',
-    );
-  }
-  
-  // Helper method to extract series information from title
-  static Map<String, String?> _extractSeriesInfo(String title) {
-    final result = <String, String?>{
-      'series': null,
-      'position': null,
-    };
-    
-    // Common patterns for series in titles
-    final patterns = [
-      RegExp(r'^(.*?)\s*(?:Series)?\s*Book\s*(\d+)'), // "Series Name Book 1"
-      RegExp(r'^(.*?)\s*#(\d+)'), // "Series Name #1"
-      RegExp(r'^(.*?)\s*\(Book\s*(\d+)\)'), // "Series Name (Book 1)"
-      RegExp(r'^(.*?)\s*\[Book\s*(\d+)\]'), // "Series Name [Book 1]"
-    ];
-    
-    for (final pattern in patterns) {
-      final match = pattern.firstMatch(title);
-      if (match != null && match.groupCount >= 2) {
-        result['series'] = match.group(1)?.trim();
-        result['position'] = match.group(2);
-        break;
-      }
-    }
-    
-    return result;
-  }
-  
-  // Convert to a Map for storage
-  Map<String, dynamic> toMap() {
-    final Map<String, dynamic> map = {
-      'id': id,
-      'title': title,
-      'authors': authors.join('|'),
-      'description': description,
-      'publisher': publisher,
-      'publishedDate': publishedDate,
-      'categories': categories.join('|'),
-      'averageRating': averageRating,
-      'ratingsCount': ratingsCount,
-      'thumbnailUrl': thumbnailUrl,
-      'language': language,
-      'series': series,
-      'seriesPosition': seriesPosition,
-      'provider': provider,
-      // Add audio quality fields
-      'audioDuration': audioDuration,
-      'bitrate': bitrate,
-      'channels': channels,
-      'sampleRate': sampleRate,
-      'fileFormat': fileFormat,
-    };
-    
-    // Log the metadata being saved
-    Logger.debug('Converting metadata to map: Title: $title, Thumbnail: $thumbnailUrl');
-    
-    return map;
-  }
-  
-  factory AudiobookMetadata.fromMap(Map<String, dynamic> map) {
-    // Helper function to safely handle string lists
-    List<String> parseStringList(dynamic value) {
-      if (value == null || value is! String || value.isEmpty) {
-        return [];
-      }
-      
-      // Use explicit String type for the function passed to where()
-      return value.split('|').where((String s) => s.isNotEmpty).toList();
-    }
-    
-    return AudiobookMetadata(
-      id: map['id'] as String? ?? '',
-      title: map['title'] as String? ?? 'Unknown Title',
-      authors: parseStringList(map['authors']),
-      description: map['description'] as String? ?? '',
-      publisher: map['publisher'] as String? ?? '',
-      publishedDate: map['publishedDate'] as String? ?? '',
-      categories: parseStringList(map['categories']),
-      averageRating: (map['averageRating'] as num?)?.toDouble() ?? 0.0,
-      ratingsCount: (map['ratingsCount'] as num?)?.toInt() ?? 0,
-      thumbnailUrl: map['thumbnailUrl'] as String? ?? '',
-      language: map['language'] as String? ?? '',
-      series: map['series'] as String? ?? '',
-      seriesPosition: map['seriesPosition'] as String? ?? '',
-      // Add audio quality fields
-      audioDuration: map['audioDuration'] as String?,
-      bitrate: map['bitrate'] as String?,
-      channels: map['channels'] as int?,
-      sampleRate: map['sampleRate'] as String?,
-      fileFormat: map['fileFormat'] as String?,
-      provider: map['provider'] as String? ?? 'Unknown',
-    );
+    return hours > 0
+        ? '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}'
+        : '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
   
   // Create a copy with updated fields
@@ -260,12 +172,19 @@ class AudiobookMetadata {
     String? language,
     String? series,
     String? seriesPosition,
-    String? audioDuration,
-    String? bitrate,
+    Duration? audioDuration,
+    int? bitrate,
     int? channels,
-    String? sampleRate,
+    int? sampleRate,
     String? fileFormat,
     String? provider,
+    int? userRating,
+    DateTime? lastPlayedPosition,
+    Duration? playbackPosition,
+    List<String>? userTags,
+    bool? isFavorite,
+    List<AudiobookBookmark>? bookmarks,
+    List<AudiobookNote>? notes,
   }) {
     return AudiobookMetadata(
       id: id ?? this.id,
@@ -287,43 +206,129 @@ class AudiobookMetadata {
       sampleRate: sampleRate ?? this.sampleRate,
       fileFormat: fileFormat ?? this.fileFormat,
       provider: provider ?? this.provider,
+      userRating: userRating ?? this.userRating,
+      lastPlayedPosition: lastPlayedPosition ?? this.lastPlayedPosition,
+      playbackPosition: playbackPosition ?? this.playbackPosition,
+      userTags: userTags ?? this.userTags,
+      isFavorite: isFavorite ?? this.isFavorite,
+      bookmarks: bookmarks ?? this.bookmarks,
+      notes: notes ?? this.notes,
     );
   }
   
-  // Helper method to get year from published date
-  String get year {
-    // Try to extract year from publishedDate
-    final RegExp yearRegex = RegExp(r'\b\d{4}\b');
-    final match = yearRegex.firstMatch(publishedDate);
-    return match?.group(0) ?? '';
+  // Convert to JSON
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'authors': authors,
+      'description': description,
+      'publisher': publisher,
+      'publishedDate': publishedDate,
+      'categories': categories,
+      'averageRating': averageRating,
+      'ratingsCount': ratingsCount,
+      'thumbnailUrl': thumbnailUrl,
+      'language': language,
+      'series': series,
+      'seriesPosition': seriesPosition,
+      'audioDuration': audioDuration?.inSeconds,
+      'bitrate': bitrate,
+      'channels': channels,
+      'sampleRate': sampleRate,
+      'fileFormat': fileFormat,
+      'provider': provider,
+      'userRating': userRating,
+      'lastPlayedPosition': lastPlayedPosition?.toIso8601String(),
+      'playbackPosition': playbackPosition?.inSeconds,
+      'userTags': userTags,
+      'isFavorite': isFavorite,
+      'bookmarks': bookmarks.map((bookmark) => bookmark.toJson()).toList(),
+      'notes': notes.map((note) => note.toJson()).toList(),
+    };
   }
   
-  // Helper method to get primary author
-  String get primaryAuthor {
-    return authors.isNotEmpty ? authors.first : 'Unknown Author';
+  // Create from JSON
+  factory AudiobookMetadata.fromJson(Map<String, dynamic> json) {
+    List<AudiobookBookmark> bookmarks = [];
+    if (json['bookmarks'] != null) {
+      bookmarks = (json['bookmarks'] as List)
+          .map((item) => AudiobookBookmark.fromJson(item))
+          .toList();
+    }
+    
+    List<AudiobookNote> notes = [];
+    if (json['notes'] != null) {
+      notes = (json['notes'] as List)
+          .map((item) => AudiobookNote.fromJson(item))
+          .toList();
+    }
+    
+    return AudiobookMetadata(
+      id: json['id'] ?? '',
+      title: json['title'] ?? '',
+      authors: List<String>.from(json['authors'] ?? []),
+      description: json['description'] ?? '',
+      publisher: json['publisher'] ?? '',
+      publishedDate: json['publishedDate'] ?? '',
+      categories: List<String>.from(json['categories'] ?? []),
+      averageRating: (json['averageRating'] as num?)?.toDouble() ?? 0.0,
+      ratingsCount: json['ratingsCount'] ?? 0,
+      thumbnailUrl: json['thumbnailUrl'] ?? '',
+      language: json['language'] ?? '',
+      series: json['series'] ?? '',
+      seriesPosition: json['seriesPosition'] ?? '',
+      audioDuration: json['audioDuration'] != null 
+          ? Duration(seconds: json['audioDuration']) 
+          : null,
+      bitrate: json['bitrate'],
+      channels: json['channels'],
+      sampleRate: json['sampleRate'],
+      fileFormat: json['fileFormat'] ?? '',
+      provider: json['provider'] ?? '',
+      userRating: json['userRating'] ?? 0,
+      lastPlayedPosition: json['lastPlayedPosition'] != null 
+          ? DateTime.parse(json['lastPlayedPosition']) 
+          : null,
+      playbackPosition: json['playbackPosition'] != null 
+          ? Duration(seconds: json['playbackPosition']) 
+          : null,
+      userTags: List<String>.from(json['userTags'] ?? []),
+      isFavorite: json['isFavorite'] ?? false,
+      bookmarks: bookmarks,
+      notes: notes,
+    );
   }
   
-  // Helper method to get all authors as formatted string
-  String get authorsFormatted {
-    return authors.isEmpty ? 'Unknown Author' : authors.join(', ');
+  // String representation
+  @override
+  String toString() {
+    return 'AudiobookMetadata: $title by $authorsFormatted (Series: $series #$seriesPosition)';
   }
   
-  // Helper method to get formatted audio quality
-  String get audioQualityFormatted {
-    List<String> qualities = [];
-    
-    if (bitrate != null && bitrate!.isNotEmpty) {
-      qualities.add(bitrate!);
-    }
-    
-    if (channels != null) {
-      qualities.add(channels == 2 ? 'Stereo' : 'Mono');
-    }
-    
-    if (sampleRate != null && sampleRate!.isNotEmpty) {
-      qualities.add(sampleRate!);
-    }
-    
-    return qualities.isEmpty ? 'Unknown quality' : qualities.join(', ');
+  // Merge with another metadata object (useful for combining online and local data)
+  AudiobookMetadata merge(AudiobookMetadata other) {
+    return copyWith(
+      title: title.isEmpty ? other.title : title,
+      authors: authors.isEmpty ? other.authors : authors,
+      description: description.isEmpty ? other.description : description,
+      publisher: publisher.isEmpty ? other.publisher : publisher,
+      publishedDate: publishedDate.isEmpty ? other.publishedDate : publishedDate,
+      categories: categories.isEmpty ? other.categories : categories,
+      averageRating: averageRating == 0.0 ? other.averageRating : averageRating,
+      ratingsCount: ratingsCount == 0 ? other.ratingsCount : ratingsCount,
+      thumbnailUrl: thumbnailUrl.isEmpty ? other.thumbnailUrl : thumbnailUrl,
+      language: language.isEmpty ? other.language : language,
+      series: series.isEmpty ? other.series : series,
+      seriesPosition: seriesPosition.isEmpty ? other.seriesPosition : seriesPosition,
+      audioDuration: audioDuration ?? other.audioDuration,
+      bitrate: bitrate ?? other.bitrate,
+      channels: channels ?? other.channels,
+      sampleRate: sampleRate ?? other.sampleRate,
+      fileFormat: fileFormat.isEmpty ? other.fileFormat : fileFormat,
+      // Preserve user data from this instance
+      bookmarks: bookmarks,
+      notes: notes,
+    );
   }
 }

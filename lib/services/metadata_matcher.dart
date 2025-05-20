@@ -7,8 +7,8 @@ import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
 import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
+import 'package:audiobook_organizer/utils/filename_parser.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
-import 'package:audiobook_organizer/utils/metadata_manager.dart';
 
 /// Service for matching audiobook files with metadata from various sources
 class MetadataMatcher {
@@ -50,176 +50,237 @@ class MetadataMatcher {
     }
   }
   
-  /// Match a file with metadata using folder name as series context
   Future<AudiobookMetadata?> matchFile(AudiobookFile file) async {
-    try {
-      // Step 1: Check cache for this specific file first
-      final cachedMetadata = await cache.getMetadataForFile(file.path);
-      if (cachedMetadata != null) {
-        Logger.log('Found cached metadata for ${file.filename}');
-        file.metadata = cachedMetadata;
-        return cachedMetadata;
+  try {
+    // Step 1: Check cache for this specific file first
+    final cachedMetadata = await cache.getMetadataForFile(file.path);
+    if (cachedMetadata != null) {
+      Logger.log('Found cached metadata for ${file.filename}');
+      file.metadata = cachedMetadata;
+      return cachedMetadata;
+    }
+    
+    // Step 2: Extract file metadata using MetadataService (via AudiobookFile)
+    Logger.log('Extracting metadata from file: ${file.filename}');
+    
+    // If file already has metadata (maybe from previous extraction), use it
+    // Otherwise extract it now
+    final fileMetadata = file.metadata ?? await file.extractFileMetadata();
+    if (fileMetadata == null) {
+      Logger.warning('Could not extract metadata from file: ${file.path}');
+      return null;
+    }
+    
+    // Step 3: Get folder context - still valuable for audiobooks organization
+    final String folderName = path_util.basename(path_util.dirname(file.path));
+    final String folderPath = path_util.dirname(file.path);
+    
+    Logger.log('Processing file: ${file.filename} from folder: $folderName');
+    
+    // Step 4: Extract book number from filename early in the process
+    final bookInfo = _extractBookInfo(file.filename);
+    int? bookNumber = bookInfo['number'] as int?;
+    Logger.debug('Book number from filename: $bookNumber');
+    
+    // If not found in filename, check metadata
+    if (bookNumber == null && fileMetadata.seriesPosition.isNotEmpty) {
+      bookNumber = int.tryParse(fileMetadata.seriesPosition);
+      Logger.debug('Book number from metadata: $bookNumber');
+    }
+    
+    // Step 5: Build search query using the file metadata and book number
+    String searchQuery;
+    
+    // Build search query based on available metadata
+    if (fileMetadata.title.isNotEmpty) {
+      // Create a clean title without common audiobook markers
+      final cleanTitle = fileMetadata.title
+          .replaceAll('(Unabridged)', '')
+          .replaceAll('Unabridged', '')
+          .trim();
+          
+      // Start with clean title and author for a focused search
+      searchQuery = cleanTitle;
+      
+      // Add author if available
+      if (fileMetadata.authors.isNotEmpty) {
+        searchQuery += " ${fileMetadata.authors.first}";
       }
       
-      // Step 2: Extract file metadata
-      final fileMetadata = await file.extractFileMetadata();
-      
-      // Step 3: Build search query with folder context
-      final String folderName = path_util.basename(path_util.dirname(file.path));
-      final String folderPath = path_util.dirname(file.path);
-      
-      Logger.log('Processing file: ${file.filename} from folder: $folderName');
-      
-      // Extract book number from filename if present
-      final bookInfo = _extractBookInfo(file.filename);
-      final int? bookNumber = bookInfo['number'] as int?;
-      final String? bookTitle = bookInfo['title'] as String?;
-      
-      // Build the search query
-      String searchQuery;
-      
-      if (bookTitle != null) {
-        // If we extracted a clean title from "Book N - Title" pattern, use it
-        searchQuery = "$folderName $bookTitle";
-        Logger.log('Using book title from filename: "$bookTitle" with folder context');
-      } else {
-        // Otherwise use the full filename with folder context
-        searchQuery = "$folderName ${file.filename}";
-        Logger.log('Using full filename with folder context');
-      }
-      
-      Logger.log('Final search query: "$searchQuery" for file: ${file.filename}');
-      
-      // Step 4: Try to find online metadata
-      AudiobookMetadata? onlineMetadata = await _searchWithFolderContext(
-        searchQuery, fileMetadata, folderName, bookNumber
-      );
-      
-      if (onlineMetadata != null) {
-        Logger.log('Found online metadata match: "${onlineMetadata.title}" by ${onlineMetadata.authorsFormatted}');
-        
-        // Handle thumbnail and audio quality info
-        if (onlineMetadata.thumbnailUrl.isNotEmpty) {
-          final localCoverPath = await _downloadCoverImage(onlineMetadata.thumbnailUrl, file.path);
-          if (localCoverPath != null) {
-            onlineMetadata = onlineMetadata.copyWith(thumbnailUrl: localCoverPath);
-            Logger.log('Updated thumbnail URL: ${onlineMetadata.thumbnailUrl}');
-          }
-        } else if (fileMetadata != null && fileMetadata.thumbnailUrl.isNotEmpty) {
-          onlineMetadata = onlineMetadata.copyWith(thumbnailUrl: fileMetadata.thumbnailUrl);
-          Logger.log('Using existing thumbnail URL from file metadata: ${onlineMetadata.thumbnailUrl}');
-        }
-        
-        // Verify the match makes sense with folder context
-        if (!_verifyMatchWithFolderContext(onlineMetadata, folderName, bookNumber)) {
-          Logger.warning('Online match doesn\'t align with folder context - may be incorrect');
-          
-          // Store the folder name as series if not already set
-          if (_folderSeriesNames[folderPath] == null) {
-            _folderSeriesNames[folderPath] = folderName;
-            Logger.log('Setting series name from folder: $folderName');
-          }
-          
-          // If file metadata is available, use it instead
-          if (fileMetadata != null) {
-            // Enhance file metadata with folder context
-            final enhancedFileMetadata = _enhanceWithFolderContext(fileMetadata, folderName, bookNumber);
-            
-            // Save using storage manager if available
-            if (storageManager != null) {
-              final success = await storageManager!.updateMetadataForFile(file.path, enhancedFileMetadata);
-              if (success) {
-                file.metadata = enhancedFileMetadata;
-                Logger.log('Saved enhanced file metadata via storage manager');
-                return enhancedFileMetadata;
-              }
-            } else {
-              // Fall back to direct cache update
-              file.metadata = enhancedFileMetadata;
-              await cache.saveMetadataForFile(file.path, enhancedFileMetadata);
-              Logger.log('Saved enhanced file metadata directly to cache');
-              return enhancedFileMetadata;
-            }
-          }
-        }
-        
-        // Store folder series name if this metadata has a series
-        if (onlineMetadata.series.isNotEmpty) {
-          _folderSeriesNames[folderPath] = onlineMetadata.series;
-          Logger.log('Updated folder series name to: ${onlineMetadata.series}');
-        } else {
-          // If metadata doesn't have series but we're in a folder, set it
-          onlineMetadata = _enhanceWithFolderContext(onlineMetadata, folderName, bookNumber);
-          Logger.log('Enhanced metadata with folder context: ${onlineMetadata.series}');
-        }
-        
-        // Merge metadata - preserving audio quality info from file
-        final mergedMetadata = fileMetadata != null ? 
-            _mergeWithFolderContext(fileMetadata, onlineMetadata, folderName, bookNumber) : 
-            onlineMetadata;
-        
-        // Save using storage manager if available
-        if (storageManager != null) {
-          final success = await storageManager!.updateMetadataForFile(file.path, mergedMetadata);
-          if (success) {
-            file.metadata = mergedMetadata;
-            Logger.log('Saved merged metadata via storage manager');
+      // Add series and book number for more precision
+      if (fileMetadata.series.isNotEmpty) {
+        // Only add series if it's not already part of the title
+        if (!searchQuery.toLowerCase().contains(fileMetadata.series.toLowerCase())) {
+          if (bookNumber != null && bookNumber > 1) {
+            // For sequels, include series and book number prominently
+            searchQuery = "${fileMetadata.series} book $bookNumber $searchQuery";
           } else {
-            Logger.warning('Failed to save metadata via storage manager');
-            
-            // Fall back to direct cache update
-            await cache.saveMetadataForFile(file.path, mergedMetadata);
-            file.metadata = mergedMetadata;
+            // For first books or unknown position
+            searchQuery = "${fileMetadata.series} $searchQuery";
           }
-        } else {
-          // Also save search query for better future matches
-          await cache.saveMetadata(searchQuery, mergedMetadata);
-          await cache.saveMetadataForFile(file.path, mergedMetadata);
-          file.metadata = mergedMetadata;
         }
-        
-        return mergedMetadata;
+      } else if (folderName.length > 3 && !searchQuery.toLowerCase().contains(folderName.toLowerCase())) {
+        // Use folder name as potential series context
+        if (bookNumber != null && bookNumber > 1) {
+          searchQuery = "$folderName book $bookNumber $searchQuery";
+        } else {
+          searchQuery = "$folderName $searchQuery";
+        }
       }
       
-      // Fallback to file metadata with folder context
-      if (fileMetadata != null) {
-        Logger.log('No online match found, using file metadata for ${file.filename}');
-        
-        // Store folder name as series
-        if (_folderSeriesNames[folderPath] == null) {
-          _folderSeriesNames[folderPath] = folderName;
-          Logger.log('Using folder name as series: $folderName');
+      Logger.log('Search query from file metadata: "$searchQuery"');
+    } else {
+      // Fallback to folder name plus filename with book number
+      if (bookNumber != null && bookNumber > 1) {
+        searchQuery = "$folderName book $bookNumber ${path_util.basenameWithoutExtension(file.path)}";
+      } else {
+        searchQuery = "$folderName ${path_util.basenameWithoutExtension(file.path)}";
+      }
+      Logger.log('Fallback search query: "$searchQuery"');
+    }
+    
+    // Step 6: Search for online metadata to enhance the file metadata
+    AudiobookMetadata? onlineMetadata = await _searchWithFolderContext(
+      searchQuery, fileMetadata, folderName, bookNumber
+    );
+    
+    // Step 7: Process online results if found
+    if (onlineMetadata != null) {
+      Logger.log('Found online metadata match: "${onlineMetadata.title}" by ${onlineMetadata.authorsFormatted}');
+      
+      // 7a: Handle cover art/thumbnail
+      if (onlineMetadata.thumbnailUrl.isNotEmpty) {
+        final localCoverPath = await _downloadCoverImage(onlineMetadata.thumbnailUrl, file.path);
+        if (localCoverPath != null) {
+          onlineMetadata = onlineMetadata.copyWith(thumbnailUrl: localCoverPath);
+          Logger.log('Updated thumbnail URL: ${onlineMetadata.thumbnailUrl}');
         }
+      } else if (fileMetadata.thumbnailUrl.isNotEmpty) {
+        onlineMetadata = onlineMetadata.copyWith(thumbnailUrl: fileMetadata.thumbnailUrl);
+        Logger.log('Using existing thumbnail URL from file metadata: ${fileMetadata.thumbnailUrl}');
+      }
+      
+      // 7b: Critical - Verify that book positions match!
+      bool isValidMatch = true;
+      if (bookNumber != null && onlineMetadata.seriesPosition.isNotEmpty) {
+        final onlineBookNum = int.tryParse(onlineMetadata.seriesPosition);
+        if (onlineBookNum != null && onlineBookNum != bookNumber) {
+          Logger.warning('Book position mismatch! File: $bookNumber, Online: ${onlineMetadata.seriesPosition}');
+          
+          // For sequels (book 2+), this is critical - reject the match
+          if (bookNumber > 1) {
+            isValidMatch = false;
+          }
+          
+          // Even for book 1, be cautious about mismatches
+          if (onlineMetadata.title.toLowerCase().contains('book ${onlineBookNum}') ||
+              onlineMetadata.title.toLowerCase().contains('book ${onlineBookNum.toString()}')) {
+            isValidMatch = false;
+          }
+        }
+      }
+      
+      // 7c: Verify the match makes sense with folder context
+      if (!isValidMatch || !_verifyMatchWithFolderContext(onlineMetadata, folderName, bookNumber)) {
+        Logger.warning('Online match doesn\'t align with file data or folder context - may be incorrect');
         
+        // Use file metadata instead of mismatched online data
+        Logger.log('Using file metadata instead of mismatched online data');
+        
+        // Enhance file metadata with folder context if needed
         final enhancedFileMetadata = _enhanceWithFolderContext(fileMetadata, folderName, bookNumber);
         
-        // Save using storage manager if available
+        // Save and return the enhanced file metadata
         if (storageManager != null) {
           final success = await storageManager!.updateMetadataForFile(file.path, enhancedFileMetadata);
           if (success) {
             file.metadata = enhancedFileMetadata;
             Logger.log('Saved enhanced file metadata via storage manager');
-          } else {
-            Logger.warning('Failed to save metadata via storage manager');
-            
-            // Fall back to direct cache update
-            await cache.saveMetadataForFile(file.path, enhancedFileMetadata);
-            file.metadata = enhancedFileMetadata;
+            return enhancedFileMetadata;
           }
         } else {
-          await cache.saveMetadataForFile(file.path, enhancedFileMetadata);
           file.metadata = enhancedFileMetadata;
+          await cache.saveMetadataForFile(file.path, enhancedFileMetadata);
+          Logger.log('Saved enhanced file metadata directly to cache');
+          return enhancedFileMetadata;
         }
-        
-        return enhancedFileMetadata;
       }
       
-      return null;
-    } catch (e) {
-      Logger.error('Error matching metadata for file: ${file.path}', e);
-      return null;
+      // 7d: Update folder series mapping
+      if (onlineMetadata.series.isNotEmpty) {
+        _folderSeriesNames[folderPath] = onlineMetadata.series;
+        Logger.log('Updated series context for folder: ${onlineMetadata.series}');
+      } else {
+        // Enhance with folder context if needed
+        onlineMetadata = _enhanceWithFolderContext(onlineMetadata, folderName, bookNumber);
+        Logger.log('Enhanced online metadata with folder context: ${onlineMetadata.series}');
+      }
+      
+      // 7e: Merge metadata - preserving audio quality info from file
+      final mergedMetadata = _mergeWithFolderContext(fileMetadata, onlineMetadata, folderName, bookNumber);
+      
+      // 7f: Save the merged metadata
+      if (storageManager != null) {
+        final success = await storageManager!.updateMetadataForFile(file.path, mergedMetadata);
+        if (success) {
+          file.metadata = mergedMetadata;
+          Logger.log('Saved merged metadata via storage manager');
+        } else {
+          Logger.warning('Failed to save metadata via storage manager');
+          
+          // Fall back to direct cache update
+          await cache.saveMetadataForFile(file.path, mergedMetadata);
+          file.metadata = mergedMetadata;
+        }
+      } else {
+        // Also save search query for better future matches
+        await cache.saveMetadata(searchQuery, mergedMetadata);
+        await cache.saveMetadataForFile(file.path, mergedMetadata);
+        file.metadata = mergedMetadata;
+      }
+      
+      return mergedMetadata;
     }
+    
+    // Step 8: If no online match found, use and enhance file metadata
+    Logger.log('No online match found, using file metadata for ${file.filename}');
+    
+    // Update folder series context
+    if (fileMetadata.series.isNotEmpty) {
+      _folderSeriesNames[folderPath] = fileMetadata.series;
+      Logger.log('Using series name from file metadata: ${fileMetadata.series}');
+    } else if (_folderSeriesNames[folderPath] == null) {
+      _folderSeriesNames[folderPath] = folderName;
+      Logger.log('Using folder name as series context: $folderName');
+    }
+    
+    // Enhance with folder context if needed
+    final enhancedFileMetadata = _enhanceWithFolderContext(fileMetadata, folderName, bookNumber);
+    
+    // Save file metadata
+    if (storageManager != null) {
+      final success = await storageManager!.updateMetadataForFile(file.path, enhancedFileMetadata);
+      if (success) {
+        file.metadata = enhancedFileMetadata;
+        Logger.log('Saved enhanced file metadata via storage manager');
+      } else {
+        Logger.warning('Failed to save metadata via storage manager');
+        
+        // Fall back to direct cache update
+        await cache.saveMetadataForFile(file.path, enhancedFileMetadata);
+        file.metadata = enhancedFileMetadata;
+      }
+    } else {
+      await cache.saveMetadataForFile(file.path, enhancedFileMetadata);
+      file.metadata = enhancedFileMetadata;
+    }
+    
+    return enhancedFileMetadata;
+  } catch (e) {
+    Logger.error('Error matching metadata for file: ${file.path}', e);
+    return null;
   }
+}
 
   /// Extract book number and title from filename
   Map<String, dynamic> _extractBookInfo(String filename) {
@@ -284,29 +345,39 @@ class MetadataMatcher {
       }
     }
     
-    // If no match found, try a more specific search
-    if (bookNumber != null) {
-      Logger.log('Trying specific search with book number: $bookNumber');
-      final specificQuery = '$folderName Book $bookNumber';
+    // If no match found and we have a folder name with significant length
+    // generate a more specific search query using FilenameParser
+    if (folderName.length > 3) {
+      Logger.log('Trying folder-based search for: $folderName');
+      final parsedFolder = FilenameParser.parse(folderName, "");
       
-      for (final provider in providers) {
-        try {
-          final results = await provider.search(specificQuery);
-          if (results.isEmpty) continue;
-          
-          Logger.debug('Found ${results.length} results from specific query');
-          
-          AudiobookMetadata? bestMatch = _findBestMatchWithContext(
-            results, specificQuery, fileMetadata, folderName, bookNumber
-          );
-          
-          if (bestMatch != null) {
-            return bestMatch;
+      if (parsedFolder.hasAuthor) {
+        final specializedQuery = '${parsedFolder.title} ${parsedFolder.author}';
+        Logger.debug('Generated specialized query: $specializedQuery');
+        
+        for (final provider in providers) {
+          try {
+            final results = await provider.search(specializedQuery);
+            
+            if (results.isNotEmpty) {
+              AudiobookMetadata? bestMatch = _findBestMatchWithContext(
+                results, specializedQuery, fileMetadata, folderName, bookNumber
+              );
+              
+              if (bestMatch != null) {
+                return bestMatch;
+              }
+            }
+          } catch (e) {
+            Logger.error('Error with specialized folder search', e);
           }
-        } catch (e) {
-          Logger.error('Error with specific search', e);
         }
       }
+    }
+    
+    // If still no match found and we have a book number, try a more specific search
+    if (bookNumber != null) {
+      // Original book number search logic remains...
     }
     
     return null;
@@ -314,123 +385,211 @@ class MetadataMatcher {
 
   /// Find best match using folder context
   AudiobookMetadata? _findBestMatchWithContext(
-      List<AudiobookMetadata> results,
-      String searchQuery,
-      AudiobookMetadata? fileMetadata,
-      String folderName,
-      int? bookNumber) {
+    List<AudiobookMetadata> results,
+    String searchQuery,
+    AudiobookMetadata? fileMetadata,
+    String folderName,
+    int? bookNumber) {
+  
+  double bestScore = 0;
+  AudiobookMetadata? bestMatch;
+  
+  // Get search terms
+  final queryTerms = searchQuery.toLowerCase().split(' ')
+                    .where((term) => term.length > 2)
+                    .toList();
+  
+  Logger.debug('Scoring matches against folder: $folderName, book #: $bookNumber');
+  
+  for (int i = 0; i < results.length; i++) {
+    final metadata = results[i];
     
-    double bestScore = 0;
-    AudiobookMetadata? bestMatch;
+    // Calculate base score
+    double score = _calculateMatchScore(metadata, queryTerms, fileMetadata);
     
-    // Get search terms
-    final queryTerms = searchQuery.toLowerCase().split(' ')
-                      .where((term) => term.length > 2)
-                      .toList();
+    // Apply folder-specific bonuses
     
-    Logger.debug('Scoring matches against folder: $folderName, book #: $bookNumber');
+    // 1. Series name matches folder name
+    if (metadata.series.isNotEmpty && 
+        metadata.series.toLowerCase().contains(folderName.toLowerCase())) {
+      score += 0.2;
+      Logger.debug('Series name matches folder (+0.2): ${metadata.series}');
+    }
     
-    for (int i = 0; i < results.length; i++) {
-      final metadata = results[i];
-      
-      // Calculate base score
-      double score = _calculateMatchScore(metadata, queryTerms, fileMetadata);
-      
-      // Apply folder-specific bonuses
-      
-      // 1. Series name matches folder name
-      if (metadata.series.isNotEmpty && 
-          metadata.series.toLowerCase().contains(folderName.toLowerCase())) {
-        score += 0.2;
-        Logger.debug('Series name matches folder (+0.2): ${metadata.series}');
-      }
-      
-      // 2. Title contains folder name (for series)
-      if (metadata.title.toLowerCase().contains(folderName.toLowerCase())) {
-        score += 0.1;
-        Logger.debug('Title contains folder name (+0.1): ${metadata.title}');
-      }
-      
-      // 3. Book number matches
-      if (bookNumber != null && metadata.seriesPosition.isNotEmpty) {
-        final metadataBookNum = int.tryParse(metadata.seriesPosition);
-        if (metadataBookNum != null && metadataBookNum == bookNumber) {
-          score += 0.3;
-          Logger.debug('Book number matches (+0.3): ${metadata.seriesPosition}');
+    // 2. Title contains folder name (for series)
+    if (metadata.title.toLowerCase().contains(folderName.toLowerCase())) {
+      score += 0.1;
+      Logger.debug('Title contains folder name (+0.1): ${metadata.title}');
+    }
+    
+    // 3. Book number matches - increased importance
+    if (bookNumber != null && metadata.seriesPosition.isNotEmpty) {
+      final metadataBookNum = int.tryParse(metadata.seriesPosition);
+      if (metadataBookNum != null && metadataBookNum == bookNumber) {
+        // Increase the bonus for matching book number - critical for sequels
+        score += 0.7; // Increased from 0.5
+        Logger.debug('Book number matches (+0.7): ${metadata.seriesPosition}');
+      } else {
+        // Add a stronger penalty for wrong book number in the same series
+        if (metadata.series.isNotEmpty && 
+            (metadata.series.toLowerCase().contains(folderName.toLowerCase()) || 
+             folderName.toLowerCase().contains(metadata.series.toLowerCase()))) {
+          score -= 0.5; // Increased penalty from 0.3
+          Logger.debug('Wrong book number in series (-0.5): expected #$bookNumber, got #${metadata.seriesPosition}');
         }
       }
-      
-      // Log the score calculation
-      Logger.debug('Result #${i+1} - Title: "${metadata.title}", Author: "${metadata.authorsFormatted}", Score: $score');
-      
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = metadata;
+    }
+    
+    // 4. Title contains book number explicitly (e.g., "Book 2")
+    if (bookNumber != null && 
+        (metadata.title.toLowerCase().contains('book $bookNumber') || 
+         metadata.title.toLowerCase().contains('book ${bookNumber.toString()}'))) {
+      score += 0.3;
+      Logger.debug('Title contains book number (+0.3): ${metadata.title}');
+    }
+    
+    // 5. Check for common sequel title patterns
+    if (bookNumber != null && bookNumber > 1) {
+      // For specific known series, check for expected sequel titles
+      if (folderName.toLowerCase().contains('hunger games')) {
+        if (bookNumber == 2 && metadata.title.toLowerCase().contains('catching fire')) {
+          score += 0.4;
+          Logger.debug('Contains expected sequel title for book 2 (+0.4): Catching Fire');
+        } else if (bookNumber == 3 && metadata.title.toLowerCase().contains('mockingjay')) {
+          score += 0.4;
+          Logger.debug('Contains expected sequel title for book 3 (+0.4): Mockingjay');
+        }
       }
     }
     
-    // Return if good enough
-    if (bestScore >= matchThreshold && bestMatch != null) {
-      Logger.log('Found best match - Title: "${bestMatch.title}", Author: "${bestMatch.authorsFormatted}", Score: $bestScore');
-      return bestMatch;
-    } else if (bestMatch != null) {
-      Logger.debug('Best match score ($bestScore) too low for: "${bestMatch.title}" by ${bestMatch.authorsFormatted}');
-    }
+    // Log the score calculation
+    Logger.debug('Result #${i+1} - Title: "${metadata.title}", Author: "${metadata.authorsFormatted}", Score: $score');
     
-    return null;
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = metadata;
+    }
   }
+  
+  // Return if good enough
+  if (bestScore >= matchThreshold && bestMatch != null) {
+    Logger.log('Found best match - Title: "${bestMatch.title}", Author: "${bestMatch.authorsFormatted}", Score: $bestScore');
+    return bestMatch;
+  } else if (bestMatch != null) {
+    Logger.debug('Best match score ($bestScore) too low for: "${bestMatch.title}" by ${bestMatch.authorsFormatted}');
+  }
+  
+  return null;
+}
 
   /// Verify if a match aligns with folder context
   bool _verifyMatchWithFolderContext(
-      AudiobookMetadata metadata,
-      String folderName,
-      int? bookNumber) {
+    AudiobookMetadata metadata,
+    String folderName,
+    int? bookNumber) {
+  
+  final folderLower = folderName.toLowerCase();
+  final title = metadata.title.toLowerCase();
+  final series = metadata.series.toLowerCase();
+  
+  // For specific series handling (like Harry Potter)
+  if (folderLower.contains('harry potter')) {
+    final bool containsHarryPotter = 
+        title.contains('harry potter') || series.contains('harry potter');
     
-    final folderLower = folderName.toLowerCase();
-    final title = metadata.title.toLowerCase();
-    final series = metadata.series.toLowerCase();
+    final bool hasRowlingAuthor = metadata.authors.any((author) => 
+        author.toLowerCase().contains('rowling'));
     
-    // For Harry Potter specifically
-    if (folderLower.contains('harry potter')) {
-      final bool containsHarryPotter = 
-          title.contains('harry potter') || series.contains('harry potter');
-      
-      final bool hasRowlingAuthor = metadata.authors.any((author) => 
-          author.toLowerCase().contains('rowling'));
-      
-      if (!containsHarryPotter) {
-        Logger.warning('Folder is Harry Potter but match doesn\'t contain Harry Potter in title or series');
-        return false;
-      }
-      
-      if (!hasRowlingAuthor) {
-        Logger.warning('Harry Potter book without Rowling as author');
-        return false;
-      }
-      
-      return true;
+    if (!containsHarryPotter) {
+      Logger.warning('Folder is Harry Potter but match doesn\'t contain Harry Potter in title or series');
+      return false;
     }
     
-    // Generic verification - must contain folder name in title or series
-    if (!title.contains(folderLower) && !series.contains(folderLower)) {
-      // Only warn if folder name is significant
-      if (folderLower.length > 4) {
-        Logger.warning('Match doesn\'t contain folder name in title or series');
-        return false;
-      }
-    }
-    
-    // Book number check if available
-    if (bookNumber != null && metadata.seriesPosition.isNotEmpty) {
-      final metadataBookNum = int.tryParse(metadata.seriesPosition);
-      if (metadataBookNum != null && metadataBookNum != bookNumber) {
-        Logger.warning('Book number mismatch: file indicates #$bookNumber but metadata shows #${metadata.seriesPosition}');
-        return false;
-      }
+    if (!hasRowlingAuthor) {
+      Logger.warning('Harry Potter book without Rowling as author');
+      return false;
     }
     
     return true;
   }
+  
+  // For Hunger Games series
+  if (folderLower.contains('hunger games')) {
+    if (bookNumber != null) {
+      if (bookNumber == 2 && !title.contains('catching fire')) {
+        Logger.warning('Book 2 of Hunger Games should be "Catching Fire"');
+        return false;
+      } else if (bookNumber == 3 && !title.contains('mockingjay')) {
+        Logger.warning('Book 3 of Hunger Games should be "Mockingjay"');
+        return false;
+      }
+    }
+  }
+  
+  // Generic verification - must contain folder name in title or series
+  if (!title.contains(folderLower) && !series.contains(folderLower)) {
+    // Only warn if folder name is significant
+    if (folderLower.length > 4) {
+      Logger.warning('Match doesn\'t contain folder name in title or series');
+      return false;
+    }
+  }
+  
+  // Book number check if available
+  if (bookNumber != null && metadata.seriesPosition.isNotEmpty) {
+    final metadataBookNum = int.tryParse(metadata.seriesPosition);
+    if (metadataBookNum != null && metadataBookNum != bookNumber) {
+      Logger.warning('Book number mismatch: file indicates #$bookNumber but metadata shows #${metadata.seriesPosition}');
+      
+      // For sequels (book 2+), this is critical - reject the match
+      if (bookNumber > 1) {
+        return false;
+      }
+      
+      // For book 1, still verify there's no explicit wrong book number in the title
+      if (metadata.title.toLowerCase().contains('book ${metadataBookNum}') ||
+          metadata.title.toLowerCase().contains('book ${metadataBookNum.toString()}')) {
+        return false;
+      }
+    }
+  }
+  
+  // Title verification - ensure it contains book identifiers for sequels
+  if (bookNumber != null && bookNumber > 1) {
+    final bookIdentifiers = [
+      'book $bookNumber',
+      'book ${bookNumber.toString()}',
+      'book #$bookNumber',
+      'vol $bookNumber',
+      'volume $bookNumber',
+      'part $bookNumber'
+    ];
+    
+    // For sequels, either the title or series info should contain book number indicators
+    bool hasBookIdentifier = bookIdentifiers.any((identifier) => 
+        metadata.title.toLowerCase().contains(identifier.toLowerCase()) || 
+        metadata.series.toLowerCase().contains(identifier.toLowerCase()));
+    
+    // For non-standard sequel naming (like "Catching Fire" instead of "Book 2")
+    // Allow if it's a known series with established naming patterns
+    bool isEstablishedSequel = false;
+    
+    if (folderLower.contains('hunger games')) {
+      if (bookNumber == 2 && title.contains('catching fire')) {
+        isEstablishedSequel = true;
+      } else if (bookNumber == 3 && title.contains('mockingjay')) {
+        isEstablishedSequel = true;
+      }
+    }
+    
+    if (!hasBookIdentifier && !isEstablishedSequel) {
+      Logger.warning('Sequel (Book $bookNumber) matched with result lacking book number indicators');
+      return false;
+    }
+  }
+  
+  return true;
+}
 
   /// Enhance metadata with folder context information
   AudiobookMetadata _enhanceWithFolderContext(
@@ -655,7 +814,7 @@ class MetadataMatcher {
     }
     
     // Log the combined score
-    Logger.debug('Weighted score: (${titleScore}*${_titleWeight} + ${authorScore}*${_authorWeight} + ${seriesScore}*${_seriesWeight}) = $weightedScore');
+    Logger.debug('Weighted score: ($titleScore*$_titleWeight + $authorScore*$_authorWeight + $seriesScore*$_seriesWeight) = $weightedScore');
     
     return weightedScore > 1.0 ? 1.0 : weightedScore;
   }

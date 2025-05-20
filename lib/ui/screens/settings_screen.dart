@@ -1,363 +1,103 @@
-// File: lib/ui/screens/settings_screen.dart
+// lib/ui/screens/settings_screen.dart
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:file_selector/file_selector.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'dart:io';
-
-import 'package:audiobook_organizer/storage/user_preferences.dart';
-import 'package:audiobook_organizer/services/audiobook_scanner.dart';
-import 'package:audiobook_organizer/services/providers/google_books_provider.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as path;
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:audiobook_organizer/services/library_manager.dart';
+import 'package:audiobook_organizer/services/audio_player_service.dart';
+import 'package:audiobook_organizer/storage/metadata_cache.dart';
 import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
-import 'package:audiobook_organizer/main.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({Key? key}) : super(key: key);
+  const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  _SettingsScreenState createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  // Controllers
-  final _apiKeyController = TextEditingController();
-  final _namingPatternController = TextEditingController();
+  // App info
+  String _appVersion = '';
+  String _cacheSize = '';
+  bool _isLoading = false;
   
-  // State variables
-  String? _defaultDirectory;
-  bool _isLoading = true;
-  bool _isTestingApiKey = false;
-  bool _includeSubfolders = true;
-  bool _autoMatchNewFiles = false;
-  bool _useDarkMode = false;
-  List<String> _supportedExtensions = [];
-  
-  // API key test result
-  String? _apiKeyTestResult;
-  bool? _apiKeyValid;
+  // Settings
+  final bool _darkMode = true;
+  double _defaultPlaybackSpeed = 1.0;
+  bool _autoSavePlaybackPosition = true;
+  int _skipForwardSeconds = 30;
+  int _skipBackwardSeconds = 10;
   
   @override
   void initState() {
     super.initState();
-    _loadPreferences();
-    _loadSupportedExtensions();
+    _loadAppInfo();
   }
   
-  @override
-  void dispose() {
-    _apiKeyController.dispose();
-    _namingPatternController.dispose();
-    super.dispose();
-  }
-  
-  Future<void> _loadPreferences() async {
-    if (!mounted) return;
-    
-    try {
-      final prefs = Provider.of<UserPreferences>(context, listen: false);
-      
-      final apiKey = await prefs.getApiKey();
-      final defaultDir = await prefs.getDefaultDirectory();
-      final pattern = await prefs.getNamingPattern();
-      final includeSubfolders = await prefs.getIncludeSubfolders();
-      final autoMatchNewFiles = await prefs.getAutoMatchNewFiles();
-      final useDarkMode = await prefs.getUseDarkMode();
-      
-      if (!mounted) return;
-      
-      setState(() {
-        _apiKeyController.text = apiKey ?? '';
-        _defaultDirectory = defaultDir;
-        _namingPatternController.text = pattern;
-        _includeSubfolders = includeSubfolders;
-        _autoMatchNewFiles = autoMatchNewFiles;
-        _useDarkMode = useDarkMode ?? false;
-        _isLoading = false;
-      });
-    } catch (e) {
-      Logger.error('Error loading preferences', e);
-      
-      if (!mounted) return;
-      
-      setState(() {
-        _isLoading = false;
-      });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error loading settings: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-  
-  Future<void> _loadSupportedExtensions() async {
-    try {
-      final scanner = Provider.of<AudiobookScanner>(context, listen: false);
-      
-      setState(() {
-        _supportedExtensions = scanner.supportedExtensions;
-      });
-    } catch (e) {
-      Logger.error('Error loading supported extensions', e);
-    }
-  }
-  
-  Future<void> _savePreferences() async {
-    if (!mounted) return;
-    
+  // Load app info
+  Future<void> _loadAppInfo() async {
     setState(() {
       _isLoading = true;
     });
     
     try {
-      final prefs = Provider.of<UserPreferences>(context, listen: false);
-      final themeProvider = Provider.of<ThemeModeProvider>(context, listen: false);
-      final googleProvider = Provider.of<GoogleBooksProvider>(context, listen: false);
+      // Get app version
+      final packageInfo = await PackageInfo.fromPlatform();
+      _appVersion = '${packageInfo.version} (${packageInfo.buildNumber})';
       
-      await prefs.saveApiKey(_apiKeyController.text.trim());
-      await prefs.saveNamingPattern(_namingPatternController.text.trim());
-      await prefs.saveIncludeSubfolders(_includeSubfolders);
-      await prefs.saveAutoMatchNewFiles(_autoMatchNewFiles);
-      await prefs.saveUseDarkMode(_useDarkMode);
-      
-      if (_defaultDirectory != null) {
-        await prefs.saveDefaultDirectory(_defaultDirectory!);
-      }
-      // Update the theme mode
-      themeProvider.setThemeMode(_useDarkMode ? ThemeMode.dark : ThemeMode.light);
-      googleProvider.updateApiKey(_apiKeyController.text.trim());
-      
-      if (!mounted) return;
-      
+      // Calculate cache size
+      _cacheSize = await _calculateCacheSize();
+    } catch (e) {
+      Logger.error('Error loading app info', e);
+    } finally {
       setState(() {
         _isLoading = false;
       });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Settings saved'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } catch (e) {
-      Logger.error('Error saving preferences', e);
-      
-      if (!mounted) return;
-      
-      setState(() {
-        _isLoading = false;
-      });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error saving settings: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
     }
   }
   
-  Future<void> _selectDefaultDirectory() async {
+  // Calculate cache size
+  Future<String> _calculateCacheSize() async {
     try {
-      final String? directory = await getDirectoryPath(
-        confirmButtonText: 'Select Folder',
-      );
+      final appDir = await getApplicationDocumentsDirectory();
+      final cachePath = '${appDir.path}/audiobook_cache';
+      final cacheDir = Directory(cachePath);
       
-      if (directory != null && mounted) {
-        setState(() {
-          _defaultDirectory = directory;
-        });
+      if (!await cacheDir.exists()) {
+        return '0 B';
       }
-    } catch (e) {
-      Logger.error('Error selecting directory', e);
       
-      if (!mounted) return;
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error selecting directory: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-  
-  Future<void> _testApiKey() async {
-    final apiKey = _apiKeyController.text.trim();
-    if (apiKey.isEmpty) {
-      setState(() {
-        _apiKeyTestResult = 'Please enter an API key';
-        _apiKeyValid = false;
-      });
-      return;
-    }
-    
-    setState(() {
-      _isTestingApiKey = true;
-      _apiKeyTestResult = null;
-      _apiKeyValid = null;
-    });
-    
-    try {
-      final googleProvider = Provider.of<GoogleBooksProvider>(context, listen: false);
-      googleProvider.updateApiKey(apiKey);
-      
-      // Try a simple search to test the API key
-      final results = await googleProvider.search('Harry Potter');
-      
-      if (!mounted) return;
-      
-      setState(() {
-        _isTestingApiKey = false;
-        if (results.isNotEmpty) {
-          _apiKeyTestResult = 'API key is valid! Found ${results.length} books.';
-          _apiKeyValid = true;
-        } else {
-          _apiKeyTestResult = 'API key may be valid, but no results were found.';
-          _apiKeyValid = null;
+      int totalSize = 0;
+      await for (final entity in cacheDir.list(recursive: true)) {
+        if (entity is File) {
+          totalSize += await entity.length();
         }
-      });
-    } catch (e) {
-      if (!mounted) return;
-      
-      setState(() {
-        _isTestingApiKey = false;
-        _apiKeyTestResult = 'Error: ${e.toString()}';
-        _apiKeyValid = false;
-      });
-    }
-  }
-  
-  Future<void> _clearMetadataCache() async {
-    try {
-      // Use the storage manager to clear cache
-      final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
-      await storageManager.clearAll();
-      
-      if (!mounted) return;
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Metadata cache cleared'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    } catch (e) {
-      Logger.error('Error clearing metadata cache', e);
-      
-      if (!mounted) return;
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error clearing metadata cache: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-  
-  Future<void> _resetAllSettings() async {
-    if (!mounted) return;
-    
-    // Get provider instances before any async operations
-    final prefs = Provider.of<UserPreferences>(context, listen: false);
-    final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
-    
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Reset Settings'),
-        content: const Text(
-          'This will reset all settings to their default values and clear your library. '
-          'Are you sure you want to continue?'
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('Reset'),
-          ),
-        ],
-      ),
-    );
-    
-    // Check if widget is still mounted after the dialog
-    if (!mounted) return;
-    
-    if (confirm == true) {
-      setState(() {
-        _isLoading = true;
-      });
-      
-      try {
-        Logger.log('Starting library reset process...');
-        
-        // Reset user preferences
-        await prefs.resetAllSettings();
-        Logger.log('User preferences reset...');
-        
-        // Clear library and metadata using the storage manager
-        await storageManager.clearAll();
-        Logger.log('Library storage and metadata cache cleared...');
-        
-        await _loadPreferences();
-        
-        if (!mounted) return;
-        
-        Navigator.of(context).pop(true);
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('All settings reset to defaults and library cleared'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      } catch (e) {
-        Logger.error('Error resetting settings and library', e);
-        
-        if (!mounted) return;
-        
-        setState(() {
-          _isLoading = false;
-        });
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error resetting settings: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
       }
+      
+      // Format size
+      if (totalSize < 1024) {
+        return '$totalSize B';
+      } else if (totalSize < 1024 * 1024) {
+        return '${(totalSize / 1024).toStringAsFixed(1)} KB';
+      } else if (totalSize < 1024 * 1024 * 1024) {
+        return '${(totalSize / (1024 * 1024)).toStringAsFixed(1)} MB';
+      } else {
+        return '${(totalSize / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+      }
+    } catch (e) {
+      Logger.error('Error calculating cache size', e);
+      return 'Unknown';
     }
   }
   
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-        actions: [
-          TextButton.icon(
-            onPressed: _savePreferences,
-            icon: const Icon(Icons.save),
-            label: const Text('Save'),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.white,
-            ),
-          ),
-        ],
-      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
@@ -365,45 +105,130 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // API Section
-                  _buildApiSection(theme),
-                  const SizedBox(height: 24),
-                  
-                  // Appearance Section
-                  _buildAppearanceSection(theme),
-                  const SizedBox(height: 24),
-                  
-                  // File Management Section
-                  _buildFileManagementSection(theme),
-                  const SizedBox(height: 24),
-                  
-                  // Scanning Options Section
-                  _buildScanningOptionsSection(theme),
-                  const SizedBox(height: 24),
-                  
-                  // Advanced Section
-                  _buildAdvancedSection(theme),
-                  const SizedBox(height: 24),
-                  
-                  // About Section
-                  _buildAboutSection(theme),
-                  const SizedBox(height: 32),
-                  
-                  // Save button
-                  Center(
-                    child: ElevatedButton.icon(
-                      onPressed: _savePreferences,
-                      icon: const Icon(Icons.save),
-                      label: const Text('Save Settings'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: theme.colorScheme.primary,
-                        foregroundColor: theme.colorScheme.onPrimary,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 16,
+                  // Library section
+                  _buildSection(
+                    title: 'Library',
+                    children: [
+                      _buildDirectoriesList(),
+                      _buildSettingTile(
+                        title: 'Clear Cache',
+                        subtitle: 'Current size: $_cacheSize',
+                        trailing: IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: _clearCache,
                         ),
                       ),
-                    ),
+                      _buildSettingTile(
+                        title: 'Rescan Library',
+                        subtitle: 'Scan for new files and update metadata',
+                        trailing: IconButton(
+                          icon: const Icon(Icons.refresh),
+                          onPressed: _rescanLibrary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  // Playback section
+                  _buildSection(
+                    title: 'Playback',
+                    children: [
+                      _buildSettingTile(
+                        title: 'Default Playback Speed',
+                        subtitle: '${_defaultPlaybackSpeed.toStringAsFixed(1)}x',
+                        trailing: DropdownButton<double>(
+                          value: _defaultPlaybackSpeed,
+                          items: [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+                              .map((speed) => DropdownMenuItem(
+                                    value: speed,
+                                    child: Text('${speed.toStringAsFixed(1)}x'),
+                                  ))
+                              .toList(),
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _defaultPlaybackSpeed = value;
+                              });
+                              _saveSettings();
+                            }
+                          },
+                        ),
+                      ),
+                      SwitchListTile(
+                        title: const Text('Auto-save Playback Position'),
+                        subtitle: const Text('Automatically save your position when pausing'),
+                        value: _autoSavePlaybackPosition,
+                        onChanged: (value) {
+                          setState(() {
+                            _autoSavePlaybackPosition = value;
+                          });
+                          _saveSettings();
+                        },
+                      ),
+                      _buildSettingTile(
+                        title: 'Skip Forward Duration',
+                        subtitle: '$_skipForwardSeconds seconds',
+                        trailing: DropdownButton<int>(
+                          value: _skipForwardSeconds,
+                          items: [15, 30, 45, 60, 90]
+                              .map((seconds) => DropdownMenuItem(
+                                    value: seconds,
+                                    child: Text('$seconds s'),
+                                  ))
+                              .toList(),
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _skipForwardSeconds = value;
+                              });
+                              _saveSettings();
+                            }
+                          },
+                        ),
+                      ),
+                      _buildSettingTile(
+                        title: 'Skip Backward Duration',
+                        subtitle: '$_skipBackwardSeconds seconds',
+                        trailing: DropdownButton<int>(
+                          value: _skipBackwardSeconds,
+                          items: [5, 10, 15, 20, 30]
+                              .map((seconds) => DropdownMenuItem(
+                                    value: seconds,
+                                    child: Text('$seconds s'),
+                                  ))
+                              .toList(),
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() {
+                                _skipBackwardSeconds = value;
+                              });
+                              _saveSettings();
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  // App info section
+                  _buildSection(
+                    title: 'About',
+                    children: [
+                      ListTile(
+                        title: const Text('Version'),
+                        subtitle: Text(_appVersion),
+                      ),
+                      const ListTile(
+                        title: Text('Developer'),
+                        subtitle: Text('YourCompany'),
+                      ),
+                      ListTile(
+                        title: const Text('View Logs'),
+                        subtitle: const Text('View application logs for troubleshooting'),
+                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                        onTap: _viewLogs,
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -411,416 +236,527 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
   
-  Widget _buildApiSection(ThemeData theme) {
-    final colorScheme = theme.colorScheme;
-    
-    return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.api,
-                  color: colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'API Configuration',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+  // Build a section with header and children
+  Widget _buildSection({required String title, required List<Widget> children}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16.0),
+          child: Text(
+            title,
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).colorScheme.secondary,
             ),
-            const Divider(height: 24),
-            
-            // Google Books API Key
-            TextField(
-              controller: _apiKeyController,
-              decoration: InputDecoration(
-                labelText: 'Google Books API Key',
-                border: const OutlineInputBorder(),
-                helperText: 'Required for metadata lookup',
-                prefixIcon: const Icon(Icons.vpn_key),
-                suffixIcon: _isTestingApiKey
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: Padding(
-                          padding: EdgeInsets.all(8.0),
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                      )
-                    : IconButton(
-                        icon: const Icon(Icons.check_circle),
-                        onPressed: _testApiKey,
-                        tooltip: 'Test API key',
-                      ),
-              ),
-              obscureText: true,
-              enableSuggestions: false,
-              autocorrect: false,
-            ),
-            
-            if (_apiKeyTestResult != null) ...[
-              const SizedBox(height: 8),
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: _apiKeyValid == true
-                      ? Colors.green.withAlpha(26)
-                      : _apiKeyValid == false
-                          ? Colors.red.withAlpha(26)
-                          : Colors.orange.withAlpha(26),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      _apiKeyValid == true
-                          ? Icons.check_circle
-                          : _apiKeyValid == false
-                              ? Icons.error
-                              : Icons.info,
-                      size: 16,
-                      color: _apiKeyValid == true
-                          ? Colors.green
-                          : _apiKeyValid == false
-                              ? Colors.red
-                              : Colors.orange,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _apiKeyTestResult!,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: _apiKeyValid == true
-                              ? Colors.green
-                              : _apiKeyValid == false
-                                  ? Colors.red
-                                  : Colors.orange,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-            
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: () => launchUrl(Uri.parse('https://console.cloud.google.com/apis/library/books.googleapis.com')),
-                  icon: const Icon(Icons.open_in_new),
-                  label: const Text('Get API Key'),
-                ),
-              ],
-            ),
-          ],
+          ),
         ),
-      ),
+        Card(
+          child: Column(
+            children: children,
+          ),
+        ),
+      ],
     );
   }
   
-  Widget _buildAppearanceSection(ThemeData theme) {
-    final colorScheme = theme.colorScheme;
-    
-    return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.palette,
-                  color: colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Appearance',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const Divider(height: 24),
-            
-            // Dark mode toggle
-            SwitchListTile(
-              title: const Text('Dark Mode'),
-              subtitle: const Text('Use dark theme for the app'),
-              value: _useDarkMode,
-              onChanged: (value) {
-                setState(() {
-                  _useDarkMode = value;
-                });
-              },
-            ),
-          ],
-        ),
-      ),
+  // Build a setting tile
+  Widget _buildSettingTile({required String title, String? subtitle, Widget? trailing}) {
+    return ListTile(
+      title: Text(title),
+      subtitle: subtitle != null ? Text(subtitle) : null,
+      trailing: trailing,
     );
   }
   
-  Widget _buildFileManagementSection(ThemeData theme) {
-    final colorScheme = theme.colorScheme;
+  // Build the list of watched directories
+  Widget _buildDirectoriesList() {
+    final libraryManager = Provider.of<LibraryManager>(context);
+    final directories = libraryManager.watchedDirectories;
     
-    return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.folder,
-                  color: colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'File Management',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const Divider(height: 24),
-            
-            // Default Naming Pattern
-            TextField(
-              controller: _namingPatternController,
-              decoration: const InputDecoration(
-                labelText: 'Default Naming Pattern',
-                border: OutlineInputBorder(),
-                helperText: 'Example: {Author} - {Title}',
-                prefixIcon: Icon(Icons.text_fields),
-              ),
-            ),
-            
-            const SizedBox(height: 16),
-            
-            // Default Directory
-            ListTile(
-              title: const Text('Default Directory'),
-              subtitle: Text(_defaultDirectory ?? 'Not set'),
-              trailing: IconButton(
-                icon: const Icon(Icons.folder_open),
-                onPressed: _selectDefaultDirectory,
-              ),
-              onTap: _selectDefaultDirectory,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildScanningOptionsSection(ThemeData theme) {
-    final colorScheme = theme.colorScheme;
-    
-    return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.search,
-                  color: colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Scanning Options',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const Divider(height: 24),
-            
-            // Include Subfolders
-            SwitchListTile(
-              title: const Text('Include Subfolders'),
-              subtitle: const Text('Scan subfolders when scanning a directory'),
-              value: _includeSubfolders,
-              onChanged: (value) {
-                setState(() {
-                  _includeSubfolders = value;
-                });
-              },
-            ),
-            
-            // Auto-match new files
-            SwitchListTile(
-              title: const Text('Auto-Match New Files'),
-              subtitle: const Text('Automatically search for metadata when scanning new files'),
-              value: _autoMatchNewFiles,
-              onChanged: (value) {
-                setState(() {
-                  _autoMatchNewFiles = value;
-                });
-              },
-            ),
-            
-            // Supported file extensions
-            if (_supportedExtensions.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Supported File Extensions:',
-                style: theme.textTheme.bodyLarge?.copyWith(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
+          child: Row(
+            children: [
+              const Text(
+                'Watched Directories',
+                style: TextStyle(
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 4),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _supportedExtensions
-                    .map((ext) => Chip(
-                          label: Text(ext),
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          labelStyle: const TextStyle(fontSize: 12),
-                        ))
-                    .toList(),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.add),
+                tooltip: 'Add Directory',
+                onPressed: () => _addDirectory(libraryManager),
               ),
             ],
-          ],
+          ),
         ),
-      ),
-    );
-  }
-  
-  Widget _buildAdvancedSection(ThemeData theme) {
-    final colorScheme = theme.colorScheme;
-    
-    return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.settings,
-                  color: colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Advanced',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const Divider(height: 24),
-            
-            ListTile(
-              leading: const Icon(Icons.cleaning_services),
-              title: const Text('Clear Metadata Cache'),
-              subtitle: const Text('Remove saved metadata from cache'),
-              onTap: _clearMetadataCache,
-            ),
-            
-            ListTile(
-              leading: const Icon(Icons.restore, color: Colors.red),
-              title: const Text('Reset All Settings'),
-              subtitle: const Text('Restore default settings'),
-              onTap: _resetAllSettings,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-  
-  Widget _buildAboutSection(ThemeData theme) {
-    final colorScheme = theme.colorScheme;
-    
-    return Card(
-      elevation: 1,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.info,
-                  color: colorScheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'About',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const Divider(height: 24),
-            
-            const ListTile(
-              title: Text('AudioBook Organizer'),
-              subtitle: Text('Version 1.0.0'),
-            ),
-            
-            ListTile(
-              title: const Text('Platform'),
-              subtitle: Text(Platform.operatingSystem),
-            ),
-            
-            const Divider(),
-            
-            Center(
-              child: Text(
-                '© 2025 AudioBook Organizer',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurface.withAlpha(179),
-                ),
+        if (directories.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              'No directories added yet',
+              style: TextStyle(
+                fontStyle: FontStyle.italic,
+                color: Colors.grey,
               ),
             ),
+          )
+        else
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: directories.length,
+            itemBuilder: (context, index) {
+              final directory = directories[index];
+              
+              return ListTile(
+                leading: const Icon(Icons.folder),
+                title: Text(
+                  Directory(directory).uri.pathSegments.last,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  directory,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => _removeDirectory(libraryManager, directory),
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
+  
+  // Add a directory to watch
+  Future<void> _addDirectory(LibraryManager libraryManager) async {
+    try {
+      // Show directory picker
+      String? selectedDir = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: 'Select Audiobooks Folder',
+      );
+      
+      if (selectedDir != null) {
+        // Show loading dialog
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const AlertDialog(
+            title: Text('Scanning Folder'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Scanning for audiobooks...'),
+              ],
+            ),
+          ),
+        );
+        
+        // Add the directory to library manager
+        await libraryManager.addDirectory(selectedDir);
+        
+        // Close loading dialog
+        Navigator.of(context).pop();
+        
+        // Refresh the UI
+        setState(() {});
+        
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Folder added to library'),
+        ));
+      }
+    } catch (e) {
+      // Close loading dialog if open
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Error adding folder: ${e.toString()}'),
+        backgroundColor: Colors.red,
+      ));
+      
+      Logger.error('Error adding folder', e);
+    }
+  }
+  
+  // Remove a directory from watch list
+  Future<void> _removeDirectory(LibraryManager libraryManager, String directory) async {
+    try {
+      // Show confirmation dialog
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Remove Directory'),
+          content: const Text('Are you sure you want to remove this directory? Files in this directory will be removed from your library.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red,
+              ),
+              child: const Text('Remove'),
+            ),
           ],
         ),
+      );
+      
+      if (confirmed == true) {
+        // Show loading dialog
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const AlertDialog(
+            title: Text('Removing Directory'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Removing directory from library...'),
+              ],
+            ),
+          ),
+        );
+        
+        // Remove the directory
+        await libraryManager.removeDirectory(directory);
+        
+        // Close loading dialog
+        Navigator.of(context).pop();
+        
+        // Refresh the UI
+        setState(() {});
+        
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Directory removed from library'),
+        ));
+      }
+    } catch (e) {
+      // Close loading dialog if open
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Error removing directory: ${e.toString()}'),
+        backgroundColor: Colors.red,
+      ));
+      
+      Logger.error('Error removing directory', e);
+    }
+  }
+  
+  // Clear cache
+  Future<void> _clearCache() async {
+    try {
+      // Show confirmation dialog
+      final confirmed = await showDialog<String>( // Change from bool to String
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Clear Cache'),
+          content: const Text('What would you like to clear?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'cancel'),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'cache'),
+              child: const Text('Search Cache Only'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'all'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red,
+              ),
+              child: const Text('All Metadata'),
+            ),
+          ],
+        ),
+      );
+      
+      if (confirmed == 'cache' || confirmed == 'all') {
+        setState(() {
+          _isLoading = true;
+        });
+        
+        // Clear the metadata cache
+        final metadataCache = Provider.of<MetadataCache>(context, listen: false);
+        await metadataCache.clearCache();
+        
+        // Clear storage manager metadata if requested
+        if (confirmed == 'all') {
+          final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
+          
+          // Get application documents directory
+          final appDir = await getApplicationDocumentsDirectory();
+          final metadataPath = path.join(appDir.path, 'audiobooks', 'metadata');
+          
+          // Delete the metadata directory and recreate it
+          final metadataDir = Directory(metadataPath);
+          if (await metadataDir.exists()) {
+            await metadataDir.delete(recursive: true);
+            await metadataDir.create(recursive: true);
+          }
+          
+          // Optionally, also reset the library file
+          final libraryFile = File(storageManager.libraryFilePath);
+          if (await libraryFile.exists()) {
+            await libraryFile.writeAsString(json.encode({'files': []}));
+          }
+        }
+        
+        // Refresh cache size
+        _cacheSize = await _calculateCacheSize();
+        
+        setState(() {
+          _isLoading = false;
+        });
+        
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(confirmed == 'all' ? 'All metadata cleared' : 'Cache cleared'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Error clearing cache: ${e.toString()}'),
+        backgroundColor: Colors.red,
+      ));
+      
+      Logger.error('Error clearing cache', e);
+    }
+  }
+  
+  // Rescan library
+  Future<void> _rescanLibrary() async {
+    try {
+      // Show confirmation dialog
+      final result = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Rescan Library'),
+          content: const Text('How would you like to rescan your library?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'cancel'),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'scan'),
+              child: const Text('Scan for New Files'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'full'),
+              child: const Text('Full Rescan (Update All Metadata)'),
+            ),
+          ],
+        ),
+      );
+      
+      if (result == 'scan' || result == 'full') {
+        setState(() {
+          _isLoading = true;
+        });
+        
+        // Rescan the library
+        final libraryManager = Provider.of<LibraryManager>(context, listen: false);
+        await libraryManager.rescanLibrary(forceMetadataUpdate: result == 'full');
+        
+        setState(() {
+          _isLoading = false;
+        });
+        
+        // Show success message
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Library rescan complete'),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Error rescanning library: ${e.toString()}'),
+        backgroundColor: Colors.red,
+      ));
+      
+      Logger.error('Error rescanning library', e);
+    }
+  }
+  
+  // Save settings
+  Future<void> _saveSettings() async {
+    try {
+      // Save settings - This would typically use SharedPreferences
+      // For now, we'll just update the audio player service
+      final audioPlayerService = Provider.of<AudioPlayerService>(context, listen: false);
+      
+      // Update skip durations
+      // Note: This would actually be implemented in the AudioPlayerService class
+      // These are placeholder calls for now
+      // audioPlayerService.setSkipForwardDuration(Duration(seconds: _skipForwardSeconds));
+      // audioPlayerService.setSkipBackwardDuration(Duration(seconds: _skipBackwardSeconds));
+      
+      // Would normally save these to SharedPreferences
+    } catch (e) {
+      Logger.error('Error saving settings', e);
+      
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Error saving settings: ${e.toString()}'),
+        backgroundColor: Colors.red,
+      ));
+    }
+  }
+  
+  // View logs
+  void _viewLogs() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const LogViewerScreen(),
       ),
     );
+  }
+}
+
+// Log viewer screen
+class LogViewerScreen extends StatefulWidget {
+  const LogViewerScreen({super.key});
+
+  @override
+  _LogViewerScreenState createState() => _LogViewerScreenState();
+}
+
+class _LogViewerScreenState extends State<LogViewerScreen> {
+  String _logs = '';
+  bool _isLoading = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadLogs();
+  }
+  
+  // Load logs
+  Future<void> _loadLogs() async {
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final logDir = Directory('${appDir.path}/logs');
+      
+      if (!await logDir.exists()) {
+        setState(() {
+          _logs = 'No logs found';
+          _isLoading = false;
+        });
+        return;
+      }
+      
+      // Find the most recent log file
+      File? latestLogFile;
+      DateTime latestDate = DateTime(1970);
+      
+      await for (final entity in logDir.list()) {
+        if (entity is File && entity.path.endsWith('.txt')) {
+          final fileName = path.basename(entity.path);
+          final match = RegExp(r'log_(\d{4})-(\d{1,2})-(\d{1,2})\.txt').firstMatch(fileName);
+          
+          if (match != null) {
+            final year = int.parse(match.group(1)!);
+            final month = int.parse(match.group(2)!);
+            final day = int.parse(match.group(3)!);
+            
+            final fileDate = DateTime(year, month, day);
+            if (fileDate.isAfter(latestDate)) {
+              latestDate = fileDate;
+              latestLogFile = entity;
+            }
+          }
+        }
+      }
+      
+      if (latestLogFile != null) {
+        _logs = await latestLogFile.readAsString();
+      } else {
+        _logs = 'No logs found';
+      }
+    } catch (e) {
+      _logs = 'Error loading logs: ${e.toString()}';
+      Logger.error('Error loading logs', e);
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Logs'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadLogs,
+          ),
+          IconButton(
+            icon: const Icon(Icons.share),
+            onPressed: _shareLogs,
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: SelectableText(_logs),
+              ),
+            ),
+    );
+  }
+  
+  // Share logs
+  Future<void> _shareLogs() async {
+    // This would typically use a share plugin
+    // For now, we'll just show a snackbar
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Sharing logs is not implemented yet'),
+    ));
   }
 }
