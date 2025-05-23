@@ -7,10 +7,13 @@ import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/directory_scanner.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
+import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 import 'package:audiobook_organizer/utils/filename_parser.dart';
+import 'package:audiobook_organizer/utils/file_utils.dart';
+import 'package:audiobook_organizer/services/cover_art_manager.dart';
 
 /// Manages the library of audiobooks
 class LibraryManager {
@@ -19,6 +22,7 @@ class LibraryManager {
   final MetadataMatcher _metadataMatcher;
   final AudiobookStorageManager _storageManager;
   final MetadataCache _cache;
+  final CoverArtManager _coverArtManager = CoverArtManager();
   
   // Library data
   List<AudiobookFile> _files = [];
@@ -48,14 +52,23 @@ class LibraryManager {
     try {
       _isLoading = true;
       
+      // Initialize cover art manager
+      await _coverArtManager.initialize();
+      
+      // Initialize metadata matcher with covers disabled by default
+      await _metadataMatcher.initialize();
+      
       // Load watched directories
       await _loadWatchedDirectories();
       
       // Load library from storage
       _files = await _storageManager.loadLibrary();
       
+      // Ensure all files have their cover paths properly set from embedded covers
+      await _ensureCoversForExistingFiles();
+      
       // Notify listeners
-      _libraryChangedController.add(_files);
+      _notifyLibraryChanged();
       
       _isInitialized = true;
       _isLoading = false;
@@ -66,6 +79,34 @@ class LibraryManager {
       Logger.error('Error initializing LibraryManager', e);
       rethrow;
     }
+  }
+
+  Future<void> _ensureCoversForExistingFiles() async {
+    bool hasUpdates = false;
+    
+    for (final file in _files) {
+      if (file.metadata != null) {
+        // Use centralized cover handling from CoverArtManager
+        final coverPath = await _coverArtManager.ensureCoverForFile(file.path, file.metadata);
+        
+        if (coverPath != null && coverPath != file.metadata!.thumbnailUrl) {
+          Logger.log('Updated cover path for existing file: ${file.filename}');
+          
+          final updatedMetadata = file.metadata!.copyWith(thumbnailUrl: coverPath);
+          await _storageManager.updateMetadataForFile(file.path, updatedMetadata, force: true);
+          file.metadata = updatedMetadata;
+          hasUpdates = true;
+        }
+      }
+    }
+    
+    if (hasUpdates) {
+      Logger.log('Updated cover paths for existing files');
+    }
+  }
+
+  void _notifyLibraryChanged() {
+    _libraryChangedController.add(List<AudiobookFile>.from(_files));
   }
   
   // Load watched directories from storage
@@ -133,13 +174,21 @@ class LibraryManager {
     await _saveWatchedDirectories();
     
     // Remove files from this directory
+    final removedFiles = _files.where((file) => file.path.startsWith(directoryPath)).toList();
     _files.removeWhere((file) => file.path.startsWith(directoryPath));
+    
+    // Clean up covers for removed files
+    for (final file in removedFiles) {
+      await _coverArtManager.removeCover(file.path);
+    }
     
     // Update storage
     await _storageManager.saveLibrary(_files);
     
     // Notify listeners
     _libraryChangedController.add(_files);
+    
+    Logger.log('Removed directory and cleaned up ${removedFiles.length} covers: $directoryPath');
   }
   
   // Scan a directory for audiobooks
@@ -199,9 +248,11 @@ class LibraryManager {
     }
   }
   
-  // Process a batch of files
+  // Process a batch of files - CORRECTED FLOW
   Future<void> _processBatch(List<AudiobookFile> batch) async {
-    // Match each file with metadata
+    final metadataService = MetadataService();
+    await metadataService.initialize();
+
     for (final file in batch) {
       try {
         Logger.debug('Processing file: ${file.path}');
@@ -214,179 +265,73 @@ class LibraryManager {
           continue;
         }
         
-        // Extract metadata from file first using file.extractFileMetadata
-        final fileMetadata = await file.extractFileMetadata();
+        // Extract basic metadata (no cover)
+        final fileMetadata = await metadataService.extractMetadata(file.path);
+        
         if (fileMetadata != null) {
           Logger.debug('Extracted file metadata for: ${file.filename}');
-          file.metadata = fileMetadata;
           
-          // Store this basic metadata while we try to find better matches
-          await _storageManager.updateMetadataForFile(file.path, fileMetadata);
-        } else {
-          // Create basic metadata from filename if extraction failed
-          Logger.debug('Metadata extraction failed, creating basic metadata from filename: ${file.filename}');
+          // Use centralized cover handling
+          final coverPath = await _coverArtManager.ensureCoverForFile(file.path, fileMetadata);
           
-          // Use existing FilenameParser class to extract information
-          final folderName = path_util.basename(path_util.dirname(file.path));
-          final bookInfo = FilenameParser.parse(file.filename, file.path);
+          // Update metadata with cover path if found
+          final metadataWithCover = coverPath != null 
+              ? fileMetadata.copyWith(thumbnailUrl: coverPath)
+              : fileMetadata;
           
-          // Create basic metadata with information derived from the filename and folder
-          final basicMetadata = AudiobookMetadata(
-            id: path_util.basename(file.path),
-            title: bookInfo.title ?? file.filename,
-            authors: bookInfo.hasAuthor && bookInfo.author != null ? [bookInfo.author!] : [],
-            series: folderName,
-            seriesPosition: bookInfo.seriesPosition ?? '',
-            fileFormat: path_util.extension(file.path).toLowerCase().replaceFirst('.', '').toUpperCase(),
-            provider: 'filename_parser',
+          // Store the metadata
+          await _storageManager.updateMetadataForFile(file.path, metadataWithCover);
+          file.metadata = metadataWithCover;
+          
+          // Try to enhance with online metadata (keeping embedded cover)
+          final enhancedMetadata = await _metadataMatcher.matchWithOnlineSources(
+            metadataWithCover, 
+            file.path
           );
           
-          // Set the basic metadata and store it
-          file.metadata = basicMetadata;
-          await _storageManager.updateMetadataForFile(file.path, basicMetadata);
-          Logger.debug('Created basic metadata from filename for: ${file.filename}');
-        }
-        
-        // Try to match with online sources for enriched metadata
-        final enhancedMetadata = await _metadataMatcher.matchFile(file);
-        if (enhancedMetadata != null) {
-          Logger.debug('Matched enhanced metadata for: ${file.filename}');
-          file.metadata = enhancedMetadata;
-        } else {
-          Logger.debug('No online metadata match found for: ${file.filename}');
+          if (enhancedMetadata != null) {
+            file.metadata = enhancedMetadata;
+            Logger.debug('Enhanced metadata for: ${file.filename}');
+          }
         }
       } catch (e) {
         Logger.error('Error processing file: ${file.path}', e);
-        
-        // Try to create basic metadata from filename if all else fails
-        try {
-          // If we reach here, both extraction and metadata matching failed
-          // Create minimal fallback metadata to prevent null issues
-          final folderName = path_util.basename(path_util.dirname(file.path));
-          final bookInfo = FilenameParser.parse(file.filename, file.path);
-          
-          final fallbackMetadata = AudiobookMetadata(
-            id: path_util.basename(file.path),
-            title: bookInfo.title ?? file.filename,
-            authors: bookInfo.hasAuthor && bookInfo.author != null ? [bookInfo.author!] : [],
-            series: folderName,
-            seriesPosition: bookInfo.seriesPosition ?? '',
-            fileFormat: path_util.extension(file.path).toLowerCase().replaceFirst('.', '').toUpperCase(),
-            provider: 'error_recovery',
-          );
-          
-          file.metadata = fallbackMetadata;
-          await _storageManager.updateMetadataForFile(file.path, fallbackMetadata);
-          Logger.debug('Created fallback metadata from filename for: ${file.filename}');
-        } catch (innerError) {
-          // Last resort - create minimal metadata with just the filename
-          try {
-            final absoluteMinimalMetadata = AudiobookMetadata(
-              id: path_util.basename(file.path),
-              title: file.filename,
-              authors: [],
-              fileFormat: path_util.extension(file.path).toLowerCase().replaceFirst('.', '').toUpperCase(),
-              provider: 'failsafe',
-            );
-            
-            file.metadata = absoluteMinimalMetadata;
-            await _storageManager.updateMetadataForFile(file.path, absoluteMinimalMetadata);
-            Logger.debug('Created minimal failsafe metadata for: ${file.filename}');
-          } catch (criticalError) {
-            Logger.error('Critical error creating recovery metadata for: ${file.path}', criticalError);
-            // At this point, we've done all we can - the file may have null metadata
-          }
-        }
       }
-    }
-  }
-  
-  // Rescan the entire library
-  Future<void> rescanLibrary({bool forceMetadataUpdate = false}) async {
-    // Add a check and reset if it's been loading too long
-    if (_isLoading) {
-      // Add this code to recover from stuck states
-      var lastStartTime = DateTime.now().subtract(const Duration(minutes: 5));
-      if (DateTime.now().difference(lastStartTime).inMinutes >= 5) {
-        Logger.warning('Scan seems stuck, resetting loading state');
-        _isLoading = false;
-      } else {
-        Logger.warning('Scan already in progress, please wait');
-        return;
-      }
-    }
-    
-    _isLoading = true;
-    
-    try {
-      Logger.log('Rescanning library, force update: $forceMetadataUpdate');
-      
-      // List of directories to scan
-      final directories = _watchedDirectories.toList();
-      
-      // Reset files list if doing a full rescan
-      if (forceMetadataUpdate) {
-        _files = [];
-      } else {
-        // Verify existing files still exist
-        _files.removeWhere((file) => !File(file.path).existsSync());
-      }
-      
-      // Scan each directory
-      for (final directory in directories) {
-        await scanDirectory(directory);
-      }
-      
-      // If forcing metadata update, update all files
-      if (forceMetadataUpdate) {
-        await _updateAllMetadata();
-      }
-      
-      // Save library state
-      await _storageManager.saveLibrary(_files);
-      
-      // Notify listeners
-      _libraryChangedController.add(_files);
-      
-      Logger.log('Library rescan complete');
-      _isLoading = false;
-    } catch (e) {
-      _isLoading = false;
-      Logger.error('Error rescanning library', e);
-    } finally {
-      _isLoading = false;
     }
   }
 
-  // Update metadata for all files
-  Future<void> _updateAllMetadata() async {
-    Logger.log('Updating metadata for all files');
-    
-    // Process files in batches
-    const int batchSize = 5;
-    for (int i = 0; i < _files.length; i += batchSize) {
-      final end = (i + batchSize < _files.length) ? i + batchSize : _files.length;
-      final batch = _files.sublist(i, end);
+  Future<bool> _updateFileMetadata(
+    AudiobookFile file,
+    AudiobookMetadata Function(AudiobookMetadata) updateFunction,
+  ) async {
+    try {
+      if (file.metadata == null) return false;
       
-      // Update each file in the batch
-      for (final file in batch) {
-        try {
-          await _metadataMatcher.matchFile(file);
-        } catch (e) {
-          Logger.error('Error updating metadata for file: ${file.path}', e);
-        }
+      final updatedMetadata = updateFunction(file.metadata!);
+      final success = await _storageManager.updateMetadataForFile(
+        file.path, 
+        updatedMetadata, 
+        force: true
+      );
+      
+      if (success) {
+        file.metadata = updatedMetadata;
+        await _storageManager.saveLibrary(_files);
+        _notifyLibraryChanged();
       }
       
-      // Save progress
-      await _storageManager.saveLibrary(_files);
-      
-      // Notify listeners about partial progress
-      _libraryChangedController.add(_files);
+      return success;
+    } catch (e) {
+      Logger.error('Error updating metadata', e);
+      return false;
     }
-    
-    Logger.log('Metadata update complete');
   }
   
+  // Update metadata for a specific file
+  Future<bool> updateMetadata(AudiobookFile file, AudiobookMetadata metadata) async {
+    return _updateFileMetadata(file, (_) => metadata);
+  }
+
   // Get the current library
   List<AudiobookFile> get files => _files;
   
@@ -396,31 +341,23 @@ class LibraryManager {
   // Get loading state
   bool get isLoading => _isLoading;
   
-  // Update metadata for a specific file
-  Future<bool> updateMetadata(AudiobookFile file, AudiobookMetadata metadata) async {
-    try {
-      final success = await _metadataMatcher.updateMetadataForFile(file, metadata);
-      
-      if (success) {
-        // Notify listeners
-        _libraryChangedController.add(_files);
-      }
-      
-      return success;
-    } catch (e) {
-      Logger.error('Error updating metadata for file: ${file.path}', e);
-      return false;
-    }
-  }
   
   // Update cover image for a specific file
-  Future<bool> updateCoverImage(AudiobookFile file, String coverUrl) async {
+  Future<bool> updateCoverImage(AudiobookFile file, String coverSource) async {
     try {
-      final success = await _metadataMatcher.updateCoverImage(file, coverUrl);
+      final success = await _metadataMatcher.updateCoverImage(file, coverSource);
       
       if (success) {
-        // Notify listeners
-        _libraryChangedController.add(_files);
+        // Reload the metadata from storage
+        final updatedMetadata = await _storageManager.getMetadataForFile(file.path);
+        if (updatedMetadata != null) {
+          file.metadata = updatedMetadata;
+        }
+        
+        await _storageManager.saveLibrary(_files);
+        _notifyLibraryChanged();
+        
+        Logger.log('Successfully updated cover image for: ${file.filename}');
       }
       
       return success;
@@ -428,6 +365,18 @@ class LibraryManager {
       Logger.error('Error updating cover image for file: ${file.path}', e);
       return false;
     }
+  }
+  
+  // Enable auto-download of covers from online sources
+  Future<void> enableAutoDownloadCovers() async {
+    _metadataMatcher.autoDownloadCovers = true;
+    Logger.log('Auto-download covers enabled');
+  }
+  
+  // Disable auto-download of covers from online sources
+  Future<void> disableAutoDownloadCovers() async {
+    _metadataMatcher.autoDownloadCovers = false;
+    Logger.log('Auto-download covers disabled');
   }
   
   // Update user data for a file
@@ -440,31 +389,67 @@ class LibraryManager {
     List<AudiobookBookmark>? bookmarks,
     List<AudiobookNote>? notes,
   }) async {
-    try {
-      final success = await _storageManager.updateUserData(
-        file.path,
-        userRating: userRating,
-        lastPlayedPosition: lastPlayedPosition,
-        playbackPosition: playbackPosition,
-        userTags: userTags,
-        isFavorite: isFavorite,
-        bookmarks: bookmarks,
-        notes: notes,
-      );
+    return _updateFileMetadata(file, (metadata) => metadata.copyWith(
+      userRating: userRating ?? metadata.userRating,
+      lastPlayedPosition: lastPlayedPosition ?? metadata.lastPlayedPosition,
+      playbackPosition: playbackPosition ?? metadata.playbackPosition,
+      userTags: userTags ?? metadata.userTags,
+      isFavorite: isFavorite ?? metadata.isFavorite,
+      bookmarks: bookmarks ?? metadata.bookmarks,
+      notes: notes ?? metadata.notes,
+    ));
+  }
+  
+  // REFACTORED: Analyze library structure with utilities
+  Future<void> analyzeLibraryStructure() async {
+    Logger.log('Analyzing library folder structure for series detection');
+    
+    // Group files by folder
+    final groupedFiles = _scanner.groupFilesByFolder(_files);
+    
+    for (final folder in groupedFiles.keys) {
+      final files = groupedFiles[folder]!;
+      final folderName = path_util.basename(folder);
       
-      if (success) {
-        // Reload metadata to update the file object
-        file.metadata = await _storageManager.getMetadataForFile(file.path);
-        
-        // Notify listeners
-        _libraryChangedController.add(_files);
+      // Skip if too few files or generic folder name
+      if (files.length < 2 || ['audiobooks', 'books', 'library'].contains(folderName.toLowerCase())) {
+        continue;
       }
       
-      return success;
-    } catch (e) {
-      Logger.error('Error updating user data for file: ${file.path}', e);
-      return false;
+      Logger.debug('Analyzing folder: $folderName with ${files.length} files');
+      
+      // Check if files in this folder have a common series
+      final seriesSet = <String>{};
+      for (final file in files) {
+        if (file.metadata?.series.isNotEmpty ?? false) {
+          seriesSet.add(file.metadata!.series);
+        }
+      }
+      
+      // If more than one series or no series found, use the folder name
+      if (seriesSet.length != 1) {
+        Logger.debug('Setting folder name as series: $folderName');
+        
+        // Update files without series info
+        for (final file in files) {
+          if (file.metadata != null && file.metadata!.series.isEmpty) {
+            // Use utility to extract series position
+            final position = FileUtils.extractSeriesPosition(file.filename) ?? 
+                            FileUtils.extractSeriesPosition(file.path) ?? '';
+            
+            // Update metadata using generic method
+            await _updateFileMetadata(file, (metadata) => metadata.copyWith(
+              series: folderName,
+              seriesPosition: position,
+            ));
+            
+            Logger.debug('Updated series info for: ${file.filename}');
+          }
+        }
+      }
     }
+    
+    Logger.log('Library structure analysis complete');
   }
   
   // Add a bookmark
@@ -546,61 +531,6 @@ class LibraryManager {
       return false;
     }
   }
-
-  Future<void> analyzeLibraryStructure() async {
-    Logger.log('Analyzing library folder structure for series detection');
-    
-    // Group files by folder
-    final groupedFiles = _scanner.groupFilesByFolder(_files);
-    
-    for (final folder in groupedFiles.keys) {
-      final files = groupedFiles[folder]!;
-      final folderName = path_util.basename(folder);
-      
-      // Skip if too few files or generic folder name
-      if (files.length < 2 || ['audiobooks', 'books', 'library'].contains(folderName.toLowerCase())) {
-        continue;
-      }
-      
-      Logger.debug('Analyzing folder: $folderName with ${files.length} files');
-      
-      // Check if files in this folder have a common series
-      final seriesSet = <String>{};
-      for (final file in files) {
-        if (file.metadata?.series.isNotEmpty ?? false) {
-          seriesSet.add(file.metadata!.series);
-        }
-      }
-      
-      // If more than one series or no series found, use the folder name
-      if (seriesSet.length != 1) {
-        Logger.debug('Setting folder name as series: $folderName');
-        
-        // Update files without series info
-        for (final file in files) {
-          if (file.metadata != null && file.metadata!.series.isEmpty) {
-            // Parse the filename for potential series position
-            final bookInfo = FilenameParser.parse(file.filename, file.path);
-            final position = bookInfo.seriesPosition ?? '';
-            
-            // Create updated metadata
-            final updatedMetadata = file.metadata!.copyWith(
-              series: folderName,
-              seriesPosition: position,
-            );
-            
-            // Save the updated metadata
-            await _storageManager.updateMetadataForFile(file.path, updatedMetadata);
-            file.metadata = updatedMetadata;
-            
-            Logger.debug('Updated series info for: ${file.filename}');
-          }
-        }
-      }
-    }
-    
-    Logger.log('Library structure analysis complete');
-  }
   
   // Get file by path
   AudiobookFile? getFileByPath(String path) {
@@ -675,5 +605,6 @@ class LibraryManager {
   // Dispose resources
   void dispose() {
     _libraryChangedController.close();
+    _coverArtManager.dispose();
   }
 }

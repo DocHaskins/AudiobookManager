@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:provider/provider.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
+import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
@@ -59,6 +60,13 @@ class _AudiobookDetailsScreenState extends State<AudiobookDetailsScreen> with Si
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              // Only show the write button if metadata exists
+              if (metadata != null)
+                IconButton(
+                  icon: const Icon(Icons.save),
+                  tooltip: 'Write to File',
+                  onPressed: () => _writeMetadataToFile(context),
+                ),
               IconButton(
                 icon: const Icon(Icons.edit),
                 tooltip: 'Edit Metadata',
@@ -889,6 +897,88 @@ class _AudiobookDetailsScreenState extends State<AudiobookDetailsScreen> with Si
     );
   }
   
+Future<void> _writeMetadataToFile(BuildContext context) async {
+  final scaffoldMessenger = ScaffoldMessenger.of(context);
+  
+  // Show a confirmation dialog
+  final shouldContinue = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Write Metadata to File'),
+      content: const Text(
+        'This will modify the original audio file by writing the current metadata to it. '
+        'This operation cannot be undone. Continue?'
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Continue'),
+        ),
+      ],
+    ),
+  ) ?? false;
+  
+  if (!shouldContinue) return;
+  
+  // Show a loading indicator
+  scaffoldMessenger.showSnackBar(
+    const SnackBar(
+      content: Text('Writing metadata to file...'),
+      duration: Duration(days: 1), // Long duration that we'll dismiss manually
+    ),
+  );
+  
+  try {
+    // Create and initialize metadata service
+    final metadataService = MetadataService();
+    await metadataService.initialize();
+    
+    // Write metadata to file
+    final success = await metadataService.writeMetadata(
+      widget.file.path,
+      widget.file.metadata!,
+    );
+    
+    // Dismiss the loading indicator
+    scaffoldMessenger.hideCurrentSnackBar();
+    
+    // Show success or error message
+    if (success) {
+      scaffoldMessenger.showSnackBar(
+        const SnackBar(
+          content: Text('Metadata successfully written to file'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      scaffoldMessenger.showSnackBar(
+        const SnackBar(
+          content: Text('Failed to write metadata to file'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  } catch (e) {
+    // Log error
+    Logger.error('Error writing metadata to file', e);
+    
+    // Dismiss the loading indicator
+    scaffoldMessenger.hideCurrentSnackBar();
+    
+    // Show error message
+    scaffoldMessenger.showSnackBar(
+      SnackBar(
+        content: Text('Error writing metadata to file: ${e.toString()}'),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+}
+
   // Format a duration as HH:MM:SS
   String _formatDuration(Duration duration) {
     String twoDigits(int n) => n.toString().padLeft(2, '0');

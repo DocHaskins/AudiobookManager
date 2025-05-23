@@ -118,14 +118,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           onPressed: _clearCache,
                         ),
                       ),
-                      _buildSettingTile(
-                        title: 'Rescan Library',
-                        subtitle: 'Scan for new files and update metadata',
-                        trailing: IconButton(
-                          icon: const Icon(Icons.refresh),
-                          onPressed: _rescanLibrary,
-                        ),
-                      ),
                     ],
                   ),
                   
@@ -554,66 +546,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
   
-  // Rescan library
-  Future<void> _rescanLibrary() async {
-    try {
-      // Show confirmation dialog
-      final result = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Rescan Library'),
-          content: const Text('How would you like to rescan your library?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'cancel'),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'scan'),
-              child: const Text('Scan for New Files'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'full'),
-              child: const Text('Full Rescan (Update All Metadata)'),
-            ),
-          ],
-        ),
-      );
-      
-      if (result == 'scan' || result == 'full') {
-        setState(() {
-          _isLoading = true;
-        });
-        
-        // Rescan the library
-        final libraryManager = Provider.of<LibraryManager>(context, listen: false);
-        await libraryManager.rescanLibrary(forceMetadataUpdate: result == 'full');
-        
-        setState(() {
-          _isLoading = false;
-        });
-        
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Library rescan complete'),
-          backgroundColor: Colors.green,
-        ));
-      }
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
-      
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Error rescanning library: ${e.toString()}'),
-        backgroundColor: Colors.red,
-      ));
-      
-      Logger.error('Error rescanning library', e);
-    }
-  }
-  
+
   // Save settings
   Future<void> _saveSettings() async {
     try {

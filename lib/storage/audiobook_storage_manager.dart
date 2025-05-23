@@ -1,4 +1,4 @@
-// lib/storage/audiobook_storage_manager.dart
+// lib/storage/audiobook_storage_manager.dart - REFACTORED
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -7,21 +7,18 @@ import 'package:path/path.dart' as path_util;
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
+import 'package:audiobook_organizer/utils/file_utils.dart';
 
-/// Manages persistent storage for audiobook metadata and covers
+/// Manages persistent storage for audiobook metadata (covers handled by CoverArtManager)
 class AudiobookStorageManager {
   // Directory structure constants
   static const String _baseDir = 'audiobooks';
   static const String _metadataDir = 'metadata';
-  static const String _coversDir = 'covers';
-  static const String _cacheDir = 'cache';
   static const String _libraryFile = 'library.json';
   
   // Base directory for all storage
   late final String _baseDirPath;
   late final String _metadataDirPath;
-  late final String _coversDirPath;
-  late final String _cacheDirPath;
   
   // Initialize storage manager
   Future<void> initialize() async {
@@ -29,14 +26,10 @@ class AudiobookStorageManager {
       final appDir = await getApplicationDocumentsDirectory();
       _baseDirPath = path_util.join(appDir.path, _baseDir);
       _metadataDirPath = path_util.join(_baseDirPath, _metadataDir);
-      _coversDirPath = path_util.join(_baseDirPath, _coversDir);
-      _cacheDirPath = path_util.join(_baseDirPath, _cacheDir);
       
       // Ensure directories exist
       await Directory(_baseDirPath).create(recursive: true);
       await Directory(_metadataDirPath).create(recursive: true);
-      await Directory(_coversDirPath).create(recursive: true);
-      await Directory(_cacheDirPath).create(recursive: true);
       
       Logger.log('AudiobookStorageManager initialized');
     } catch (e) {
@@ -51,30 +44,34 @@ class AudiobookStorageManager {
   // Update metadata for a file
   Future<bool> updateMetadataForFile(String filePath, AudiobookMetadata metadata, {bool force = false}) async {
     try {
-      // Generate a standardized ID for this file
-      final String fileId = _generateFileId(filePath);
+      // Use centralized file ID generation
+      final String fileId = FileUtils.generateFileId(filePath);
       final String metadataFilePath = path_util.join(_metadataDirPath, '$fileId.json');
       
-      // Check if metadata already exists
       final File metadataFile = File(metadataFilePath);
+      AudiobookMetadata finalMetadata = metadata;
+      
       if (await metadataFile.exists() && !force) {
-        // If not forcing an update, merge with existing metadata
-        final existingJson = await metadataFile.readAsString();
-        final existingMetadata = AudiobookMetadata.fromJson(json.decode(existingJson));
-        
-        // Merge the metadata, preferring the new metadata for most fields
-        final mergedMetadata = existingMetadata.merge(metadata);
-        
-        // Write the merged metadata
-        await metadataFile.writeAsString(json.encode(mergedMetadata.toJson()));
-        Logger.log('Updated metadata for file: $filePath (merged)');
-        return true;
-      } else {
-        // Write new metadata or force overwrite
-        await metadataFile.writeAsString(json.encode(metadata.toJson()));
-        Logger.log('Updated metadata for file: $filePath (new or forced)');
-        return true;
+        // If not forcing, merge with existing metadata
+        try {
+          final existingJson = await metadataFile.readAsString();
+          final existingMetadata = AudiobookMetadata.fromJson(json.decode(existingJson));
+          
+          // Use the built-in merge method
+          finalMetadata = metadata.merge(existingMetadata);
+          
+          Logger.debug('Merged metadata for file: $filePath');
+        } catch (e) {
+          Logger.warning('Error merging existing metadata, using new metadata: $e');
+          finalMetadata = metadata;
+        }
       }
+      
+      // Write the final metadata
+      await metadataFile.writeAsString(json.encode(finalMetadata.toJson()));
+      
+      Logger.log('${force ? "Force u" : "U"}pdated metadata for file: $filePath');
+      return true;
     } catch (e) {
       Logger.error('Error updating metadata for file: $filePath', e);
       return false;
@@ -84,7 +81,7 @@ class AudiobookStorageManager {
   // Get metadata for a file
   Future<AudiobookMetadata?> getMetadataForFile(String filePath) async {
     try {
-      final String fileId = _generateFileId(filePath);
+      final String fileId = FileUtils.generateFileId(filePath);
       final String metadataFilePath = path_util.join(_metadataDirPath, '$fileId.json');
       
       final File metadataFile = File(metadataFilePath);
@@ -99,61 +96,7 @@ class AudiobookStorageManager {
       return null;
     }
   }
-  
-  // Ensure a cover image is stored in the covers directory
-  Future<String> ensureCoverImage(String filePath, String sourcePath, {bool force = false}) async {
-    try {
-      final String fileId = _generateFileId(filePath);
-      final String coverPath = path_util.join(_coversDirPath, '$fileId.jpg');
-      
-      final File coverFile = File(coverPath);
-      if (await coverFile.exists() && !force) {
-        // Cover already exists
-        return coverPath;
-      }
-      
-      // Copy or download the cover image
-      final File sourceFile = File(sourcePath);
-      if (await sourceFile.exists()) {
-        // Copy the file
-        await sourceFile.copy(coverPath);
-        Logger.log('Copied cover image to: $coverPath');
-        return coverPath;
-      } else {
-        throw Exception('Source cover image does not exist: $sourcePath');
-      }
-    } catch (e) {
-      Logger.error('Error ensuring cover image for file: $filePath', e);
-      rethrow;
-    }
-  }
-  
-  // Download a cover image from a URL
-  Future<String?> downloadCoverImage(String filePath, String imageUrl) async {
-    try {
-      final String fileId = _generateFileId(filePath);
-      final String coverPath = path_util.join(_coversDirPath, '$fileId.jpg');
-      
-      // Use http client to download the image
-      final client = HttpClient();
-      final request = await client.getUrl(Uri.parse(imageUrl));
-      final response = await request.close();
-      
-      if (response.statusCode == 200) {
-        final bytes = await consolidateHttpClientResponseBytes(response);
-        await File(coverPath).writeAsBytes(bytes);
-        Logger.log('Downloaded cover image to: $coverPath');
-        return coverPath;
-      } else {
-        Logger.error('Failed to download cover image. Status code: ${response.statusCode}');
-        return null;
-      }
-    } catch (e) {
-      Logger.error('Error downloading cover image for file: $filePath', e);
-      return null;
-    }
-  }
-  
+
   // Save the library state (list of all audiobooks)
   Future<bool> saveLibrary(List<AudiobookFile> files) async {
     try {
@@ -222,7 +165,7 @@ class AudiobookStorageManager {
     }
   }
   
-  // Update user data for a file (rating, playback position, etc.)
+  // Update user data for a file
   Future<bool> updateUserData(String filePath, {
     int? userRating,
     DateTime? lastPlayedPosition,
@@ -250,7 +193,7 @@ class AudiobookStorageManager {
         notes: notes ?? metadata.notes,
       );
       
-      // Save the updated metadata
+      // Save the updated metadata with force=true to ensure it's written
       return await updateMetadataForFile(filePath, updatedMetadata, force: true);
     } catch (e) {
       Logger.error('Error updating user data for file: $filePath', e);
@@ -352,38 +295,5 @@ class AudiobookStorageManager {
       Logger.error('Error removing note for file: $filePath', e);
       return false;
     }
-  }
-  
-  // Generate a consistent ID for a file path
-  String _generateFileId(String filePath) {
-    // Create a deterministic ID based on the file path
-    // This ensures the same file always gets the same ID
-    return filePath.hashCode.abs().toString();
-  }
-  
-  // Helper function to consolidate HttpClientResponse bytes
-  Future<List<int>> consolidateHttpClientResponseBytes(HttpClientResponse response) async {
-    final List<List<int>> chunks = [];
-    final int contentLength = response.contentLength > 0 
-        ? response.contentLength 
-        : 1024 * 1024; // Default to 1MB if content length is unknown
-    
-    int totalLength = 0;
-    await for (final List<int> chunk in response) {
-      chunks.add(chunk);
-      totalLength += chunk.length;
-    }
-    
-    if (chunks.length == 1) {
-      return chunks.first;
-    }
-    
-    final Uint8List result = Uint8List(totalLength);
-    int offset = 0;
-    for (final List<int> chunk in chunks) {
-      result.setRange(offset, offset + chunk.length, chunk);
-      offset += chunk.length;
-    }
-    return result;
   }
 }

@@ -723,8 +723,6 @@ class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProvider
         ),
       );
       
-      // Perform the refresh
-      await libraryManager.rescanLibrary(forceMetadataUpdate: forceMetadataUpdate);
       
       // Hide the snackbar
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
