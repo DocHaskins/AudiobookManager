@@ -1,4 +1,4 @@
-// lib/services/cover_art_manager.dart - ENHANCED
+// lib/services/cover_art_manager.dart - FIXED SINGLETON VERSION
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path_util;
@@ -9,18 +9,30 @@ import 'package:audiobook_organizer/utils/file_utils.dart';
 
 /// Manages cover art for audiobooks - single source of truth for cover handling
 class CoverArtManager {
-  late final String _coversDir;
+  // Singleton pattern
+  static final CoverArtManager _instance = CoverArtManager._internal();
+  factory CoverArtManager() => _instance;
+  CoverArtManager._internal();
+  
+  String? _coversDir;
   final Map<String, String> _coverCache = {};
+  bool _isInitialized = false;
   
   // Initialize the cover art manager
   Future<void> initialize() async {
+    if (_isInitialized) {
+      Logger.debug('CoverArtManager already initialized, skipping');
+      return;
+    }
+    
     try {
       final appDir = await getApplicationDocumentsDirectory();
       _coversDir = path_util.join(appDir.path, 'audiobooks', 'covers');
       
       // Ensure covers directory exists
-      await Directory(_coversDir).create(recursive: true);
+      await Directory(_coversDir!).create(recursive: true);
       
+      _isInitialized = true;
       Logger.log('CoverArtManager initialized');
     } catch (e) {
       Logger.error('Error initializing CoverArtManager', e);
@@ -31,6 +43,11 @@ class CoverArtManager {
   /// Centralized method to ensure a file has a cover
   /// Checks in order: cache, existing metadata, embedded in file
   Future<String?> ensureCoverForFile(String filePath, AudiobookMetadata? metadata) async {
+    if (!_isInitialized) {
+      Logger.warning('CoverArtManager not initialized, initializing now');
+      await initialize();
+    }
+    
     try {
       // Check cache first
       if (_coverCache.containsKey(filePath)) {
@@ -69,13 +86,18 @@ class CoverArtManager {
   
   /// Get the cover path for a file
   Future<String?> getCoverPath(String filePath) async {
+    if (!_isInitialized) {
+      Logger.warning('CoverArtManager not initialized, initializing now');
+      await initialize();
+    }
+    
     try {
       final fileId = FileUtils.generateFileId(filePath);
       
       // Check for existing cover files
       final extensions = ['.jpg', '.jpeg', '.png', '.webp'];
       for (final ext in extensions) {
-        final coverPath = path_util.join(_coversDir, '$fileId$ext');
+        final coverPath = path_util.join(_coversDir!, '$fileId$ext');
         if (await File(coverPath).exists()) {
           return coverPath;
         }
@@ -90,6 +112,11 @@ class CoverArtManager {
   
   /// Extract cover from audio file using metadata_god
   Future<String?> extractCoverFromFile(String filePath) async {
+    if (!_isInitialized) {
+      Logger.warning('CoverArtManager not initialized, initializing now');
+      await initialize();
+    }
+    
     try {
       Logger.debug('Attempting to extract embedded cover from: ${path_util.basename(filePath)}');
       
@@ -126,7 +153,7 @@ class CoverArtManager {
       
       // Generate cover file path
       final fileId = FileUtils.generateFileId(filePath);
-      final coverPath = path_util.join(_coversDir, '$fileId$extension');
+      final coverPath = path_util.join(_coversDir!, '$fileId$extension');
       
       // Write the cover image to disk
       final coverFile = File(coverPath);
@@ -147,6 +174,11 @@ class CoverArtManager {
   
   /// Download a cover from URL
   Future<String?> downloadCover(String filePath, String imageUrl) async {
+    if (!_isInitialized) {
+      Logger.warning('CoverArtManager not initialized, initializing now');
+      await initialize();
+    }
+    
     try {
       final fileId = FileUtils.generateFileId(filePath);
       final uri = Uri.parse(imageUrl);
@@ -157,7 +189,7 @@ class CoverArtManager {
       else if (imageUrl.contains('.webp')) extension = '.webp';
       else if (imageUrl.contains('.jpeg')) extension = '.jpeg';
       
-      final coverPath = path_util.join(_coversDir, '$fileId$extension');
+      final coverPath = path_util.join(_coversDir!, '$fileId$extension');
       
       // Download the image
       final client = HttpClient();
@@ -182,6 +214,11 @@ class CoverArtManager {
   
   /// Update cover for a file (from URL or local path)
   Future<String?> updateCover(String filePath, {String? downloadUrl, String? localImagePath}) async {
+    if (!_isInitialized) {
+      Logger.warning('CoverArtManager not initialized, initializing now');
+      await initialize();
+    }
+    
     try {
       if (downloadUrl != null) {
         return await downloadCover(filePath, downloadUrl);
@@ -191,7 +228,7 @@ class CoverArtManager {
         
         if (await sourceFile.exists()) {
           final extension = path_util.extension(localImagePath).toLowerCase();
-          final coverPath = path_util.join(_coversDir, '$fileId$extension');
+          final coverPath = path_util.join(_coversDir!, '$fileId$extension');
           
           await sourceFile.copy(coverPath);
           _coverCache[filePath] = coverPath;
@@ -210,13 +247,18 @@ class CoverArtManager {
   
   /// Remove cover for a file
   Future<void> removeCover(String filePath) async {
+    if (!_isInitialized) {
+      Logger.warning('CoverArtManager not initialized, initializing now');
+      await initialize();
+    }
+    
     try {
       final fileId = FileUtils.generateFileId(filePath);
       
       // Remove all possible cover files
       final extensions = ['.jpg', '.jpeg', '.png', '.webp'];
       for (final ext in extensions) {
-        final coverPath = path_util.join(_coversDir, '$fileId$ext');
+        final coverPath = path_util.join(_coversDir!, '$fileId$ext');
         final coverFile = File(coverPath);
         if (await coverFile.exists()) {
           await coverFile.delete();

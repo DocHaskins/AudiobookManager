@@ -58,6 +58,8 @@ class AudioPlayerService {
   
   // Periodic position update timer
   Timer? _positionUpdateTimer;
+  DateTime? _lastMetadataUpdate;
+  static const Duration _metadataUpdateThrottle = Duration(seconds: 5);
   
   // Constructor
   AudioPlayerService({required AudiobookStorageManager storageManager})
@@ -94,8 +96,8 @@ class AudioPlayerService {
         Logger.log('Windows-specific position update timer initialized');
       }
       
-      // Set up playback state saving
-      _saveProgressTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      // FIXED: Reduced frequency of progress saving
+      _saveProgressTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
         _savePlaybackState();
       });
       
@@ -121,6 +123,7 @@ class AudioPlayerService {
       Logger.debug('Player state changed: playing=${state.playing}, state=${state.processingState}');
     }, onError: (e) => Logger.error('Error in playerStateStream', e));
     
+    // FIXED: Add throttling to position stream
     _player!.positionStream.listen((position) {
       if (position.inMilliseconds < 0 || !position.inMilliseconds.isFinite) {
         Logger.warning('Received invalid position from player: $position, ignoring');
@@ -130,8 +133,9 @@ class AudioPlayerService {
       _currentPosition = position;
       _positionController.add(position);
       
+      // FIXED: Throttle metadata updates
       if (_currentFile != null && position.inSeconds > 0) {
-        _updateFilePlaybackPosition(position);
+        _updateFilePlaybackPositionThrottled(position);
       }
     }, onError: (e) => Logger.error('Error in positionStream', e));
     
@@ -196,9 +200,9 @@ class AudioPlayerService {
       _currentPosition = position;
       _positionController.add(_currentPosition);
       
-      // Check if we need to save position
+      // FIXED: Throttle metadata updates
       if (_currentFile != null && _currentPosition.inSeconds > 0) {
-        _updateFilePlaybackPosition(_currentPosition);
+        _updateFilePlaybackPositionThrottled(_currentPosition);
       }
       
       // Get duration safely
@@ -262,6 +266,20 @@ class AudioPlayerService {
     await _updateFilePlaybackPosition(position);
   }
   
+  // FIXED: Add throttled version of position update
+  void _updateFilePlaybackPositionThrottled(Duration position) {
+    final now = DateTime.now();
+    
+    // Check if enough time has passed since last update
+    if (_lastMetadataUpdate != null && 
+        now.difference(_lastMetadataUpdate!) < _metadataUpdateThrottle) {
+      return; // Skip this update
+    }
+    
+    _lastMetadataUpdate = now;
+    _updateFilePlaybackPosition(position);
+  }
+  
   // Update file playback position
   Future<void> _updateFilePlaybackPosition(Duration position) async {
     if (_currentFile == null) return;
@@ -275,24 +293,29 @@ class AudioPlayerService {
       return;
     }
     
-    // Only save significant changes (more than 2 seconds)
+    // FIXED: Only save significant changes (more than 10 seconds instead of 2)
     final currentMetadata = _currentFile!.metadata;
     if (currentMetadata != null) {
       final currentPosition = currentMetadata.playbackPosition;
       if (currentPosition != null && 
-          (position - currentPosition).abs().inSeconds < 2) {
+          (position - currentPosition).abs().inSeconds < 10) {
         return;
       }
     }
     
-    await _storageManager.updateUserData(
-      _currentFile!.path,
-      playbackPosition: position,
-      lastPlayedPosition: DateTime.now(),
-    );
+    try {
+      await _storageManager.updateUserData(
+        _currentFile!.path,
+        playbackPosition: position,
+        lastPlayedPosition: DateTime.now(),
+      );
+      Logger.debug('Updated playback position: ${position.inSeconds}s');
+    } catch (e) {
+      Logger.error('Error updating playback position', e);
+    }
   }
   
-  // Play an audiobook file - IMPROVED TO HANDLE BOOK CHANGES BETTER
+  // FIXED: Enhanced audio loading with better error handling for Windows
   Future<bool> play(AudiobookFile file) async {
     try {
       Logger.log('Playing audiobook: ${file.path}');
@@ -312,6 +335,12 @@ class AudioPlayerService {
       // Check if file exists
       if (!await File(file.path).exists()) {
         Logger.error('File does not exist: ${file.path}');
+        return false;
+      }
+      
+      // FIXED: Validate file is actually an audio file
+      if (!_isValidAudioFile(file.path)) {
+        Logger.error('File is not a valid audio file: ${file.path}');
         return false;
       }
       
@@ -336,7 +365,7 @@ class AudioPlayerService {
         Logger.debug('Windows path formatted to: $safePath');
       }
       
-      // Load the audio file
+      // FIXED: Enhanced file loading with better error recovery
       bool loadSuccess = false;
       Exception? lastError;
       
@@ -396,7 +425,7 @@ class AudioPlayerService {
               position.inMilliseconds.isFinite) {
             
             // Add a small delay to ensure the audio is properly loaded before seeking
-            await Future.delayed(const Duration(milliseconds: 300));
+            await Future.delayed(const Duration(milliseconds: 500)); // Increased delay
             await _player!.seek(position);
             _currentPosition = position;
             _positionController.add(position);
@@ -437,6 +466,28 @@ class AudioPlayerService {
       return false;
     }
   }
+  
+  // FIXED: Add file validation
+  bool _isValidAudioFile(String filePath) {
+    const validExtensions = ['.mp3', '.m4a', '.m4b', '.aac', '.ogg', '.wma', '.flac', '.opus'];
+    final extension = filePath.toLowerCase().substring(filePath.lastIndexOf('.'));
+    
+    if (!validExtensions.contains(extension)) {
+      return false;
+    }
+    
+    // Additional check for file size (should be > 1KB for valid audio)
+    try {
+      final file = File(filePath);
+      final size = file.lengthSync();
+      return size > 1024; // Must be larger than 1KB
+    } catch (e) {
+      Logger.error('Error checking file size: $filePath', e);
+      return false;
+    }
+  }
+  
+  // ... (rest of the methods remain the same as in your original code)
   
   // Pause playback
   Future<void> pause() async {
@@ -506,8 +557,6 @@ class AudioPlayerService {
     }
   }
   
-  // The rest of the methods remain largely the same
-  
   // Seek to position
   Future<void> seekTo(Duration position) async {
     try {
@@ -530,6 +579,9 @@ class AudioPlayerService {
         await _player!.seek(position);
         _currentPosition = position;
         _positionController.add(position);
+        
+        // Force save position after seeking
+        await _updateFilePlaybackPosition(position);
       }
     } catch (e) {
       Logger.error('Error seeking to position', e);

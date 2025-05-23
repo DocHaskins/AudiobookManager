@@ -5,6 +5,8 @@ import 'dart:convert';
 import 'package:path/path.dart' as path_util;
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
+import 'package:audiobook_organizer/models/collection.dart';
+import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/services/directory_scanner.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
@@ -23,7 +25,8 @@ class LibraryManager {
   final AudiobookStorageManager _storageManager;
   final MetadataCache _cache;
   final CoverArtManager _coverArtManager = CoverArtManager();
-  
+  CollectionManager? _collectionManager;
+
   // Library data
   List<AudiobookFile> _files = [];
   List<String> _watchedDirectories = [];
@@ -44,7 +47,14 @@ class LibraryManager {
        _metadataMatcher = metadataMatcher,
        _storageManager = storageManager,
        _cache = cache;
-  
+
+  set collectionManager(CollectionManager? manager) {
+    _collectionManager = manager;
+  }
+
+  // Add this getter (THIS IS WHAT'S MISSING)
+  CollectionManager? get collectionManager => _collectionManager;
+
   // Initialize the library
   Future<void> initialize() async {
     if (_isInitialized) return;
@@ -279,6 +289,10 @@ class LibraryManager {
               ? fileMetadata.copyWith(thumbnailUrl: coverPath)
               : fileMetadata;
           
+          if (file.metadata?.series.isNotEmpty ?? false) {
+            Logger.log('Book "${file.metadata!.title}" is part of series: ${file.metadata!.series}');
+            }
+
           // Store the metadata
           await _storageManager.updateMetadataForFile(file.path, metadataWithCover);
           file.metadata = metadataWithCover;
@@ -600,6 +614,48 @@ class LibraryManager {
     }
     
     return tags.toList()..sort();
+  }
+
+  List<AudiobookFile> getBooksForCollection(Collection collection) {
+    return _files.where((file) => collection.bookPaths.contains(file.path)).toList();
+  }
+  
+  // Get all series with 2+ books
+  Map<String, List<AudiobookFile>> getSeriesWithMultipleBooks() {
+    final Map<String, List<AudiobookFile>> series = {};
+    
+    for (final file in _files) {
+      if (file.metadata?.series.isNotEmpty ?? false) {
+        final seriesName = file.metadata!.series;
+        series[seriesName] ??= [];
+        series[seriesName]!.add(file);
+      }
+    }
+    
+    // Filter out series with only one book
+    series.removeWhere((key, value) => value.length < 2);
+    
+    return series;
+  }
+  
+  // Check if a book is part of any series
+  bool isBookInSeries(AudiobookFile book) {
+    return book.metadata?.series.isNotEmpty ?? false;
+  }
+  
+  // Get series info for a book
+  Map<String, dynamic>? getSeriesInfoForBook(AudiobookFile book) {
+    if (!isBookInSeries(book)) return null;
+    
+    final seriesName = book.metadata!.series;
+    final seriesBooks = getFilesBySeries(seriesName);
+    
+    return {
+      'seriesName': seriesName,
+      'position': book.metadata!.seriesPosition,
+      'totalBooks': seriesBooks.length,
+      'books': seriesBooks,
+    };
   }
   
   // Dispose resources

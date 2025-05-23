@@ -1,7 +1,8 @@
-// lib/services/metadata_service.dart - REFACTORED
+// lib/services/metadata_service.dart
 import 'dart:io';
 import 'package:metadata_god/metadata_god.dart';
 import 'package:path/path.dart' as path_util;
+import 'package:mime/mime.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 import 'package:audiobook_organizer/utils/file_utils.dart';
@@ -119,7 +120,7 @@ class MetadataService {
   }
   
   // Write metadata back to the file
-  Future<bool> writeMetadata(String filePath, AudiobookMetadata metadata) async {
+  Future<bool> writeMetadata(String filePath, AudiobookMetadata metadata, {String? coverImagePath}) async {
     try {
       // Ensure we're initialized
       if (!_isInitialized) {
@@ -131,6 +132,45 @@ class MetadataService {
       }
       
       Logger.log('Writing metadata to file: $filePath');
+      
+      // Prepare the picture data if a cover image path is provided
+      Picture? picture;
+      if (coverImagePath != null && coverImagePath.isNotEmpty && !coverImagePath.startsWith('http')) {
+        final coverFile = File(coverImagePath);
+        if (await coverFile.exists()) {
+          try {
+            final imageBytes = await coverFile.readAsBytes();
+            final mimeType = lookupMimeType(coverImagePath) ?? 'image/jpeg';
+            
+            picture = Picture(
+              data: imageBytes,
+              mimeType: mimeType,
+            );
+            
+            Logger.log('Prepared cover image for embedding: ${path_util.basename(coverImagePath)}');
+          } catch (e) {
+            Logger.error('Error reading cover image file: $coverImagePath', e);
+          }
+        }
+      } else if (metadata.thumbnailUrl.isNotEmpty && !metadata.thumbnailUrl.startsWith('http')) {
+        // If no explicit cover path provided, try to use the thumbnail URL if it's a local path
+        final coverFile = File(metadata.thumbnailUrl);
+        if (await coverFile.exists()) {
+          try {
+            final imageBytes = await coverFile.readAsBytes();
+            final mimeType = lookupMimeType(metadata.thumbnailUrl) ?? 'image/jpeg';
+            
+            picture = Picture(
+              data: imageBytes,
+              mimeType: mimeType,
+            );
+            
+            Logger.log('Using existing cover from metadata for embedding');
+          } catch (e) {
+            Logger.error('Error reading cover image from metadata: ${metadata.thumbnailUrl}', e);
+          }
+        }
+      }
             
       // Create metadata_god Metadata object
       final newMetadata = Metadata(
@@ -141,9 +181,9 @@ class MetadataService {
         year: metadata.publishedDate.isNotEmpty ? int.tryParse(metadata.publishedDate) : null,
         trackNumber: metadata.seriesPosition.isNotEmpty ? int.tryParse(metadata.seriesPosition) : null,
         // Other fields that metadata_god supports
-        albumArtist: metadata.authors.length > 1 ? metadata.authors[1] : null,
+        albumArtist: metadata.authors.length > 1 ? metadata.authors[1] : metadata.authors.isNotEmpty ? metadata.authors.first : null,
         durationMs: metadata.audioDuration?.inMilliseconds.toDouble(),
-        picture: null,
+        picture: picture, // Now includes the cover image if available
         fileSize: null, // Optional
       );
       
@@ -156,10 +196,78 @@ class MetadataService {
       // Update the cache
       _metadataCache.remove(filePath);
       
-      Logger.log('Successfully wrote metadata to file: $filePath');
+      Logger.log('Successfully wrote metadata to file: $filePath${picture != null ? ' (including cover)' : ''}');
       return true;
     } catch (e) {
       Logger.error('Error writing metadata to file: $filePath', e);
+      return false;
+    }
+  }
+  
+  // Overload for backward compatibility
+  Future<bool> writeMetadataWithCover(String filePath, AudiobookMetadata metadata, String coverImagePath) async {
+    return writeMetadata(filePath, metadata, coverImagePath: coverImagePath);
+  }
+  
+  // Extract just the cover art from a file
+  Future<Picture?> extractCoverArt(String filePath) async {
+    try {
+      final metadata = await MetadataGod.readMetadata(file: filePath);
+      return metadata.picture;
+    } catch (e) {
+      Logger.error('Error extracting cover art from file: $filePath', e);
+      return null;
+    }
+  }
+  
+  // Write only the cover art to a file (preserves other metadata)
+  Future<bool> writeCoverArt(String filePath, String coverImagePath) async {
+    try {
+      // First, read existing metadata
+      final existingMetadata = await MetadataGod.readMetadata(file: filePath);
+      
+      // Prepare the new picture data
+      final coverFile = File(coverImagePath);
+      if (!await coverFile.exists()) {
+        Logger.error('Cover image file does not exist: $coverImagePath');
+        return false;
+      }
+      
+      final imageBytes = await coverFile.readAsBytes();
+      final mimeType = lookupMimeType(coverImagePath) ?? 'image/jpeg';
+      
+      final picture = Picture(
+        data: imageBytes,
+        mimeType: mimeType,
+      );
+      
+      // Create new metadata with updated picture
+      final newMetadata = Metadata(
+        title: existingMetadata.title,
+        artist: existingMetadata.artist,
+        album: existingMetadata.album,
+        genre: existingMetadata.genre,
+        year: existingMetadata.year,
+        trackNumber: existingMetadata.trackNumber,
+        albumArtist: existingMetadata.albumArtist,
+        durationMs: existingMetadata.durationMs,
+        picture: picture,
+        fileSize: existingMetadata.fileSize,
+        trackTotal: existingMetadata.trackTotal,
+        discNumber: existingMetadata.discNumber,
+        discTotal: existingMetadata.discTotal,
+      );
+      
+      // Write the metadata back to the file
+      await MetadataGod.writeMetadata(
+        file: filePath,
+        metadata: newMetadata,
+      );
+      
+      Logger.log('Successfully wrote cover art to file: $filePath');
+      return true;
+    } catch (e) {
+      Logger.error('Error writing cover art to file: $filePath', e);
       return false;
     }
   }

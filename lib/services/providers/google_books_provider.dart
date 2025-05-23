@@ -1,6 +1,6 @@
 // File: lib/services/providers/google_books_provider.dart
 import 'dart:convert';
-import 'dart:async'; // For timeout handling
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
@@ -125,10 +125,10 @@ class GoogleBooksProvider implements MetadataProvider {
           thumbnailUrl = thumbnailUrl.replaceFirst('http:', 'https:');
         }
         
-        // Log the thumbnail URL for debugging
-        //Logger.debug('Extracted thumbnail URL: $thumbnailUrl');
-      } else {
-        Logger.debug('No image links found in Google Books response');
+        // Optimize image URL for better quality
+        if (thumbnailUrl.isNotEmpty) {
+          thumbnailUrl = _optimizeImageUrl(thumbnailUrl);
+        }
       }
       
       // Extract authors list safely
@@ -143,25 +143,55 @@ class GoogleBooksProvider implements MetadataProvider {
         categories = List<String>.from(volumeInfo['categories']);
       }
       
-      // Try to extract series information
+      // Extract series information from Google Books API
       String series = '';
       String seriesPosition = '';
       
-      // Look for series info in title
-      final title = volumeInfo['title'] as String? ?? '';
-      final seriesMatch = RegExp(r'(.*?)\s*(?:\(|\[)?(Book|#)?\s*(\d+)(?:\)|\])?\s*$').firstMatch(title);
-      if (seriesMatch != null) {
-        series = seriesMatch.group(1)?.trim() ?? '';
-        seriesPosition = seriesMatch.group(3) ?? '';
+      // Check for seriesInfo field (this is the proper Google Books API field for series)
+      if (volumeInfo['seriesInfo'] != null) {
+        final seriesInfo = volumeInfo['seriesInfo'];
+        
+        // Extract volumeSeries array
+        if (seriesInfo['volumeSeries'] != null && seriesInfo['volumeSeries'] is List) {
+          final volumeSeries = seriesInfo['volumeSeries'] as List;
+          if (volumeSeries.isNotEmpty) {
+            final firstSeries = volumeSeries[0];
+            
+            // Get series name (often stored in a 'series' field)
+            if (firstSeries['series'] != null) {
+              series = firstSeries['series']['title'] ?? '';
+            }
+            
+            // Get order number
+            if (firstSeries['orderNumber'] != null) {
+              seriesPosition = firstSeries['orderNumber'].toString();
+            }
+          }
+        }
+        
+        // Also check bookDisplayNumber
+        if (seriesPosition.isEmpty && seriesInfo['bookDisplayNumber'] != null) {
+          seriesPosition = seriesInfo['bookDisplayNumber'].toString();
+        }
       }
       
-      // Look for series info in subtitle
-      final subtitle = volumeInfo['subtitle'] as String? ?? '';
-      if (series.isEmpty && subtitle.isNotEmpty) {
-        final subtitleMatch = RegExp(r'(.*?)\s*(?:\(|\[)?(Book|#)?\s*(\d+)(?:\)|\])?\s*$').firstMatch(subtitle);
-        if (subtitleMatch != null) {
-          series = subtitleMatch.group(1)?.trim() ?? '';
-          seriesPosition = subtitleMatch.group(3) ?? '';
+      // If no series info found in seriesInfo, try to extract from title/subtitle
+      if (series.isEmpty) {
+        final title = volumeInfo['title'] as String? ?? '';
+        final subtitle = volumeInfo['subtitle'] as String? ?? '';
+        
+        // Try to extract from title
+        final titleMatch = RegExp(r'(.*?)\s*(?:#|Book\s+)(\d+)', caseSensitive: false).firstMatch(title);
+        if (titleMatch != null) {
+          series = titleMatch.group(1)?.trim() ?? '';
+          seriesPosition = titleMatch.group(2) ?? '';
+        } else if (subtitle.isNotEmpty) {
+          // Try subtitle
+          final subtitleMatch = RegExp(r'(.*?)\s*(?:#|Book\s+)(\d+)', caseSensitive: false).firstMatch(subtitle);
+          if (subtitleMatch != null) {
+            series = subtitleMatch.group(1)?.trim() ?? '';
+            seriesPosition = subtitleMatch.group(2) ?? '';
+          }
         }
       }
       
@@ -184,6 +214,36 @@ class GoogleBooksProvider implements MetadataProvider {
     } catch (e) {
       Logger.error('Error parsing Google Books data', e);
       return null;
+    }
+  }
+
+  // Optimize Google Books image URLs for better quality
+  String _optimizeImageUrl(String originalUrl) {
+    try {
+      if (!originalUrl.contains('books.google.com')) {
+        return originalUrl;
+      }
+      
+      Uri uri = Uri.parse(originalUrl);
+      Map<String, String> queryParams = Map<String, String>.from(uri.queryParameters);
+      
+      // If the URL contains a book ID, construct a high-quality URL
+      if (queryParams.containsKey('id')) {
+        String bookId = queryParams['id']!;
+        // This format provides high quality images (800x1200)
+        return 'https://books.google.com/books/publisher/content/images/frontcover/$bookId?fife=w800-h1200';
+      }
+      
+      // Fallback: modify existing parameters for better quality
+      queryParams['zoom'] = '0'; // Request original size
+      queryParams.remove('w'); // Remove width restriction
+      queryParams.remove('h'); // Remove height restriction
+      queryParams.remove('edge'); // Remove edge effects
+      
+      return uri.replace(queryParameters: queryParams).toString();
+    } catch (e) {
+      // Return original URL if optimization fails
+      return originalUrl;
     }
   }
 }

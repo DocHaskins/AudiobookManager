@@ -78,6 +78,17 @@ class MetadataMatcher {
         // Merge the metadata (using built-in merge method)
         AudiobookMetadata mergedMetadata = metadata.merge(onlineMetadata);
         
+        if (onlineMetadata.series.isEmpty && metadata.series.isNotEmpty) {
+          mergedMetadata = mergedMetadata.copyWith(
+            series: metadata.series,
+            seriesPosition: metadata.seriesPosition,
+          );
+          Logger.log('Preserved existing series information: ${metadata.series} #${metadata.seriesPosition}');
+        } else if (onlineMetadata.series.isNotEmpty && metadata.series.isNotEmpty && 
+                   onlineMetadata.series != metadata.series) {
+          Logger.warning('Series mismatch - Original: "${metadata.series}", Online: "${onlineMetadata.series}"');
+        }
+        
         // Handle cover image ONLY if auto-download is enabled AND we don't have a cover
         if (autoDownloadCovers && 
             onlineMetadata.thumbnailUrl.isNotEmpty && 

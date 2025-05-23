@@ -9,6 +9,7 @@ import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/directory_scanner.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
+import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'package:audiobook_organizer/services/providers/google_books_provider.dart';
 import 'package:audiobook_organizer/services/providers/open_library_provider.dart';
@@ -16,8 +17,9 @@ import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
 import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
-import 'package:audiobook_organizer/ui/screens/main_container.dart';
+import 'package:audiobook_organizer/ui/screens/library_screen.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
+import 'package:audiobook_organizer/ui/widgets/mini_player.dart';
 
 // Entry point
 void main() async {
@@ -112,8 +114,9 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
   late List<MetadataProvider> _metadataProviders;
   late MetadataMatcher _metadataMatcher;
   late LibraryManager _libraryManager;
+  late CollectionManager _collectionManager;
   late AudioPlayerService _playerService;
-  late MetadataService _metadataService; // Add this
+  late MetadataService _metadataService;
   
   // Initialization status
   bool _initialized = false;
@@ -180,6 +183,7 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
         cache: _metadataCache,
         storageManager: _storageManager,
       );
+      await _metadataMatcher.initialize();
       Logger.debug('MetadataMatcher initialized');
       
       // Initialize library manager
@@ -194,6 +198,17 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
       );
       await _libraryManager.initialize();
       Logger.debug('LibraryManager initialized');
+      
+      // Initialize collection manager
+      setState(() {
+        _initStatus = 'Initializing collections...';
+      });
+      _collectionManager = CollectionManager(libraryManager: _libraryManager);
+      await _collectionManager.initialize();
+      
+      // Set collection manager reference in library manager
+      _libraryManager.collectionManager = _collectionManager;
+      Logger.debug('CollectionManager initialized');
       
       // Initialize audio player service with platform check
       setState(() {
@@ -228,15 +243,24 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
     if (!_initialized) {
       return MaterialApp(
         title: 'Audiobook Organizer',
-        theme: ThemeData.dark(),
+        theme: _buildTheme(),
         home: Scaffold(
+          backgroundColor: const Color(0xFF121212),
           body: Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text(_initStatus),
+                const CircularProgressIndicator(
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.indigo),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  _initStatus,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                  ),
+                ),
               ],
             ),
           ),
@@ -248,22 +272,46 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
     if (_initError != null) {
       return MaterialApp(
         title: 'Audiobook Organizer',
-        theme: ThemeData.dark(),
+        theme: _buildTheme(),
         home: Scaffold(
+          backgroundColor: const Color(0xFF121212),
           body: Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.error_outline, color: Colors.red, size: 48),
-                const SizedBox(height: 16),
-                const Text('Initialization Error', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Padding(
-                  padding: const EdgeInsets.all(24.0),
-                  child: Text(_initError!, textAlign: TextAlign.center),
+                const Icon(
+                  Icons.error_outline, 
+                  color: Colors.red, 
+                  size: 64,
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Initialization Error', 
+                  style: TextStyle(
+                    fontSize: 24, 
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(height: 16),
-                ElevatedButton(
+                Container(
+                  padding: const EdgeInsets.all(24.0),
+                  margin: const EdgeInsets.symmetric(horizontal: 32.0),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A1A1A),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _initError!, 
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
                   onPressed: () {
                     setState(() {
                       _initialized = false;
@@ -272,7 +320,13 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
                     });
                     _initializeServices();
                   },
-                  child: const Text('Retry'),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.indigo,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  ),
                 ),
               ],
             ),
@@ -281,19 +335,17 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
       );
     }
     
-    // Main app with providers - MODIFIED to use MainContainer instead of HomeScreen
     return MultiProvider(
       providers: [
-        // Provide all services to the app
         Provider<DirectoryScanner>.value(value: _directoryScanner),
         Provider<MetadataCache>.value(value: _metadataCache),
         Provider<AudiobookStorageManager>.value(value: _storageManager),
         Provider<MetadataMatcher>.value(value: _metadataMatcher),
         Provider<LibraryManager>.value(value: _libraryManager),
+        Provider<CollectionManager>.value(value: _collectionManager),
         Provider<AudioPlayerService>.value(value: _playerService),
-        Provider<MetadataService>.value(value: _metadataService), // Add this
-        
-        // Stream of audiobook files
+        Provider<MetadataService>.value(value: _metadataService),
+
         StreamProvider<List<AudiobookFile>>(
           create: (_) => _libraryManager.libraryChanged,
           initialData: _libraryManager.files,
@@ -301,19 +353,88 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
       ],
       child: MaterialApp(
         title: 'Audiobook Organizer',
-        theme: ThemeData(
-          primarySwatch: Colors.indigo,
-          brightness: Brightness.dark,
-          colorScheme: const ColorScheme.dark().copyWith(
-            primary: Colors.indigo,
-            secondary: Colors.amberAccent,
+        theme: _buildTheme(),
+        home: Scaffold(
+          backgroundColor: const Color(0xFF121212),
+          body: Column(
+            children: [
+              // Main content area
+              Expanded(
+                child: LibraryScreen(
+                  libraryManager: _libraryManager,
+                  collectionManager: _collectionManager,
+                ),
+              ),
+              
+              // Mini Player at the bottom
+              const MiniPlayer(),
+            ],
           ),
-          fontFamily: GoogleFonts.roboto().fontFamily,
-          scaffoldBackgroundColor: const Color(0xFF121212),
-          cardColor: const Color(0xFF1E1E1E),
-          visualDensity: VisualDensity.adaptivePlatformDensity,
         ),
-        home: const MainContainer(), // Use MainContainer instead of HomeScreen
+        debugShowCheckedModeBanner: false,
+      ),
+    );
+  }
+  
+  ThemeData _buildTheme() {
+    return ThemeData(
+      primarySwatch: Colors.indigo,
+      brightness: Brightness.dark,
+      colorScheme: const ColorScheme.dark().copyWith(
+        primary: Colors.indigo,
+        secondary: Colors.amberAccent,
+        surface: const Color(0xFF1A1A1A),
+        background: const Color(0xFF121212),
+      ),
+      fontFamily: GoogleFonts.roboto().fontFamily,
+      scaffoldBackgroundColor: const Color(0xFF121212),
+      cardColor: const Color(0xFF1E1E1E),
+      visualDensity: VisualDensity.adaptivePlatformDensity,
+      
+      // Custom theme elements for the Spotify-like interface
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Color(0xFF000000),
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      
+      // Input decoration theme for search bars
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: const Color(0xFF2A2A2A),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide.none,
+        ),
+        hintStyle: TextStyle(color: Colors.grey[600]),
+      ),
+      
+      // Elevated button theme
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.indigo,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+      
+      // Outlined button theme
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: Colors.white,
+          side: const BorderSide(color: Colors.white38),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+      
+      // Divider theme
+      dividerTheme: const DividerThemeData(
+        color: Color(0xFF2A2A2A),
+        thickness: 1,
       ),
     );
   }
@@ -322,6 +443,12 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
   void dispose() {
     // Dispose services
     Logger.log('Disposing application services');
+    
+    try {
+      _collectionManager.dispose();
+    } catch (e) {
+      Logger.error('Error disposing CollectionManager', e);
+    }
     
     try {
       _libraryManager.dispose();

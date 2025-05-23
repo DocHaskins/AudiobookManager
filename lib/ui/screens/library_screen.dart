@@ -1,752 +1,589 @@
-// lib/ui/screens/library_screen.dart
-import 'dart:io';
+// lib/screens/library_screen.dart
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
+import 'package:audiobook_organizer/models/collection.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
-import 'package:audiobook_organizer/services/audio_player_service.dart';
-import 'package:audiobook_organizer/ui/screens/audiobook_details_screen.dart';
-import 'package:audiobook_organizer/ui/screens/player_screen.dart';
-import 'package:audiobook_organizer/utils/logger.dart';
-import 'package:audiobook_organizer/ui/widgets/book_grid_item.dart';
-import 'package:audiobook_organizer/ui/widgets/book_list_item.dart';
-
-// View types
-enum ViewType { grid, list, series, authors }
+import 'package:audiobook_organizer/services/collection_manager.dart';
+import '../widgets/audiobook_grid_item.dart';
+import '../widgets/audiobook_list_item.dart';
+import '../widgets/collection_grid_item.dart';
+import '../widgets/collection_detail_view.dart';
+import '../widgets/audiobook_detail_view.dart';
 
 class LibraryScreen extends StatefulWidget {
-  // Add navigation callback
-  final Function(Widget)? onNavigate;
-  
+  final LibraryManager libraryManager;
+  final CollectionManager collectionManager;
+
   const LibraryScreen({
-    Key? key, 
-    this.onNavigate,
+    Key? key,
+    required this.libraryManager,
+    required this.collectionManager,
   }) : super(key: key);
 
   @override
-  _LibraryScreenState createState() => _LibraryScreenState();
+  State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _LibraryScreenState extends State<LibraryScreen> with SingleTickerProviderStateMixin {
-  // Current view type
-  ViewType _viewType = ViewType.grid;
+class _LibraryScreenState extends State<LibraryScreen> {
+  // View states
+  bool _showCollections = false;
+  bool _isGridView = true;
+  String _searchQuery = '';
+  String _selectedCategory = 'All';
   
-  // Current filter
-  String _currentFilter = '';
+  // Navigation stack
+  final List<Widget> _navigationStack = [];
   
-  // Tab controller for different sections
-  late TabController _tabController;
-  
+  // Filtered data
+  List<AudiobookFile> _filteredBooks = [];
+  List<Collection> _filteredCollections = [];
+
   @override
   void initState() {
     super.initState();
+    _updateFilteredData();
     
-    // Initialize tab controller
-    _tabController = TabController(length: 4, vsync: this);
-    _tabController.addListener(() {
-      setState(() {
-        // Update view type based on selected tab
-        _viewType = ViewType.values[_tabController.index];
-      });
+    // Listen to library changes
+    widget.libraryManager.libraryChanged.listen((_) {
+      if (mounted) {
+        setState(() {
+          _updateFilteredData();
+        });
+      }
+    });
+    
+    // Listen to collection changes
+    widget.collectionManager.collectionsChanged.listen((_) {
+      if (mounted) {
+        setState(() {
+          _updateFilteredData();
+        });
+      }
     });
   }
-  
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
+
+  void _updateFilteredData() {
+    if (_showCollections) {
+      _filteredCollections = widget.collectionManager.collections
+          .where((collection) {
+            final matchesSearch = collection.name.toLowerCase().contains(_searchQuery.toLowerCase());
+            final matchesCategory = _selectedCategory == 'All' || 
+                collection.type.toString().contains(_selectedCategory.toLowerCase());
+            return matchesSearch && matchesCategory;
+          })
+          .toList();
+    } else {
+      _filteredBooks = widget.libraryManager.files
+          .where((book) {
+            final metadata = book.metadata;
+            if (metadata == null) return false;
+            
+            final matchesSearch = metadata.title.toLowerCase().contains(_searchQuery.toLowerCase()) ||
+                metadata.authorsFormatted.toLowerCase().contains(_searchQuery.toLowerCase());
+            
+            final matchesCategory = _selectedCategory == 'All' ||
+                (_selectedCategory == 'Favorites' && metadata.isFavorite) ||
+                metadata.categories.any((cat) => cat.contains(_selectedCategory));
+            
+            return matchesSearch && matchesCategory;
+          })
+          .toList();
+    }
   }
-  
+
+  void _navigateToDetail(Widget detailView) {
+    setState(() {
+      _navigationStack.add(detailView);
+    });
+  }
+
+  void _navigateBack() {
+    if (_navigationStack.isNotEmpty) {
+      setState(() {
+        _navigationStack.removeLast();
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final library = Provider.of<List<AudiobookFile>>(context);
-    final libraryManager = Provider.of<LibraryManager>(context);
-    final playerService = Provider.of<AudioPlayerService>(context);
-    
+    return Scaffold(
+      backgroundColor: const Color(0xFF121212),
+      body: Row(
+        children: [
+          // Left Sidebar
+          Container(
+            width: 280,
+            color: const Color(0xFF000000),
+            child: _buildSidebar(),
+          ),
+          
+          // Main Content Area
+          Expanded(
+            child: Container(
+              color: const Color(0xFF121212),
+              child: _navigationStack.isEmpty
+                  ? _buildMainContent()
+                  : _buildDetailContent(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSidebar() {
     return Column(
       children: [
-        // Tab bar
-        TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(text: 'Grid'),
-            Tab(text: 'List'),
-            Tab(text: 'Series'),
-            Tab(text: 'Authors'),
-          ],
-        ),
-        
-        // Filter chip section
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8.0),
+        // Logo/App Name
+        Container(
+          padding: const EdgeInsets.all(24),
           child: Row(
             children: [
-              const Text('Filter: '),
-              _currentFilter.isEmpty
-                  ? const Text('None', style: TextStyle(color: Colors.grey))
-                  : Chip(
-                      label: Text(_currentFilter),
-                      onDeleted: () {
-                        setState(() {
-                          _currentFilter = '';
-                        });
-                      },
-                    ),
-              const Spacer(),
-              if (libraryManager.isLoading)
-                const Padding(
-                  padding: EdgeInsets.all(8.0),
-                  child: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
+              Icon(
+                Icons.headphones,
+                color: Theme.of(context).primaryColor,
+                size: 32,
+              ),
+              const SizedBox(width: 12),
+              const Text(
+                'Audiobooks',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
                 ),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh Library',
-                onPressed: () => _refreshLibrary(libraryManager),
               ),
             ],
           ),
         ),
         
-        // Tab content
+        // Search Bar
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A2A2A),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: TextField(
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: 'Search ${_showCollections ? "collections" : "books"}...',
+                hintStyle: TextStyle(color: Colors.grey[600]),
+                prefixIcon: Icon(Icons.search, color: Colors.grey[600]),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              ),
+              onChanged: (value) {
+                setState(() {
+                  _searchQuery = value;
+                  _updateFilteredData();
+                });
+              },
+            ),
+          ),
+        ),
+        
+        const SizedBox(height: 24),
+        
+        // View Toggle
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A2A2A),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _buildToggleButton(
+                    'Books',
+                    !_showCollections,
+                    () => setState(() {
+                      _showCollections = false;
+                      _updateFilteredData();
+                    }),
+                  ),
+                ),
+                Expanded(
+                  child: _buildToggleButton(
+                    'Collections',
+                    _showCollections,
+                    () => setState(() {
+                      _showCollections = true;
+                      _updateFilteredData();
+                    }),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        
+        const SizedBox(height: 24),
+        
+        // Categories/Filters
         Expanded(
-          child: TabBarView(
-            controller: _tabController,
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             children: [
-              // Grid view
-              _buildGridView(context, library, playerService),
-              
-              // List view
-              _buildListView(context, library, playerService),
-              
-              // Series view
-              _buildSeriesView(context, library, libraryManager, playerService),
-              
-              // Authors view
-              _buildAuthorsView(context, library, libraryManager, playerService),
+              _buildCategoryItem('All', Icons.library_books),
+              if (!_showCollections) ...[
+                _buildCategoryItem('Favorites', Icons.favorite),
+                _buildCategoryItem('Recently Added', Icons.new_releases),
+                _buildCategoryItem('In Progress', Icons.play_circle_outline),
+                const Divider(color: Color(0xFF2A2A2A), height: 32),
+                _buildSectionTitle('GENRES'),
+                _buildCategoryItem('Fiction', Icons.auto_stories),
+                _buildCategoryItem('Non-Fiction', Icons.menu_book),
+                _buildCategoryItem('Mystery', Icons.search),
+                _buildCategoryItem('Sci-Fi', Icons.rocket_launch),
+              ] else ...[
+                _buildCategoryItem('Series', Icons.collections_bookmark),
+                _buildCategoryItem('Custom', Icons.folder_special),
+                _buildCategoryItem('Author', Icons.person),
+              ],
+            ],
+          ),
+        ),
+        
+        // Bottom Stats
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            border: Border(
+              top: BorderSide(color: Colors.grey[800]!),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _showCollections
+                    ? '${_filteredCollections.length} Collections'
+                    : '${_filteredBooks.length} Books',
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontSize: 12,
+                ),
+              ),
+              if (!_showCollections)
+                Text(
+                  '${_calculateTotalDuration()}',
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 11,
+                  ),
+                ),
             ],
           ),
         ),
       ],
     );
   }
-  
-  // Build grid view of audiobooks
-  Widget _buildGridView(BuildContext context, List<AudiobookFile> library, AudioPlayerService playerService) {
-    final filteredLibrary = _filterLibrary(library);
-    
-    if (filteredLibrary.isEmpty) {
-      return _buildEmptyView();
-    }
-    
-    // Calculate how many columns to display based on screen width
-    final screenWidth = MediaQuery.of(context).size.width;
-    int crossAxisCount = (screenWidth / 160).floor();
-    crossAxisCount = crossAxisCount < 2 ? 2 : crossAxisCount;
-    
-    return GridView.builder(
-      padding: const EdgeInsets.all(8),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        childAspectRatio: 0.6, // Book cover aspect ratio (slightly wider than 2:3 to account for text)
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 12, // Increased for better vertical separation
-      ),
-      itemCount: filteredLibrary.length,
-      itemBuilder: (context, index) {
-        final file = filteredLibrary[index];
-        return BookGridItem(
-          book: file,
-          onTap: () => _openAudiobookDetails(context, file),
-          onLongPress: () => _showOptionsMenu(context, file, playerService),
-          onPlayTap: () => _playAudiobook(context, file, playerService),
-        );
-      },
-    );
-  }
-  
-  // Build list view of audiobooks
-  Widget _buildListView(BuildContext context, List<AudiobookFile> library, AudioPlayerService playerService) {
-    final filteredLibrary = _filterLibrary(library);
-    
-    if (filteredLibrary.isEmpty) {
-      return _buildEmptyView();
-    }
-    
-    return ListView.builder(
-      itemCount: filteredLibrary.length,
-      itemBuilder: (context, index) {
-        final file = filteredLibrary[index];
-        return BookListItem(
-          book: file,
-          onTap: () => _openAudiobookDetails(context, file),
-          onLongPress: () => _showOptionsMenu(context, file, playerService),
-          onPlayTap: () => _playAudiobook(context, file, playerService),
-        );
-      },
-    );
-  }
-  
-  // Build series view
-  Widget _buildSeriesView(BuildContext context, List<AudiobookFile> library, 
-                          LibraryManager libraryManager, AudioPlayerService playerService) {
-    final series = libraryManager.getAllSeries();
-    
-    if (series.isEmpty) {
-      return _buildEmptyView(message: 'No series found');
-    }
-    
-    return ListView.builder(
-      itemCount: series.length,
-      itemBuilder: (context, index) {
-        final seriesName = series[index];
-        final seriesBooks = libraryManager.getFilesBySeries(seriesName);
-        final sortedBooks = _sortBooksBySeries(seriesBooks);
-        
-        // Skip if filtered and no match
-        if (_currentFilter.isNotEmpty && 
-            !seriesName.toLowerCase().contains(_currentFilter.toLowerCase())) {
-          return const SizedBox.shrink();
-        }
-        
-        return ExpansionTile(
-          title: Text(seriesName),
-          subtitle: Text('${seriesBooks.length} books'),
-          children: [
-            SizedBox(
-              height: 180,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: sortedBooks.length,
-                itemBuilder: (context, bookIndex) {
-                  final file = sortedBooks[bookIndex];
-                  final metadata = file.metadata;
-                  
-                  return InkWell(
-                    onTap: () => _openAudiobookDetails(context, file),
-                    child: Container(
-                      width: 100,
-                      margin: const EdgeInsets.all(4),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Cover image
-                          Expanded(
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[800],
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: metadata?.thumbnailUrl.isNotEmpty == true
-                                      ? ClipRRect(
-                                          borderRadius: BorderRadius.circular(4),
-                                          child: Image.file(
-                                            File(metadata!.thumbnailUrl),
-                                            fit: BoxFit.cover,
-                                            errorBuilder: (context, error, stackTrace) {
-                                              return Center(child: Text('#${metadata.seriesPosition}'));
-                                            },
-                                          ),
-                                        )
-                                      : Center(
-                                          child: Text(
-                                            '#${metadata?.seriesPosition ?? '?'}',
-                                            style: const TextStyle(fontSize: 18),
-                                          ),
-                                        ),
-                                ),
-                                
-                                // Play icon overlay
-                                Positioned(
-                                  bottom: 4,
-                                  right: 4,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: BoxDecoration(
-                                      color: Theme.of(context).primaryColor,
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    child: InkWell(
-                                      onTap: () => _playAudiobook(context, file, playerService),
-                                      child: const Icon(
-                                        Icons.play_arrow,
-                                        color: Colors.white,
-                                        size: 16,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          
-                          // Book number and title
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              '#${metadata?.seriesPosition ?? '?'} - ${metadata?.title ?? file.filename}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-  
-  // Build authors view
-  Widget _buildAuthorsView(BuildContext context, List<AudiobookFile> library, 
-                           LibraryManager libraryManager, AudioPlayerService playerService) {
-    final authors = libraryManager.getAllAuthors();
-    
-    if (authors.isEmpty) {
-      return _buildEmptyView(message: 'No authors found');
-    }
-    
-    return ListView.builder(
-      itemCount: authors.length,
-      itemBuilder: (context, index) {
-        final authorName = authors[index];
-        final authorBooks = libraryManager.getFilesByAuthor(authorName);
-        
-        // Skip if filtered and no match
-        if (_currentFilter.isNotEmpty && 
-            !authorName.toLowerCase().contains(_currentFilter.toLowerCase())) {
-          return const SizedBox.shrink();
-        }
-        
-        return ExpansionTile(
-          title: Text(authorName),
-          subtitle: Text('${authorBooks.length} books'),
-          children: [
-            SizedBox(
-              height: 180,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: authorBooks.length,
-                itemBuilder: (context, bookIndex) {
-                  final file = authorBooks[bookIndex];
-                  final metadata = file.metadata;
-                  
-                  return InkWell(
-                    onTap: () => _openAudiobookDetails(context, file),
-                    child: Container(
-                      width: 100,
-                      margin: const EdgeInsets.all(4),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          // Cover image
-                          Expanded(
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.grey[800],
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: metadata?.thumbnailUrl.isNotEmpty == true
-                                      ? ClipRRect(
-                                          borderRadius: BorderRadius.circular(4),
-                                          child: Image.file(
-                                            File(metadata!.thumbnailUrl),
-                                            fit: BoxFit.cover,
-                                            errorBuilder: (context, error, stackTrace) {
-                                              return const Icon(Icons.book);
-                                            },
-                                          ),
-                                        )
-                                      : const Icon(Icons.book),
-                                ),
-                                
-                                // Play icon overlay
-                                Positioned(
-                                  bottom: 4,
-                                  right: 4,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: BoxDecoration(
-                                      color: Theme.of(context).primaryColor,
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    child: InkWell(
-                                      onTap: () => _playAudiobook(context, file, playerService),
-                                      child: const Icon(
-                                        Icons.play_arrow,
-                                        color: Colors.white,
-                                        size: 16,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          
-                          // Title
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              metadata?.title ?? file.filename,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                          
-                          // Series info
-                          if (metadata?.series.isNotEmpty == true)
-                            Text(
-                              '${metadata!.series} ${metadata.seriesPosition.isNotEmpty ? "#${metadata.seriesPosition}" : ""}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey[400],
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-  
-  // Build empty view for when no books are found
-  Widget _buildEmptyView({String message = 'No audiobooks found'}) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.library_music, size: 64, color: Colors.grey),
-          const SizedBox(height: 16),
-          Text(
-            message,
-            style: const TextStyle(color: Colors.grey),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Add folders to your library using the + button',
-            style: TextStyle(color: Colors.grey[600], fontSize: 12),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  // Filter library based on the current filter
-  List<AudiobookFile> _filterLibrary(List<AudiobookFile> library) {
-    if (_currentFilter.isEmpty) {
-      return library;
-    }
-    
-    final filterLower = _currentFilter.toLowerCase();
-    return library.where((file) {
-      final metadata = file.metadata;
-      if (metadata == null) {
-        return file.filename.toLowerCase().contains(filterLower);
-      }
-      
-      return metadata.title.toLowerCase().contains(filterLower) ||
-             metadata.authors.any((a) => a.toLowerCase().contains(filterLower)) ||
-             metadata.series.toLowerCase().contains(filterLower) ||
-             metadata.userTags.any((t) => t.toLowerCase().contains(filterLower));
-    }).toList();
-  }
-  
-  // Sort books by series position
-  List<AudiobookFile> _sortBooksBySeries(List<AudiobookFile> books) {
-    final sortedBooks = List<AudiobookFile>.from(books);
-    
-    sortedBooks.sort((a, b) {
-      final aPosition = int.tryParse(a.metadata?.seriesPosition ?? '') ?? 999;
-      final bPosition = int.tryParse(b.metadata?.seriesPosition ?? '') ?? 999;
-      return aPosition.compareTo(bPosition);
-    });
-    
-    return sortedBooks;
-  }
-  
-  // Open audiobook details screen
-  void _openAudiobookDetails(BuildContext context, AudiobookFile file) {
-    if (widget.onNavigate != null) {
-      // Use the navigation callback
-      widget.onNavigate!(AudiobookDetailsScreen(
-        file: file,
-      ));
-    } else {
-      // Fallback to traditional navigation
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => AudiobookDetailsScreen(file: file),
+
+  Widget _buildToggleButton(String label, bool isSelected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Theme.of(context).primaryColor : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
         ),
-      ).then((_) {
-        // Force a refresh when returning
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.white : Colors.grey[400],
+              fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCategoryItem(String title, IconData icon) {
+    final isSelected = _selectedCategory == title;
+    return InkWell(
+      onTap: () {
         setState(() {
-          imageCache.clear();
-          imageCache.clearLiveImages();
+          _selectedCategory = title;
+          _updateFilteredData();
         });
-      });
-    }
-  }
-  
-  // Play an audiobook
-  Future<void> _playAudiobook(BuildContext context, AudiobookFile file, AudioPlayerService playerService) async {
-    try {
-      final success = await playerService.play(file);
-      
-      if (success) {
-        // Navigate to player screen using callback if available
-        if (widget.onNavigate != null) {
-          widget.onNavigate!(PlayerScreen(
-            file: file,
-          ));
-        } else {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (context) => PlayerScreen(file: file),
-            ),
-          );
-        }
-      } else {
-        // Show error message
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to play audiobook'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      Logger.error('Error playing audiobook', e);
-      
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error playing audiobook: ${e.toString()}'),
-          backgroundColor: Colors.red,
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF2A2A2A) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
         ),
-      );
-    }
-  }
-  
-  // Show options menu for an audiobook
-  void _showOptionsMenu(BuildContext context, AudiobookFile file, AudioPlayerService playerService) {
-    final metadata = file.metadata;
-    
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.info),
-            title: const Text('View Details'),
-            onTap: () {
-              Navigator.pop(context);
-              _openAudiobookDetails(context, file);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.play_arrow),
-            title: const Text('Play'),
-            onTap: () {
-              Navigator.pop(context);
-              _playAudiobook(context, file, playerService);
-            },
-          ),
-          if (metadata != null)
-            ListTile(
-              leading: Icon(metadata.isFavorite ? Icons.favorite : Icons.favorite_border),
-              title: Text(metadata.isFavorite ? 'Remove from Favorites' : 'Add to Favorites'),
-              onTap: () {
-                Navigator.pop(context);
-                _toggleFavorite(context, file);
-              },
-            ),
-          ListTile(
-            leading: const Icon(Icons.filter_alt),
-            title: const Text('Filter By This'),
-            onTap: () {
-              Navigator.pop(context);
-              _filterBy(file);
-            },
-          ),
-        ],
-      ),
-    );
-  }
-  
-  // Toggle favorite status
-  void _toggleFavorite(BuildContext context, AudiobookFile file) {
-    final libraryManager = Provider.of<LibraryManager>(context, listen: false);
-    final metadata = file.metadata;
-    
-    if (metadata != null) {
-      libraryManager.updateUserData(
-        file,
-        isFavorite: !metadata.isFavorite,
-      );
-    }
-  }
-  
-  // Filter by a specific attribute
-  void _filterBy(AudiobookFile file) {
-    final metadata = file.metadata;
-    
-    if (metadata != null) {
-      // Show filter options
-      showDialog(
-        context: context,
-        builder: (context) => SimpleDialog(
-          title: const Text('Filter By'),
+        child: Row(
           children: [
-            if (metadata.series.isNotEmpty)
-              SimpleDialogOption(
-                onPressed: () {
-                  Navigator.pop(context);
-                  setState(() {
-                    _currentFilter = metadata.series;
-                    _tabController.animateTo(2); // Switch to Series tab
-                  });
-                },
-                child: Text('Series: ${metadata.series}'),
+            Icon(
+              icon,
+              color: isSelected ? Theme.of(context).primaryColor : Colors.grey[400],
+              size: 20,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              title,
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.grey[400],
+                fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
               ),
-            if (metadata.authors.isNotEmpty)
-              ...metadata.authors.map((author) => SimpleDialogOption(
-                onPressed: () {
-                  Navigator.pop(context);
-                  setState(() {
-                    _currentFilter = author;
-                    _tabController.animateTo(3); // Switch to Authors tab
-                  });
-                },
-                child: Text('Author: $author'),
-              )),
-            if (metadata.userTags.isNotEmpty)
-              ...metadata.userTags.map((tag) => SimpleDialogOption(
-                onPressed: () {
-                  Navigator.pop(context);
-                  setState(() {
-                    _currentFilter = tag;
-                  });
-                },
-                child: Text('Tag: $tag'),
-              )),
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
             ),
           ],
         ),
-      );
-    }
-  }
-  
-  // Refresh library
-  Future<void> _refreshLibrary(LibraryManager libraryManager) async {
-    // Show refresh options
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Refresh Library'),
-        content: const Text('How would you like to refresh your library?'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _performRefresh(libraryManager, forceMetadataUpdate: false);
-            },
-            child: const Text('Scan for New Files'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _performRefresh(libraryManager, forceMetadataUpdate: true);
-            },
-            child: const Text('Full Refresh (Update All Metadata)'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
       ),
     );
   }
-  
-  // Perform the refresh
-  Future<void> _performRefresh(LibraryManager libraryManager, {required bool forceMetadataUpdate}) async {
-    try {
-      // Show loading indicator in snackbar
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
+
+  Widget _buildSectionTitle(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 12, bottom: 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          color: Colors.grey[600],
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 1.2,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMainContent() {
+    return Column(
+      children: [
+        // Header with view toggle
+        Container(
+          padding: const EdgeInsets.all(24),
+          child: Row(
             children: [
-              const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              Text(
+                _showCollections ? 'Collections' : 'Library',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(width: 16),
-              Text(forceMetadataUpdate 
-                   ? 'Updating all metadata...' 
-                   : 'Scanning for new files...'),
+              const Spacer(),
+              // View Toggle
+              Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2A2A),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        Icons.grid_view,
+                        color: _isGridView ? Theme.of(context).primaryColor : Colors.grey[600],
+                      ),
+                      onPressed: () => setState(() => _isGridView = true),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        Icons.view_list,
+                        color: !_isGridView ? Theme.of(context).primaryColor : Colors.grey[600],
+                      ),
+                      onPressed: () => setState(() => _isGridView = false),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
-          duration: const Duration(seconds: 30),
+        ),
+        
+        // Content
+        Expanded(
+          child: _showCollections
+              ? _buildCollectionsView()
+              : _buildBooksView(),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDetailContent() {
+    return Column(
+      children: [
+        // Navigation Header
+        Container(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: _navigateBack,
+              ),
+              const SizedBox(width: 16),
+              const Text(
+                'Back',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        // Detail Content
+        Expanded(
+          child: _navigationStack.last,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBooksView() {
+    if (_filteredBooks.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.library_books,
+              size: 64,
+              color: Colors.grey[700],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No books found',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 18,
+              ),
+            ),
+          ],
         ),
       );
-      
-      
-      // Hide the snackbar
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      
-      // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Library refresh complete'),
-          backgroundColor: Colors.green,
+    }
+
+    return _isGridView
+        ? GridView.builder(
+            padding: const EdgeInsets.all(24),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 5,
+              childAspectRatio: 0.7,
+              crossAxisSpacing: 20,
+              mainAxisSpacing: 20,
+            ),
+            itemCount: _filteredBooks.length,
+            itemBuilder: (context, index) {
+              final book = _filteredBooks[index];
+              return AudiobookGridItem(
+                book: book,
+                onTap: () => _navigateToDetail(
+                  AudiobookDetailView(
+                    book: book,
+                    libraryManager: widget.libraryManager,
+                  ),
+                ),
+              );
+            },
+          )
+        : ListView.builder(
+            padding: const EdgeInsets.all(24),
+            itemCount: _filteredBooks.length,
+            itemBuilder: (context, index) {
+              final book = _filteredBooks[index];
+              return AudiobookListItem(
+                book: book,
+                onTap: () => _navigateToDetail(
+                  AudiobookDetailView(
+                    book: book,
+                    libraryManager: widget.libraryManager,
+                  ),
+                ),
+              );
+            },
+          );
+  }
+
+  Widget _buildCollectionsView() {
+    if (_filteredCollections.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.collections_bookmark,
+              size: 64,
+              color: Colors.grey[700],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No collections found',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 18,
+              ),
+            ),
+          ],
         ),
       );
-    } catch (e) {
-      // Hide the loading snackbar
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error refreshing library: ${e.toString()}'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      
-      Logger.error('Error refreshing library', e);
+    }
+
+    return GridView.builder(
+      padding: const EdgeInsets.all(24),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        childAspectRatio: 1,
+        crossAxisSpacing: 20,
+        mainAxisSpacing: 20,
+      ),
+      itemCount: _filteredCollections.length,
+      itemBuilder: (context, index) {
+        final collection = _filteredCollections[index];
+        final books = widget.libraryManager.getBooksForCollection(collection);
+        return CollectionGridItem(
+          collection: collection,
+          books: books,
+          onTap: () => _navigateToDetail(
+            CollectionDetailView(
+              collection: collection,
+              books: books,
+              libraryManager: widget.libraryManager,
+              collectionManager: widget.collectionManager,
+              onBookTap: (book) => _navigateToDetail(
+                AudiobookDetailView(
+                  book: book,
+                  libraryManager: widget.libraryManager,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _calculateTotalDuration() {
+    Duration total = Duration.zero;
+    for (final book in _filteredBooks) {
+      if (book.metadata?.audioDuration != null) {
+        total += book.metadata!.audioDuration!;
+      }
+    }
+    
+    final hours = total.inHours;
+    final minutes = total.inMinutes.remainder(60);
+    
+    if (hours > 0) {
+      return '$hours hours, $minutes minutes';
+    } else {
+      return '$minutes minutes';
     }
   }
 }
