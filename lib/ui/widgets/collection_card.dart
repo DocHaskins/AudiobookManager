@@ -35,12 +35,11 @@ class CollectionCard extends StatelessWidget {
         onLongPress: onLongPress,
         borderRadius: BorderRadius.circular(12),
         child: Container(
-          height: 280,
           padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Cover images stack
+              // Cover images stack - Flexible to fill remaining space
               Expanded(
                 child: Stack(
                   children: [
@@ -89,7 +88,7 @@ class CollectionCard extends StatelessWidget {
                             color: Theme.of(context).primaryColor,
                             borderRadius: BorderRadius.circular(12),
                           ),
-                          child: Text(
+                          child: const Text(
                             'SERIES',
                             style: TextStyle(
                               color: Colors.white,
@@ -102,46 +101,61 @@ class CollectionCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
-              // Collection name
-              Text(
-                collection.name,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 4),
-              // Book count and duration
-              Text(
-                '${collection.bookCount} books • ${_formatDuration(totalDuration)}',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Colors.grey[600],
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Rating
-              if (averageRating > 0)
-                Row(
+              
+              // Bottom section - FIXED HEIGHT, docked to bottom
+              Container(
+                height: 80, // Fixed bottom section height
+                width: double.infinity,
+                padding: const EdgeInsets.only(top: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    ...List.generate(5, (index) {
-                      final filled = index < averageRating.floor();
-                      final half = index == averageRating.floor() && 
-                                   averageRating % 1 >= 0.5;
-                      return Icon(
-                        half ? Icons.star_half : Icons.star,
-                        size: 16,
-                        color: filled || half ? Colors.amber : Colors.grey[300],
-                      );
-                    }),
-                    const SizedBox(width: 4),
+                    // Collection name
                     Text(
-                      averageRating.toStringAsFixed(1),
-                      style: Theme.of(context).textTheme.bodySmall,
+                      collection.name,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    
+                    // Book count and duration
+                    Text(
+                      '${collection.bookCount} books • ${_formatDuration(totalDuration)}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[600],
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    
+                    // Rating - always show, even if 0
+                    Row(
+                      children: [
+                        ...List.generate(5, (index) {
+                          final filled = index < averageRating.floor();
+                          final half = index == averageRating.floor() && 
+                                       averageRating % 1 >= 0.5;
+                          return Icon(
+                            half ? Icons.star_half : Icons.star,
+                            size: 14,
+                            color: filled || half ? Colors.amber : Colors.grey[300],
+                          );
+                        }),
+                        const SizedBox(width: 4),
+                        Text(
+                          averageRating > 0 ? averageRating.toStringAsFixed(1) : 'No rating',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
+              ),
             ],
           ),
         ),
@@ -157,7 +171,7 @@ class CollectionCard extends StatelessWidget {
           BoxShadow(
             color: Colors.black.withOpacity(0.2 * opacity),
             blurRadius: 4,
-            offset: Offset(0, 2),
+            offset: const Offset(0, 2),
           ),
         ],
       ),
@@ -231,7 +245,7 @@ class CollectionCard extends StatelessWidget {
   }
 }
 
-// Grid view for collections
+// Grid view for collections with responsive layout
 class CollectionGridView extends StatelessWidget {
   final List<Collection> collections;
   final List<AudiobookFile> allBooks;
@@ -278,33 +292,35 @@ class CollectionGridView extends StatelessWidget {
       );
     }
     
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: _calculateCrossAxisCount(context),
-        childAspectRatio: 0.75,
-        crossAxisSpacing: 16,
-        mainAxisSpacing: 16,
-      ),
-      itemCount: collections.length,
-      itemBuilder: (context, index) {
-        final collection = collections[index];
-        return CollectionCard(
-          collection: collection,
-          books: allBooks,
-          onTap: () => onCollectionTap?.call(collection),
-          onLongPress: () => onCollectionLongPress?.call(collection),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Simple calculation for collection grid: fixed item width
+        const double itemWidth = 220;  // Fixed width for each collection
+        const double spacing = 16;
+        
+        // Calculate how many items fit across the width
+        final int crossAxisCount = ((constraints.maxWidth + spacing) / (itemWidth + spacing)).floor().clamp(1, 10);
+        
+        return GridView.builder(
+          padding: const EdgeInsets.all(16),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            childAspectRatio: 0.75, // 220 width / 293 height (220*1.33)
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: spacing,
+          ),
+          itemCount: collections.length,
+          itemBuilder: (context, index) {
+            final collection = collections[index];
+            return CollectionCard(
+              collection: collection,
+              books: allBooks,
+              onTap: () => onCollectionTap?.call(collection),
+              onLongPress: () => onCollectionLongPress?.call(collection),
+            );
+          },
         );
       },
     );
-  }
-  
-  int _calculateCrossAxisCount(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    if (width > 1200) return 5;
-    if (width > 900) return 4;
-    if (width > 600) return 3;
-    if (width > 400) return 2;
-    return 1;
   }
 }

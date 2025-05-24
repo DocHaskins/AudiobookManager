@@ -28,7 +28,7 @@ class CollectionGridItem extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Cover Grid
+            // Cover Grid - Flexible to fill remaining space
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
@@ -42,23 +42,31 @@ class CollectionGridItem extends StatelessWidget {
               ),
             ),
             
-            // Collection Info
-            Padding(
+            // Collection Info - FIXED HEIGHT, docked to bottom
+            Container(
+              height: 72, // Fixed bottom section height
+              width: double.infinity,
+              decoration: const BoxDecoration(
+                borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
+              ),
               padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
+                  // Collection name
                   Text(
                     collection.name,
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 16,
+                      fontSize: 14,
                       fontWeight: FontWeight.w600,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 4),
+                  
+                  // Book count with icon
                   Row(
                     children: [
                       Icon(
@@ -74,6 +82,30 @@ class CollectionGridItem extends StatelessWidget {
                           fontSize: 12,
                         ),
                       ),
+                      
+                      // Show collection type if it's a series
+                      if (collection.type == CollectionType.series) ...[
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).primaryColor.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: Theme.of(context).primaryColor.withOpacity(0.5),
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            'SERIES',
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w600,
+                              color: Theme.of(context).primaryColor,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ],
@@ -104,7 +136,7 @@ class CollectionGridItem extends StatelessWidget {
       );
     }
     
-    // Create 2x2 grid
+    // Create 2x2 grid for covers
     return GridView.builder(
       physics: const NeverScrollableScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -114,15 +146,20 @@ class CollectionGridItem extends StatelessWidget {
       ),
       itemCount: booksWithCovers.length.clamp(0, 4),
       itemBuilder: (context, index) {
-        return Image.file(
-          File(booksWithCovers[index].metadata!.thumbnailUrl),
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => Container(
+        return Container(
+          decoration: BoxDecoration(
             color: Colors.grey[800],
-            child: Icon(
-              Icons.headphones,
-              size: 24,
-              color: Colors.grey[600],
+          ),
+          child: Image.file(
+            File(booksWithCovers[index].metadata!.thumbnailUrl),
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: Colors.grey[800],
+              child: Icon(
+                Icons.headphones,
+                size: 24,
+                color: Colors.grey[600],
+              ),
             ),
           ),
         );

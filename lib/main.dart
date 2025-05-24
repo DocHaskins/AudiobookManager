@@ -2,9 +2,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:just_audio_background/just_audio_background.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:metadata_god/metadata_god.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/directory_scanner.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
@@ -45,54 +45,78 @@ void main() async {
   Logger.logDeviceInfo();
   
   // Check for platform-specific initialization requirements
-  bool backgroundAudioInitialized = false;
+  bool audioInitialized = false;
   
-  if (Platform.isWindows) {
-    Logger.log('Windows platform detected - preparing platform-specific audio handling');
+  try {
+    Logger.log('Initializing audioplayers for platform: ${Platform.operatingSystem}');
     
-    // Skip background audio initialization for Windows
-    backgroundAudioInitialized = true;
-
-    // Install error handler for plugin errors
-    FlutterError.onError = (FlutterErrorDetails details) {
-      Logger.error('Flutter Error', details.exception, details.stack);
+    // For Windows, we need to be more careful with initialization
+    if (Platform.isWindows) {
+      Logger.log('Windows platform detected - initializing with minimal configuration');
       
-      // Check for plugin exceptions that we want to handle gracefully
-      if (details.exception.toString().contains('MissingPluginException') &&
-          details.exception.toString().contains('just_audio')) {
-        Logger.warning('Caught just_audio plugin exception - this is expected on Windows and will be handled');
-        return; // Don't propagate this specific error
-      }
+      // On Windows, don't try to set global audio context immediately
+      // Let individual AudioPlayer instances handle their own initialization
+      audioInitialized = true;
+      Logger.log('Windows audioplayers setup completed');
       
-      // Let Flutter handle other errors normally
-      FlutterError.presentError(details);
-    };
-    
-    Logger.log('Windows-specific error handlers installed');
-  } else {
-    // Initialize background audio on supported platforms
-    try {
-      Logger.log('Initializing JustAudioBackground on non-Windows platform');
-      
-      await JustAudioBackground.init(
-        androidNotificationChannelId: 'com.yourcompany.audiobook_organizer.audio',
-        androidNotificationChannelName: 'Audiobook playback',
-        androidNotificationOngoing: true,
-        fastForwardInterval: const Duration(seconds: 30),
-        rewindInterval: const Duration(seconds: 10),
-        notificationColor: const Color(0xFF2196F3),
+    } else if (Platform.isAndroid) {
+      // For Android, configure audio focus and session
+      AudioPlayer.global.setAudioContext(
+        AudioContext(
+          android: const AudioContextAndroid(
+            isSpeakerphoneOn: false,
+            audioMode: AndroidAudioMode.normal,
+            stayAwake: true,
+            contentType: AndroidContentType.music,
+            usageType: AndroidUsageType.media,
+            audioFocus: AndroidAudioFocus.gain,
+          ),
+        ),
       );
+      audioInitialized = true;
+      Logger.log('Android audio context configured');
       
-      backgroundAudioInitialized = true;
-      Logger.log('JustAudioBackground initialized successfully');
-    } catch (e, stack) {
-      Logger.error('Error initializing background audio services', e, stack);
-      // Continue without background audio
+    } else if (Platform.isIOS) {
+      // For iOS, configure audio session
+      AudioPlayer.global.setAudioContext(
+        AudioContext(
+          iOS: AudioContextIOS(
+            category: AVAudioSessionCategory.playback,
+            options: const {
+              AVAudioSessionOptions.defaultToSpeaker,
+              AVAudioSessionOptions.mixWithOthers,
+            },
+          ),
+        ),
+      );
+      audioInitialized = true;
+      Logger.log('iOS audio context configured');
     }
+    
+    Logger.log('Audioplayers initialization completed successfully');
+  } catch (e, stack) {
+    Logger.error('Error initializing audio services', e, stack);
+    // Continue anyway - individual players will try to initialize themselves
+    audioInitialized = true;
+    Logger.warning('Audio initialization had issues but continuing');
   }
   
-  if (!backgroundAudioInitialized) {
-    Logger.warning('Background audio initialization failed or skipped - some features may be limited');
+  // Install global error handler for better debugging
+  FlutterError.onError = (FlutterErrorDetails details) {
+    Logger.error('Flutter Error', details.exception, details.stack);
+    
+    // Check for plugin exceptions that we want to handle gracefully
+    if (details.exception.toString().contains('MissingPluginException')) {
+      Logger.warning('Caught plugin exception - this may be expected: ${details.exception}');
+      return; // Don't propagate plugin errors that we can handle
+    }
+    
+    // Let Flutter handle other errors normally
+    FlutterError.presentError(details);
+  };
+  
+  if (!audioInitialized) {
+    Logger.warning('Audio initialization had issues - some features may be limited');
   }
   
   // Start the app
@@ -210,7 +234,7 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
       _libraryManager.collectionManager = _collectionManager;
       Logger.debug('CollectionManager initialized');
       
-      // Initialize audio player service with platform check
+      // Initialize audio player service
       setState(() {
         _initStatus = 'Initializing audio player...';
       });

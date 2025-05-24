@@ -1,9 +1,11 @@
 name: audiobook_organizer
 description: An audiobook organizer and player with metadata management.
+publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ">=2.18.0 <3.0.0"
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: ">=3.10.0"
 
 dependencies:
   flutter:
@@ -11,27 +13,25 @@ dependencies:
   
   # UI
   cupertino_icons: ^1.0.5
-  google_fonts: ^4.0.4
-  flutter_slidable: ^3.0.0
   
+  flutter_slidable: ^3.0.0
+  google_fonts: ^6.2.1
   # State management
-  provider: ^6.0.5
+  provider: ^6.1.1
+  
   
   # File handling
-  path_provider: ^2.0.15
-  file_picker: ^5.3.2
+  path_provider: ^2.1.1
+  file_picker: ^6.1.1
   path: ^1.8.3
   
   # Metadata handling
-  http: ^0.13.6
   uuid: ^4.5.1
   image_picker: ^0.8.7+5
   cached_network_image: ^3.3.0 
 
   # Audio playback
-  just_audio: ^0.10.2
-  just_audio_background: ^0.0.1-beta.17
-  just_audio_media_kit: ^0.0.1
+  audioplayers: ^6.1.0
   audio_session: ^0.1.16
   rxdart: ^0.27.7
   flutter_media_metadata: ^1.0.0 
@@ -45,7 +45,9 @@ dependencies:
   shared_preferences: ^2.1.2
   url_launcher: ^6.1.10
   flutter_html: ^3.0.0
-
+  mime: ^1.0.4
+  http: ^1.1.0
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -1,17 +1,17 @@
 // lib/services/audio_player_service.dart
 import 'dart:async';
 import 'dart:io';
-import 'package:just_audio/just_audio.dart';
+import 'package:audioplayers/audioplayers.dart' as audioplayers;
 import 'package:uuid/uuid.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
-/// Service for playing audiobooks with improved Windows compatibility
+/// Service for playing audiobooks with improved Windows compatibility using audioplayers
 class AudioPlayerService {
   // Player instance
-  AudioPlayer? _player;
+  audioplayers.AudioPlayer? _player;
   bool _isWindowsPlatform = false;
   bool _isPlayerInitialized = false;
   
@@ -71,32 +71,23 @@ class AudioPlayerService {
   void _initPlayer() {
     try {
       _isWindowsPlatform = Platform.isWindows;
-      Logger.log('Initializing audio player (Platform: ${Platform.operatingSystem}, Windows: $_isWindowsPlatform)');
+      Logger.log('Initializing audio player with audioplayers (Platform: ${Platform.operatingSystem})');
       
-      // Create player instance with catch for Windows
-      try {
-        _player = AudioPlayer();
-        Logger.debug('AudioPlayer instance created successfully');
-      } catch (e) {
-        Logger.error('Error creating AudioPlayer instance', e);
-        // We'll continue with null player and handle it in play/pause methods
-      }
+      // Create player instance
+      _player = audioplayers.AudioPlayer();
+      Logger.debug('AudioPlayer instance created successfully');
       
-      if (!_isWindowsPlatform && _player != null) {
-        // For non-Windows platforms, set up standard stream forwarding
-        _setupStreamForwarding();
-        Logger.log('Standard audio streams forwarded successfully');
-      } else {
-        // For Windows, set up periodic position updates
-        _positionUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
-          if (_player != null && _isPlayerInitialized && _playing) {
-            _updatePositionState();
-          }
-        });
-        Logger.log('Windows-specific position update timer initialized');
-      }
+      // Set up event listeners
+      _setupEventListeners();
       
-      // FIXED: Reduced frequency of progress saving
+      // Set up periodic position updates (needed for all platforms with audioplayers)
+      _positionUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
+        if (_player != null && _isPlayerInitialized && _playing) {
+          _updatePositionState();
+        }
+      });
+      
+      // Set up periodic progress saving (reduced frequency)
       _saveProgressTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
         _savePlaybackState();
       });
@@ -105,157 +96,99 @@ class AudioPlayerService {
       Logger.log('Audio player initialized successfully');
     } catch (e, stackTrace) {
       Logger.error('Error initializing audio player', e, stackTrace);
-      // Create a fallback implementation for streams if initialization failed
-      _createFallbackStreams();
+      // Create fallback - mark as initialized but player will be null
+      _isPlayerInitialized = false;
     }
   }
   
-  // Set up standard stream forwarding
-  void _setupStreamForwarding() {
+  // Set up event listeners for audioplayers
+  void _setupEventListeners() {
     if (_player == null) return;
     
-    Logger.debug('Setting up stream forwarding for audio player');
+    Logger.debug('Setting up event listeners for audioplayers');
     
-    // Forward player streams to our controllers
-    _player!.playerStateStream.listen((state) {
-      _playing = state.playing;
-      _playerStateController.add(state);
-      Logger.debug('Player state changed: playing=${state.playing}, state=${state.processingState}');
-    }, onError: (e) => Logger.error('Error in playerStateStream', e));
+    // Player state changes
+    _player!.onPlayerStateChanged.listen((state) {
+      _playing = state == audioplayers.PlayerState.playing;
+      _playerStateController.add(_convertPlayerState(state));
+      Logger.debug('Player state changed: $state');
+    }, onError: (e) => Logger.error('Error in player state stream', e));
     
-    // FIXED: Add throttling to position stream
-    _player!.positionStream.listen((position) {
+    // Position changes
+    _player!.onPositionChanged.listen((position) {
       if (position.inMilliseconds < 0 || !position.inMilliseconds.isFinite) {
-        Logger.warning('Received invalid position from player: $position, ignoring');
+        Logger.warning('Received invalid position: $position, ignoring');
         return;
       }
       
       _currentPosition = position;
       _positionController.add(position);
       
-      // FIXED: Throttle metadata updates
+      // Throttle metadata updates
       if (_currentFile != null && position.inSeconds > 0) {
         _updateFilePlaybackPositionThrottled(position);
       }
-    }, onError: (e) => Logger.error('Error in positionStream', e));
+    }, onError: (e) => Logger.error('Error in position stream', e));
     
-    _player!.durationStream.listen((duration) {
-      if (duration != null && (duration.inMilliseconds < 0 || !duration.inMilliseconds.isFinite)) {
-        Logger.warning('Received invalid duration from player: $duration, ignoring');
+    // Duration changes
+    _player!.onDurationChanged.listen((duration) {
+      if (duration.inMilliseconds < 0 || !duration.inMilliseconds.isFinite) {
+        Logger.warning('Received invalid duration: $duration, ignoring');
         return;
       }
       
       _totalDuration = duration;
       _durationController.add(duration);
       Logger.debug('Duration updated: $duration');
-    }, onError: (e) => Logger.error('Error in durationStream', e));
+    }, onError: (e) => Logger.error('Error in duration stream', e));
     
-    _player!.volumeStream.listen((volume) {
-      _volume = volume;
-      _volumeController.add(volume);
-    }, onError: (e) => Logger.error('Error in volumeStream', e));
-    
-    _player!.speedStream.listen((speed) {
-      _speed = speed;
-      _speedController.add(speed);
-    }, onError: (e) => Logger.error('Error in speedStream', e));
-    
-    // Set up playback completion handling
-    _player!.processingStateStream.listen((state) {
-      Logger.debug('Processing state changed: $state');
-      if (state == ProcessingState.completed && _currentFile != null) {
-        Logger.log('Playback completed for file: ${_currentFile!.path}');
-        // Mark as completed
+    // Playback completion
+    _player!.onPlayerComplete.listen((_) {
+      Logger.log('Playback completed for file: ${_currentFile?.path}');
+      if (_currentFile != null) {
         _storageManager.updateUserData(
           _currentFile!.path,
           playbackPosition: Duration.zero,
           lastPlayedPosition: DateTime.now(),
         );
       }
-    }, onError: (e) => Logger.error('Error in processingStateStream', e));
+      _playing = false;
+      _playerStateController.add(_convertPlayerState(audioplayers.PlayerState.completed));
+    }, onError: (e) => Logger.error('Error in completion stream', e));
   }
   
-  // Update position manually (for Windows)
-  void _updatePositionState() {
-    if (_player == null) return;
+  // Convert audioplayers PlayerState to your PlayerState format
+  PlayerState _convertPlayerState(audioplayers.PlayerState state) {
+    bool playing = state == audioplayers.PlayerState.playing;
+    ProcessingState processingState;
     
-    try {
-      // Get current position safely
-      Duration position;
-      try {
-        position = _player!.position;
-        // Guard against invalid position values - improved validation
-        if (position.inMilliseconds < 0 || 
-            !position.inMilliseconds.isFinite ||
-            position.inMilliseconds.isNaN ||
-            position.inMilliseconds.isInfinite) {
-          Logger.warning('Invalid position detected: $position, using previous position instead');
-          position = _currentPosition; // Use previous valid position
-        }
-      } catch (e) {
-        Logger.warning('Error getting player position', e);
-        position = _currentPosition; // Use previous valid position
-      }
-      
-      _currentPosition = position;
-      _positionController.add(_currentPosition);
-      
-      // FIXED: Throttle metadata updates
-      if (_currentFile != null && _currentPosition.inSeconds > 0) {
-        _updateFilePlaybackPositionThrottled(_currentPosition);
-      }
-      
-      // Get duration safely
-      Duration? duration;
-      try {
-        duration = _player!.duration;
-        // Guard against invalid duration values - improved validation
-        if (duration != null && 
-            (duration.inMilliseconds < 0 || 
-             !duration.inMilliseconds.isFinite ||
-             duration.inMilliseconds.isNaN || 
-             duration.inMilliseconds.isInfinite)) {
-          Logger.warning('Invalid duration detected: $duration, using previous duration instead');
-          duration = _totalDuration; // Use previous valid duration
-        }
-      } catch (e) {
-        Logger.warning('Error getting player duration', e);
-        duration = _totalDuration; // Use previous valid duration
-      }
-      
-      if (duration != null) {
-        _totalDuration = duration;
-        _durationController.add(duration);
-      }
-      
-      // Check for playback completion
-      if (_totalDuration != null && _currentPosition.inMilliseconds > 0 &&
-          _currentPosition.inMilliseconds >= _totalDuration!.inMilliseconds - 500) {
-        Logger.log('Playback completed (detected manually) for file: ${_currentFile?.path}');
-        // Mark as completed
-        if (_currentFile != null) {
-          _storageManager.updateUserData(
-            _currentFile!.path,
-            playbackPosition: Duration.zero,
-            lastPlayedPosition: DateTime.now(),
-          );
-        }
-        
-        // Update state (FIXED: Correct order - playing first, then processingState)
-        _playing = false;
-        final currentProcessingState = _player!.processingState;
-        _playerStateController.add(PlayerState(false, currentProcessingState));
-      }
-    } catch (e) {
-      Logger.error('Error updating position state', e);
+    switch (state) {
+      case audioplayers.PlayerState.stopped:
+        processingState = ProcessingState.idle;
+        break;
+      case audioplayers.PlayerState.playing:
+        processingState = ProcessingState.ready;
+        break;
+      case audioplayers.PlayerState.paused:
+        processingState = ProcessingState.ready;
+        break;
+      case audioplayers.PlayerState.completed:
+        processingState = ProcessingState.completed;
+        break;
+      case audioplayers.PlayerState.disposed:
+        processingState = ProcessingState.idle;
+        break;
     }
+    
+    return PlayerState(playing, processingState);
   }
   
-  // Create fallback streams if player initialization fails
-  void _createFallbackStreams() {
-    Logger.warning('Creating fallback stream implementations');
-    // We'll just create controllers that never emit anything
-    // but at least they won't crash
+  // Update position manually
+  void _updatePositionState() {
+    if (_player == null || !_playing) return;
+    
+    // Position updates are handled by the onPositionChanged stream
+    // This method can be used for additional state management if needed
   }
   
   // Save current playback state
@@ -266,14 +199,13 @@ class AudioPlayerService {
     await _updateFilePlaybackPosition(position);
   }
   
-  // FIXED: Add throttled version of position update
+  // Throttled version of position update
   void _updateFilePlaybackPositionThrottled(Duration position) {
     final now = DateTime.now();
     
-    // Check if enough time has passed since last update
     if (_lastMetadataUpdate != null && 
         now.difference(_lastMetadataUpdate!) < _metadataUpdateThrottle) {
-      return; // Skip this update
+      return;
     }
     
     _lastMetadataUpdate = now;
@@ -284,7 +216,6 @@ class AudioPlayerService {
   Future<void> _updateFilePlaybackPosition(Duration position) async {
     if (_currentFile == null) return;
     
-    // Guard against invalid positions - improved validation
     if (!position.inMilliseconds.isFinite || 
         position.inMilliseconds.isNaN || 
         position.inMilliseconds.isInfinite || 
@@ -293,7 +224,7 @@ class AudioPlayerService {
       return;
     }
     
-    // FIXED: Only save significant changes (more than 10 seconds instead of 2)
+    // Only save significant changes (more than 10 seconds)
     final currentMetadata = _currentFile!.metadata;
     if (currentMetadata != null) {
       final currentPosition = currentMetadata.playbackPosition;
@@ -315,7 +246,6 @@ class AudioPlayerService {
     }
   }
   
-  // FIXED: Enhanced audio loading with better error handling for Windows
   Future<bool> play(AudiobookFile file) async {
     try {
       Logger.log('Playing audiobook: ${file.path}');
@@ -325,7 +255,7 @@ class AudioPlayerService {
         await _savePlaybackState();
       }
       
-      // Reset state variables first to avoid UI showing incorrect info
+      // Reset state variables first
       _currentPosition = Duration.zero;
       _totalDuration = null;
       
@@ -338,7 +268,7 @@ class AudioPlayerService {
         return false;
       }
       
-      // FIXED: Validate file is actually an audio file
+      // Validate file is actually an audio file
       if (!_isValidAudioFile(file.path)) {
         Logger.error('File is not a valid audio file: ${file.path}');
         return false;
@@ -346,120 +276,77 @@ class AudioPlayerService {
       
       if (_player == null) {
         Logger.log('Audio player is null, attempting to recreate');
-        try {
-          _player = AudioPlayer();
-          _isPlayerInitialized = true;
-          // Set up forwarding even for Windows in this case
-          _setupStreamForwarding();
-        } catch (e) {
-          Logger.error('Failed to recreate AudioPlayer', e);
-          return false;
-        }
+        _player = audioplayers.AudioPlayer();
+        _setupEventListeners();
+        _isPlayerInitialized = true;
       }
       
-      // Windows-specific handling
-      String safePath = file.path;
-      if (_isWindowsPlatform) {
-        // Ensure the path is properly formatted for Windows
-        safePath = safePath.replaceAll('\\', '/');
-        Logger.debug('Windows path formatted to: $safePath');
-      }
-      
-      // FIXED: Enhanced file loading with better error recovery
+      // Load audio file using audioplayers
       bool loadSuccess = false;
-      Exception? lastError;
       
-      // Try multiple methods to load the file
       try {
-        Logger.debug('Attempting to load audio via setFilePath');
-        await _player!.setFilePath(safePath);
-        Logger.log('Loaded audio file with setFilePath');
-        loadSuccess = true;
-      } catch (e) {
-        lastError = e as Exception;
-        Logger.warning('Failed to load audio with setFilePath', e);
-        
-        try {
-          Logger.debug('Attempting to load audio via AudioSource.file');
-          await _player!.setAudioSource(AudioSource.file(safePath));
-          Logger.log('Loaded audio file with AudioSource.file');
-          loadSuccess = true;
-        } catch (e) {
-          lastError = e as Exception;
-          Logger.warning('Failed to load audio with AudioSource.file', e);
-          
-          // Try one final method for Windows
-          if (_isWindowsPlatform) {
+        // For Windows, try different approaches
+        if (_isWindowsPlatform) {
+          try {
+            // Method 1: Direct file path
+            await _player!.setSourceDeviceFile(file.path);
+            loadSuccess = true;
+            Logger.debug('Successfully loaded with setSourceDeviceFile');
+          } catch (e) {
+            Logger.debug('setSourceDeviceFile failed: $e');
+            
+            // Method 2: URL source
             try {
-              Logger.debug('Attempting to load audio via Uri parsing (Windows)');
-              final uri = Uri.file(safePath);
-              await _player!.setUrl(uri.toString());
-              Logger.log('Loaded audio file with setUrl');
+              final uri = Uri.file(file.path);
+              await _player!.setSourceUrl(uri.toString());
               loadSuccess = true;
+              Logger.debug('Successfully loaded with setSourceUrl');
             } catch (e) {
-              lastError = e as Exception;
-              Logger.error('All loading methods failed', e);
+              Logger.debug('setSourceUrl failed: $e');
             }
           }
+        } else {
+          // For non-Windows platforms
+          await _player!.setSourceDeviceFile(file.path);
+          loadSuccess = true;
         }
+      } catch (e) {
+        Logger.error('Error loading audio file', e);
       }
       
       if (!loadSuccess) {
-        Logger.error('Failed to load audio file after all attempts', lastError);
+        Logger.error('Failed to load audio file with all methods attempted');
         return false;
       }
       
-      // Set current file and notify listeners BEFORE continuing with setup
+      // Set current file and notify listeners
       _currentFile = file;
       _fileChangeController.add(file);
       
       // Get metadata to restore position
       final metadata = file.metadata;
       
+      // Start playback first, then seek if needed
+      await _player!.resume();
+      _playing = true;
+      
       // Resume from last position if available
       if (metadata?.playbackPosition != null) {
         try {
-          // Validate the position before seeking
           final position = metadata!.playbackPosition!;
-          if (position.inMilliseconds > 0 && 
-              position.inMilliseconds.isFinite) {
-            
-            // Add a small delay to ensure the audio is properly loaded before seeking
-            await Future.delayed(const Duration(milliseconds: 500)); // Increased delay
+          if (position.inMilliseconds > 0 && position.inMilliseconds.isFinite) {
+            await Future.delayed(const Duration(milliseconds: 1000));
             await _player!.seek(position);
             _currentPosition = position;
             _positionController.add(position);
             Logger.log('Resumed from position: $position');
-          } else {
-            Logger.warning('Invalid saved position: $position, starting from beginning');
           }
         } catch (e) {
           Logger.error('Error seeking to saved position', e);
-          // Continue playing even if seeking fails
         }
       }
       
-      // Get total duration (might be async)
-      _player!.durationStream.first.then((duration) {
-        if (duration != null && duration.inMilliseconds > 0 && duration.inMilliseconds.isFinite) {
-          _totalDuration = duration;
-          _durationController.add(duration);
-          Logger.debug('Total duration detected: $duration');
-        }
-      }).catchError((e) {
-        Logger.error('Error getting duration', e);
-        return null;
-      });
-      
-      // Start playback
-      await _player!.play();
-      _playing = true;
-      
-      // FIXED: Correct order - playing first, then processingState
-      _playerStateController.add(PlayerState(true, _player!.processingState));
-      
-      Logger.log('Playback started successfully for: ${file.filename}');
-      
+      Logger.log('Playbook started successfully for: ${file.filename}');
       return true;
     } catch (e, stackTrace) {
       Logger.error('Error playing audiobook: ${file.path}', e, stackTrace);
@@ -467,7 +354,7 @@ class AudioPlayerService {
     }
   }
   
-  // FIXED: Add file validation
+  // File validation
   bool _isValidAudioFile(String filePath) {
     const validExtensions = ['.mp3', '.m4a', '.m4b', '.aac', '.ogg', '.wma', '.flac', '.opus'];
     final extension = filePath.toLowerCase().substring(filePath.lastIndexOf('.'));
@@ -476,18 +363,15 @@ class AudioPlayerService {
       return false;
     }
     
-    // Additional check for file size (should be > 1KB for valid audio)
     try {
       final file = File(filePath);
       final size = file.lengthSync();
-      return size > 1024; // Must be larger than 1KB
+      return size > 1024;
     } catch (e) {
       Logger.error('Error checking file size: $filePath', e);
       return false;
     }
   }
-  
-  // ... (rest of the methods remain the same as in your original code)
   
   // Pause playback
   Future<void> pause() async {
@@ -496,12 +380,7 @@ class AudioPlayerService {
       if (_player != null && _isPlayerInitialized) {
         await _player!.pause();
         _playing = false;
-        
-        // FIXED: Correct order - playing first, then processingState
-        _playerStateController.add(PlayerState(false, _player!.processingState));
       }
-      
-      // Save current position
       await _savePlaybackState();
       Logger.debug('Playback paused, state saved');
     } catch (e) {
@@ -514,11 +393,8 @@ class AudioPlayerService {
     try {
       Logger.debug('Resuming playback');
       if (_player != null && _isPlayerInitialized) {
-        await _player!.play();
+        await _player!.resume();
         _playing = true;
-        
-        // FIXED: Correct order - playing first, then processingState
-        _playerStateController.add(PlayerState(true, _player!.processingState));
       }
       Logger.debug('Playback resumed');
     } catch (e) {
@@ -531,25 +407,16 @@ class AudioPlayerService {
     try {
       Logger.debug('Stopping playback');
       
-      // Save final position
       await _savePlaybackState();
       
       if (_player != null && _isPlayerInitialized) {
         await _player!.stop();
         _playing = false;
-        
-        // FIXED: Correct order - playing first, then processingState
-        _playerStateController.add(PlayerState(false, _player!.processingState));
       }
-      
-      // Clear the current file and notify listeners
-      AudiobookFile? oldFile = _currentFile;
+
       _currentFile = null;
-      if (oldFile != null) {
-        _fileChangeController.add(null);
-      }
+      _fileChangeController.add(null);
       
-      // Cancel sleep timer
       cancelSleepTimer();
       Logger.debug('Playback stopped completely');
     } catch (e) {
@@ -560,7 +427,6 @@ class AudioPlayerService {
   // Seek to position
   Future<void> seekTo(Duration position) async {
     try {
-      // Improved validation
       if (!position.inMilliseconds.isFinite || 
           position.inMilliseconds.isNaN || 
           position.inMilliseconds.isInfinite || 
@@ -571,16 +437,9 @@ class AudioPlayerService {
       
       Logger.debug('Seeking to position: $position');
       if (_player != null && _isPlayerInitialized) {
-        // For Windows, add a small delay to ensure the audio is properly loaded
-        if (_isWindowsPlatform) {
-          await Future.delayed(const Duration(milliseconds: 100));
-        }
-        
         await _player!.seek(position);
         _currentPosition = position;
         _positionController.add(position);
-        
-        // Force save position after seeking
         await _updateFilePlaybackPosition(position);
       }
     } catch (e) {
@@ -613,7 +472,6 @@ class AudioPlayerService {
   // Set playback speed
   Future<void> setSpeed(double speed) async {
     try {
-      // Improved validation
       if (!speed.isFinite || speed <= 0) {
         Logger.warning('Invalid speed value: $speed, using 1.0 instead');
         speed = 1.0;
@@ -621,7 +479,7 @@ class AudioPlayerService {
       
       Logger.debug('Setting playback speed to $speed');
       if (_player != null && _isPlayerInitialized) {
-        await _player!.setSpeed(speed);
+        await _player!.setPlaybackRate(speed);
         _speed = speed;
         _speedController.add(speed);
       }
@@ -633,7 +491,6 @@ class AudioPlayerService {
   // Set volume
   Future<void> setVolume(double volume) async {
     try {
-      // Improved validation
       if (!volume.isFinite || volume < 0 || volume > 1) {
         Logger.warning('Invalid volume value: $volume, clamping to valid range');
         volume = volume.clamp(0.0, 1.0);
@@ -652,13 +509,11 @@ class AudioPlayerService {
   
   // Set sleep timer
   void setSleepTimer(Duration duration) {
-    // Cancel existing timer if any
     if (_sleepTimer != null) {
       _sleepTimer!.cancel();
       _sleepTimer = null;
     }
     
-    // Set new timer
     _sleepTimerDuration = duration;
     _sleepTimer = Timer(duration, () {
       pause();
@@ -666,9 +521,7 @@ class AudioPlayerService {
       _sleepTimerController.add(null);
     });
     
-    // Notify listeners
     _sleepTimerController.add(duration);
-    
     Logger.log('Sleep timer set for ${duration.inMinutes} minutes');
   }
   
@@ -712,7 +565,6 @@ class AudioPlayerService {
       final success = await _storageManager.addBookmark(_currentFile!.path, bookmark);
       
       if (success) {
-        // Reload metadata
         _currentFile!.metadata = await _storageManager.getMetadataForFile(_currentFile!.path);
         Logger.log('Added bookmark at ${position.toString()} with title: $title');
         return bookmark;
@@ -734,7 +586,6 @@ class AudioPlayerService {
       final success = await _storageManager.removeBookmark(_currentFile!.path, bookmarkId);
       
       if (success) {
-        // Reload metadata
         _currentFile!.metadata = await _storageManager.getMetadataForFile(_currentFile!.path);
         Logger.log('Removed bookmark: $bookmarkId');
         return true;
@@ -760,25 +611,13 @@ class AudioPlayerService {
     }
   }
   
-  // Check if currently playing
+  // Getters
   bool get isPlaying => _playing;
-  
-  // Get current position
   Duration get currentPosition => _currentPosition;
-  
-  // Get total duration
   Duration? get totalDuration => _totalDuration;
-  
-  // Get current speed
   double get currentSpeed => _speed;
-  
-  // Get current volume
   double get currentVolume => _volume;
-  
-  // Get current file
   AudiobookFile? get currentFile => _currentFile;
-  
-  // Get sleep timer status
   bool get isSleepTimerActive => _sleepTimer != null;
   
   // Dispose resources
@@ -813,4 +652,20 @@ class AudioPlayerService {
     _player = null;
     _isPlayerInitialized = false;
   }
+}
+
+// Helper classes to maintain compatibility
+class PlayerState {
+  final bool playing;
+  final ProcessingState processingState;
+  
+  PlayerState(this.playing, this.processingState);
+}
+
+enum ProcessingState {
+  idle,
+  loading,
+  buffering,
+  ready,
+  completed,
 }

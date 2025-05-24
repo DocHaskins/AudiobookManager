@@ -179,15 +179,29 @@ class AudiobookListItem extends StatelessWidget {
         }
       } else {
         // If this is a different book, start playing it
-        await playerService.play(book);
+        final success = await playerService.play(book);
+        if (!success) {
+          // Show error if play failed
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Failed to play audiobook'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error playing audiobook: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      // Show error message
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error playing audiobook: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 }

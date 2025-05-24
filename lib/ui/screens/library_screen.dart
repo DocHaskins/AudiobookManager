@@ -1,14 +1,14 @@
-// lib/screens/library_screen.dart
+// lib/ui/screens/library_screen.dart - Updated to work better with mini-player
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/collection.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/collection_manager.dart';
-import '../widgets/audiobook_grid_item.dart';
-import '../widgets/audiobook_list_item.dart';
-import '../widgets/collection_grid_item.dart';
-import '../widgets/collection_detail_view.dart';
-import '../widgets/audiobook_detail_view.dart';
+import 'package:audiobook_organizer/ui/widgets/audiobook_grid_item.dart';
+import 'package:audiobook_organizer/ui/widgets/audiobook_list_item.dart';
+import 'package:audiobook_organizer/ui/widgets/collection_grid_item.dart';
+import 'package:audiobook_organizer/ui/widgets/collection_detail_view.dart';
+import 'package:audiobook_organizer/ui/widgets/audiobook_detail_view.dart';
 
 class LibraryScreen extends StatefulWidget {
   final LibraryManager libraryManager;
@@ -470,45 +470,55 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
     }
 
-    return _isGridView
-        ? GridView.builder(
-            padding: const EdgeInsets.all(24),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 5,
-              childAspectRatio: 0.7,
-              crossAxisSpacing: 20,
-              mainAxisSpacing: 20,
-            ),
-            itemCount: _filteredBooks.length,
-            itemBuilder: (context, index) {
-              final book = _filteredBooks[index];
-              return AudiobookGridItem(
-                book: book,
-                onTap: () => _navigateToDetail(
-                  AudiobookDetailView(
-                    book: book,
-                    libraryManager: widget.libraryManager,
-                  ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Simple calculation: fixed item width + spacing
+        const double itemWidth = 200;  // Fixed width for each book
+        const double spacing = 20;
+        
+        // Calculate how many items fit across the width
+        final int crossAxisCount = ((constraints.maxWidth + spacing) / (itemWidth + spacing)).floor().clamp(1, 20);
+        
+        return GridView.builder(
+          padding: const EdgeInsets.all(24),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            childAspectRatio: 0.67, // 200 width / 300 height
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: spacing,
+          ),
+          itemCount: _filteredBooks.length,
+          itemBuilder: (context, index) {
+            final book = _filteredBooks[index];
+            return AudiobookGridItem(
+              book: book,
+              onTap: () => _navigateToDetail(
+                AudiobookDetailView(
+                  book: book,
+                  libraryManager: widget.libraryManager,
                 ),
-              );
-            },
-          )
-        : ListView.builder(
-            padding: const EdgeInsets.all(24),
-            itemCount: _filteredBooks.length,
-            itemBuilder: (context, index) {
-              final book = _filteredBooks[index];
-              return AudiobookListItem(
-                book: book,
-                onTap: () => _navigateToDetail(
-                  AudiobookDetailView(
-                    book: book,
-                    libraryManager: widget.libraryManager,
-                  ),
-                ),
-              );
-            },
-          );
+              ),
+              onFavoriteTap: () => _toggleFavorite(book),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _toggleFavorite(AudiobookFile book) async {
+    if (book.metadata != null) {
+      final success = await widget.libraryManager.updateUserData(
+        book,
+        isFavorite: !book.metadata!.isFavorite,
+      );
+      
+      if (success) {
+        setState(() {
+          _updateFilteredData();
+        });
+      }
+    }
   }
 
   Widget _buildCollectionsView() {
@@ -535,35 +545,46 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
     }
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(24),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 4,
-        childAspectRatio: 1,
-        crossAxisSpacing: 20,
-        mainAxisSpacing: 20,
-      ),
-      itemCount: _filteredCollections.length,
-      itemBuilder: (context, index) {
-        final collection = _filteredCollections[index];
-        final books = widget.libraryManager.getBooksForCollection(collection);
-        return CollectionGridItem(
-          collection: collection,
-          books: books,
-          onTap: () => _navigateToDetail(
-            CollectionDetailView(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Simple calculation for collection grid: fixed item width
+        const double itemWidth = 200;  // Fixed width for each collection
+        const double spacing = 20;
+        
+        // Calculate how many items fit across the width
+        final int crossAxisCount = ((constraints.maxWidth + spacing) / (itemWidth + spacing)).floor().clamp(1, 20);
+        
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 100), // Keep bottom padding for mini-player
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount, // Now responsive!
+            childAspectRatio: 0.8, // Slightly taller for collections
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: spacing,
+          ),
+          itemCount: _filteredCollections.length,
+          itemBuilder: (context, index) {
+            final collection = _filteredCollections[index];
+            final books = widget.libraryManager.getBooksForCollection(collection);
+            return CollectionGridItem(
               collection: collection,
               books: books,
-              libraryManager: widget.libraryManager,
-              collectionManager: widget.collectionManager,
-              onBookTap: (book) => _navigateToDetail(
-                AudiobookDetailView(
-                  book: book,
+              onTap: () => _navigateToDetail(
+                CollectionDetailView(
+                  collection: collection,
+                  books: books,
                   libraryManager: widget.libraryManager,
+                  collectionManager: widget.collectionManager,
+                  onBookTap: (book) => _navigateToDetail(
+                    AudiobookDetailView(
+                      book: book,
+                      libraryManager: widget.libraryManager,
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );

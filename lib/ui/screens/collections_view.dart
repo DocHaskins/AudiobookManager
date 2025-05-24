@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/collection.dart';
 import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
-import '../widgets/collection_card.dart';
+import '../widgets/collection_grid_item.dart';
 import 'collection_detail_screen.dart';
 
 class CollectionsView extends StatefulWidget {
@@ -63,19 +63,19 @@ class _CollectionsViewState extends State<CollectionsView>
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('Collections'),
+        title: const Text('Collections'),
         elevation: 0,
         actions: [
           // Filter button
           PopupMenuButton<CollectionType?>(
-            icon: Icon(Icons.filter_list),
+            icon: const Icon(Icons.filter_list),
             onSelected: (type) {
               setState(() {
                 _filterType = type;
               });
             },
             itemBuilder: (context) => [
-              PopupMenuItem(
+              const PopupMenuItem(
                 value: null,
                 child: Row(
                   children: [
@@ -85,8 +85,8 @@ class _CollectionsViewState extends State<CollectionsView>
                   ],
                 ),
               ),
-              PopupMenuDivider(),
-              PopupMenuItem(
+              const PopupMenuDivider(),
+              const PopupMenuItem(
                 value: CollectionType.series,
                 child: Row(
                   children: [
@@ -96,7 +96,7 @@ class _CollectionsViewState extends State<CollectionsView>
                   ],
                 ),
               ),
-              PopupMenuItem(
+              const PopupMenuItem(
                 value: CollectionType.custom,
                 child: Row(
                   children: [
@@ -110,23 +110,23 @@ class _CollectionsViewState extends State<CollectionsView>
           ),
           // Add collection button
           IconButton(
-            icon: Icon(Icons.add),
+            icon: const Icon(Icons.add),
             onPressed: _showCreateCollectionDialog,
             tooltip: 'Create Collection',
           ),
         ],
         bottom: PreferredSize(
-          preferredSize: Size.fromHeight(60),
+          preferredSize: const Size.fromHeight(60),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
                 hintText: 'Search collections...',
-                prefixIcon: Icon(Icons.search),
+                prefixIcon: const Icon(Icons.search),
                 suffixIcon: _searchQuery.isNotEmpty
                     ? IconButton(
-                        icon: Icon(Icons.clear),
+                        icon: const Icon(Icons.clear),
                         onPressed: () {
                           setState(() {
                             _searchController.clear();
@@ -189,31 +189,94 @@ class _CollectionsViewState extends State<CollectionsView>
                     ],
                   ),
                 ),
-              // Collections grid
+              // Collections grid with responsive layout
               Expanded(
-                child: CollectionGridView(
-                  collections: filteredCollections,
-                  allBooks: widget.libraryManager.files,
-                  onCollectionTap: (collection) {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => CollectionDetailScreen(
-                          collection: collection,
-                          collectionManager: widget.collectionManager,
-                          libraryManager: widget.libraryManager,
-                        ),
-                      ),
-                    );
-                  },
-                  onCollectionLongPress: (collection) {
-                    _showCollectionOptions(collection);
-                  },
-                ),
+                child: _buildCollectionsGrid(filteredCollections),
               ),
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildCollectionsGrid(List<Collection> filteredCollections) {
+    if (filteredCollections.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.collections_bookmark,
+              size: 64,
+              color: Colors.grey[700],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _searchQuery.isNotEmpty ? 'No collections found' : 'No collections yet',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 18,
+              ),
+            ),
+            if (_searchQuery.isEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Create your first collection or add books with series',
+                style: TextStyle(
+                  color: Colors.grey[500],
+                  fontSize: 14,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Simple calculation for collection grid: fixed item width
+        const double itemWidth = 200;  // Fixed width for each collection (same as books)
+        const double spacing = 20;
+        
+        // Calculate how many items fit across the width
+        final int crossAxisCount = ((constraints.maxWidth + spacing) / (itemWidth + spacing)).floor().clamp(1, 20);
+        
+        return GridView.builder(
+          padding: const EdgeInsets.all(24),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            childAspectRatio: 0.8, // Slightly taller than books (200 width / 250 height)
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: spacing,
+          ),
+          itemCount: filteredCollections.length,
+          itemBuilder: (context, index) {
+            final collection = filteredCollections[index];
+            final collectionBooks = widget.libraryManager.getBooksForCollection(collection);
+            
+            return CollectionGridItem(
+              collection: collection,
+              books: collectionBooks,
+              onTap: () => _navigateToCollection(collection),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _navigateToCollection(Collection collection) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CollectionDetailScreen(
+          collection: collection,
+          collectionManager: widget.collectionManager,
+          libraryManager: widget.libraryManager,
+        ),
       ),
     );
   }
@@ -251,13 +314,13 @@ class _CollectionsViewState extends State<CollectionsView>
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Create Collection'),
+        title: const Text('Create Collection'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: nameController,
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 labelText: 'Collection Name',
                 hintText: 'My Reading List',
               ),
@@ -266,7 +329,7 @@ class _CollectionsViewState extends State<CollectionsView>
             const SizedBox(height: 16),
             TextField(
               controller: descriptionController,
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 labelText: 'Description (optional)',
                 hintText: 'Books I want to read this year',
               ),
@@ -277,14 +340,14 @@ class _CollectionsViewState extends State<CollectionsView>
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text('Cancel'),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
             onPressed: () async {
               final name = nameController.text.trim();
               if (name.isEmpty) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Please enter a collection name')),
+                  const SnackBar(content: Text('Please enter a collection name')),
                 );
                 return;
               }
@@ -302,11 +365,11 @@ class _CollectionsViewState extends State<CollectionsView>
                 );
               } else {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Failed to create collection')),
+                  const SnackBar(content: Text('Failed to create collection')),
                 );
               }
             },
-            child: Text('Create'),
+            child: const Text('Create'),
           ),
         ],
       ),
@@ -322,37 +385,28 @@ class _CollectionsViewState extends State<CollectionsView>
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: Icon(Icons.open_in_new),
-              title: Text('Open Collection'),
+              leading: const Icon(Icons.open_in_new),
+              title: const Text('Open Collection'),
               onTap: () {
                 Navigator.pop(context);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => CollectionDetailScreen(
-                      collection: collection,
-                      collectionManager: widget.collectionManager,
-                      libraryManager: widget.libraryManager,
-                    ),
-                  ),
-                );
+                _navigateToCollection(collection);
               },
             ),
             if (collection.type == CollectionType.custom) ...[
               ListTile(
-                leading: Icon(Icons.edit),
-                title: Text('Edit Collection'),
+                leading: const Icon(Icons.edit),
+                title: const Text('Edit Collection'),
                 onTap: () {
                   Navigator.pop(context);
                   // TODO: Show edit dialog
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Edit functionality coming soon')),
+                    const SnackBar(content: Text('Edit functionality coming soon')),
                   );
                 },
               ),
               ListTile(
-                leading: Icon(Icons.delete, color: Colors.red),
-                title: Text('Delete Collection', style: TextStyle(color: Colors.red)),
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: const Text('Delete Collection', style: TextStyle(color: Colors.red)),
                 onTap: () {
                   Navigator.pop(context);
                   _confirmDeleteCollection(collection);
@@ -360,13 +414,13 @@ class _CollectionsViewState extends State<CollectionsView>
               ),
             ],
             ListTile(
-              leading: Icon(Icons.share),
-              title: Text('Export Collection'),
+              leading: const Icon(Icons.share),
+              title: const Text('Export Collection'),
               onTap: () {
                 Navigator.pop(context);
                 // TODO: Export functionality
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Export functionality coming soon')),
+                  const SnackBar(content: Text('Export functionality coming soon')),
                 );
               },
             ),
@@ -380,12 +434,12 @@ class _CollectionsViewState extends State<CollectionsView>
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Delete Collection'),
+        title: const Text('Delete Collection'),
         content: Text('Are you sure you want to delete "${collection.name}"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text('Cancel'),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () async {
@@ -393,11 +447,11 @@ class _CollectionsViewState extends State<CollectionsView>
               final success = await widget.collectionManager.deleteCollection(collection.id);
               if (success) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Collection deleted')),
+                  const SnackBar(content: Text('Collection deleted')),
                 );
               }
             },
-            child: Text('Delete', style: TextStyle(color: Colors.red)),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
