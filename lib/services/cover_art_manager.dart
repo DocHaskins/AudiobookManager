@@ -1,5 +1,6 @@
-// lib/services/cover_art_manager.dart - FIXED SINGLETON VERSION
+// PROPER: CoverArtManager that handles ALL cache management internally
 import 'dart:io';
+import 'package:flutter/painting.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path_util;
 import 'package:metadata_god/metadata_god.dart';
@@ -8,6 +9,7 @@ import 'package:audiobook_organizer/utils/logger.dart';
 import 'package:audiobook_organizer/utils/file_utils.dart';
 
 /// Manages cover art for audiobooks - single source of truth for cover handling
+/// Handles ALL caching (both file and Flutter cache) internally
 class CoverArtManager {
   // Singleton pattern
   static final CoverArtManager _instance = CoverArtManager._internal();
@@ -40,67 +42,27 @@ class CoverArtManager {
     }
   }
   
-  /// Centralized method to ensure a file has a cover
-  /// Checks in order: cache, existing metadata, embedded in file
-  Future<String?> ensureCoverForFile(String filePath, AudiobookMetadata? metadata) async {
-    if (!_isInitialized) {
-      Logger.warning('CoverArtManager not initialized, initializing now');
-      await initialize();
-    }
-    
-    try {
-      // Check cache first
-      if (_coverCache.containsKey(filePath)) {
-        return _coverCache[filePath];
-      }
-      
-      // Check if we already have a cover path
-      String? coverPath = await getCoverPath(filePath);
-      
-      if (coverPath == null && metadata?.thumbnailUrl != null && metadata!.thumbnailUrl.isNotEmpty) {
-        // Use existing thumbnail URL if it's a local path
-        if (!metadata.thumbnailUrl.startsWith('http')) {
-          final coverFile = File(metadata.thumbnailUrl);
-          if (await coverFile.exists()) {
-            coverPath = metadata.thumbnailUrl;
-            _coverCache[filePath] = coverPath;
-          }
-        }
-      }
-      
-      if (coverPath == null) {
-        // Try to extract embedded cover
-        coverPath = await extractCoverFromFile(filePath);
-        if (coverPath != null) {
-          _coverCache[filePath] = coverPath;
-          Logger.log('Extracted embedded cover for: ${path_util.basename(filePath)}');
-        }
-      }
-      
-      return coverPath;
-    } catch (e) {
-      Logger.error('Error ensuring cover for file: $filePath', e);
-      return null;
-    }
-  }
-  
-  /// Get the cover path for a file
+  /// MAIN API: Get cover path for a file (handles all caching internally)
+  /// Returns a unique path that changes when cover is updated
   Future<String?> getCoverPath(String filePath) async {
-    if (!_isInitialized) {
-      Logger.warning('CoverArtManager not initialized, initializing now');
-      await initialize();
-    }
+    if (!_isInitialized) await initialize();
     
     try {
-      final fileId = FileUtils.generateFileId(filePath);
-      
-      // Check for existing cover files
-      final extensions = ['.jpg', '.jpeg', '.png', '.webp'];
-      for (final ext in extensions) {
-        final coverPath = path_util.join(_coversDir!, '$fileId$ext');
-        if (await File(coverPath).exists()) {
-          return coverPath;
+      // Check memory cache first
+      if (_coverCache.containsKey(filePath)) {
+        final cachedPath = _coverCache[filePath]!;
+        if (await File(cachedPath).exists()) {
+          return cachedPath;
+        } else {
+          _coverCache.remove(filePath);
         }
+      }
+      
+      // Look for existing cover file
+      final existingCover = await _findExistingCoverFile(filePath);
+      if (existingCover != null) {
+        _coverCache[filePath] = existingCover;
+        return existingCover;
       }
       
       return null;
@@ -110,170 +72,299 @@ class CoverArtManager {
     }
   }
   
-  /// Extract cover from audio file using metadata_god
-  Future<String?> extractCoverFromFile(String filePath) async {
-    if (!_isInitialized) {
-      Logger.warning('CoverArtManager not initialized, initializing now');
-      await initialize();
-    }
+  /// MAIN API: Update cover from URL (handles all cache management)
+  Future<String?> updateCoverFromUrl(String filePath, String imageUrl) async {
+    if (!_isInitialized) await initialize();
     
     try {
-      Logger.debug('Attempting to extract embedded cover from: ${path_util.basename(filePath)}');
+      Logger.log('Updating cover from URL for: ${path_util.basename(filePath)}');
       
-      // Use metadata_god to read metadata including picture
-      final metadata = await MetadataGod.readMetadata(file: filePath);
+      // STEP 1: Clear old cover from Flutter cache
+      await _clearFlutterCacheForFile(filePath);
       
-      // Check if there's an embedded picture
-      if (metadata.picture == null) {
-        Logger.debug('No embedded cover found in: ${path_util.basename(filePath)}');
-        return null;
+      // STEP 2: Remove old cover files
+      await _removeExistingCovers(filePath);
+      
+      // STEP 3: Download new cover with unique timestamp
+      final newCoverPath = await _downloadCoverWithTimestamp(filePath, imageUrl);
+      
+      if (newCoverPath != null) {
+        // STEP 4: Update memory cache
+        _coverCache[filePath] = newCoverPath;
+        Logger.log('Successfully updated cover from URL: $newCoverPath');
+        return newCoverPath;
       }
       
-      // Get the picture data
-      final pictureData = metadata.picture!.data;
-      if (pictureData.isEmpty) {
-        Logger.debug('Embedded cover data is empty for: ${path_util.basename(filePath)}');
-        return null;
-      }
-      
-      // Determine the image format from mime type or default to jpg
-      String extension = '.jpg';
-      final mimeType = metadata.picture!.mimeType?.toLowerCase();
-      if (mimeType != null) {
-        if (mimeType.contains('png')) {
-          extension = '.png';
-        } else if (mimeType.contains('jpeg') || mimeType.contains('jpg')) {
-          extension = '.jpg';
-        } else if (mimeType.contains('webp')) {
-          extension = '.webp';
-        } else if (mimeType.contains('bmp')) {
-          extension = '.bmp';
-        }
-      }
-      
-      // Generate cover file path
-      final fileId = FileUtils.generateFileId(filePath);
-      final coverPath = path_util.join(_coversDir!, '$fileId$extension');
-      
-      // Write the cover image to disk
-      final coverFile = File(coverPath);
-      await coverFile.writeAsBytes(pictureData);
-      
-      // Cache the cover path
-      _coverCache[filePath] = coverPath;
-      
-      Logger.log('Successfully extracted embedded cover for: ${path_util.basename(filePath)}');
-      Logger.debug('Cover saved to: $coverPath (${pictureData.length} bytes)');
-      
-      return coverPath;
+      return null;
     } catch (e) {
-      Logger.error('Error extracting cover from file: $filePath', e);
+      Logger.error('Error updating cover from URL: $imageUrl', e);
       return null;
     }
   }
   
-  /// Download a cover from URL
-  Future<String?> downloadCover(String filePath, String imageUrl) async {
-    if (!_isInitialized) {
-      Logger.warning('CoverArtManager not initialized, initializing now');
-      await initialize();
-    }
+  /// MAIN API: Update cover from local file (handles all cache management)
+  Future<String?> updateCoverFromLocalFile(String filePath, String localImagePath) async {
+    if (!_isInitialized) await initialize();
     
     try {
-      final fileId = FileUtils.generateFileId(filePath);
-      final uri = Uri.parse(imageUrl);
+      Logger.log('Updating cover from local file for: ${path_util.basename(filePath)}');
       
-      // Determine file extension from URL or default to jpg
-      String extension = '.jpg';
-      if (imageUrl.contains('.png')) extension = '.png';
-      else if (imageUrl.contains('.webp')) extension = '.webp';
-      else if (imageUrl.contains('.jpeg')) extension = '.jpeg';
+      final sourceFile = File(localImagePath);
+      if (!await sourceFile.exists()) {
+        Logger.error('Source file does not exist: $localImagePath');
+        return null;
+      }
       
-      final coverPath = path_util.join(_coversDir!, '$fileId$extension');
+      // STEP 1: Clear old cover from Flutter cache
+      await _clearFlutterCacheForFile(filePath);
       
-      // Download the image
-      final client = HttpClient();
-      final request = await client.getUrl(uri);
-      final response = await request.close();
+      // STEP 2: Remove old cover files
+      await _removeExistingCovers(filePath);
       
-      if (response.statusCode == 200) {
-        final bytes = await consolidateHttpClientResponseBytes(response);
-        await File(coverPath).writeAsBytes(bytes);
-        
+      // STEP 3: Copy to new timestamped file
+      final newCoverPath = await _copyToTimestampedFile(filePath, localImagePath);
+      
+      if (newCoverPath != null) {
+        // STEP 4: Update memory cache
+        _coverCache[filePath] = newCoverPath;
+        Logger.log('Successfully updated cover from local file: $newCoverPath');
+        return newCoverPath;
+      }
+      
+      return null;
+    } catch (e) {
+      Logger.error('Error updating cover from local file: $localImagePath', e);
+      return null;
+    }
+  }
+  
+  /// MAIN API: Ensure cover exists (extract from file if needed)
+  Future<String?> ensureCoverForFile(String filePath, AudiobookMetadata? metadata) async {
+    if (!_isInitialized) await initialize();
+    
+    try {
+      // Check if we already have a cover
+      String? coverPath = await getCoverPath(filePath);
+      if (coverPath != null) return coverPath;
+      
+      // Check metadata for existing local path
+      if (metadata?.thumbnailUrl != null && 
+          metadata!.thumbnailUrl.isNotEmpty && 
+          !metadata.thumbnailUrl.startsWith('http')) {
+        final metadataFile = File(metadata.thumbnailUrl);
+        if (await metadataFile.exists()) {
+          // Copy to our managed location with timestamp
+          coverPath = await _copyToTimestampedFile(filePath, metadata.thumbnailUrl);
+          if (coverPath != null) {
+            _coverCache[filePath] = coverPath;
+            return coverPath;
+          }
+        }
+      }
+      
+      // Try to extract embedded cover
+      coverPath = await _extractEmbeddedCover(filePath);
+      if (coverPath != null) {
         _coverCache[filePath] = coverPath;
-        Logger.log('Downloaded cover for: ${path_util.basename(filePath)}');
+        Logger.log('Extracted embedded cover for: ${path_util.basename(filePath)}');
         return coverPath;
       }
       
       return null;
     } catch (e) {
-      Logger.error('Error downloading cover: $imageUrl', e);
+      Logger.error('Error ensuring cover for file: $filePath', e);
       return null;
     }
   }
   
-  /// Update cover for a file (from URL or local path)
-  Future<String?> updateCover(String filePath, {String? downloadUrl, String? localImagePath}) async {
-    if (!_isInitialized) {
-      Logger.warning('CoverArtManager not initialized, initializing now');
-      await initialize();
-    }
-    
-    try {
-      if (downloadUrl != null) {
-        return await downloadCover(filePath, downloadUrl);
-      } else if (localImagePath != null) {
-        final fileId = FileUtils.generateFileId(filePath);
-        final sourceFile = File(localImagePath);
-        
-        if (await sourceFile.exists()) {
-          final extension = path_util.extension(localImagePath).toLowerCase();
-          final coverPath = path_util.join(_coversDir!, '$fileId$extension');
-          
-          await sourceFile.copy(coverPath);
-          _coverCache[filePath] = coverPath;
-          
-          Logger.log('Updated cover from local file for: ${path_util.basename(filePath)}');
-          return coverPath;
-        }
-      }
-      
-      return null;
-    } catch (e) {
-      Logger.error('Error updating cover for file: $filePath', e);
-      return null;
-    }
-  }
-  
-  /// Remove cover for a file
+  /// MAIN API: Remove cover for file (handles all cleanup)
   Future<void> removeCover(String filePath) async {
-    if (!_isInitialized) {
-      Logger.warning('CoverArtManager not initialized, initializing now');
-      await initialize();
-    }
+    if (!_isInitialized) await initialize();
     
     try {
-      final fileId = FileUtils.generateFileId(filePath);
+      // Clear Flutter cache
+      await _clearFlutterCacheForFile(filePath);
       
-      // Remove all possible cover files
-      final extensions = ['.jpg', '.jpeg', '.png', '.webp'];
-      for (final ext in extensions) {
-        final coverPath = path_util.join(_coversDir!, '$fileId$ext');
-        final coverFile = File(coverPath);
-        if (await coverFile.exists()) {
-          await coverFile.delete();
-          Logger.debug('Removed cover file: $coverPath');
-        }
-      }
+      // Remove files
+      await _removeExistingCovers(filePath);
       
-      // Remove from cache
+      // Clear memory cache
       _coverCache.remove(filePath);
+      
+      Logger.log('Removed cover for: ${path_util.basename(filePath)}');
     } catch (e) {
       Logger.error('Error removing cover for file: $filePath', e);
     }
   }
   
-  /// Consolidate HttpClientResponse bytes
+  // ========== INTERNAL METHODS ==========
+  
+  /// Find existing cover file (with or without timestamp)
+  Future<String?> _findExistingCoverFile(String filePath) async {
+    try {
+      final fileId = FileUtils.generateFileId(filePath);
+      final coversDirectory = Directory(_coversDir!);
+      
+      if (!await coversDirectory.exists()) return null;
+      
+      final files = await coversDirectory.list().toList();
+      String? mostRecentCover;
+      int mostRecentTimestamp = 0;
+      
+      for (final file in files) {
+        if (file is File) {
+          final fileName = path_util.basename(file.path);
+          if (fileName.startsWith(fileId)) {
+            // Extract timestamp if present
+            final timestampMatch = RegExp(r'_(\d+)\.').firstMatch(fileName);
+            if (timestampMatch != null) {
+              final timestamp = int.tryParse(timestampMatch.group(1)!) ?? 0;
+              if (timestamp > mostRecentTimestamp) {
+                mostRecentTimestamp = timestamp;
+                mostRecentCover = file.path;
+              }
+            } else {
+              // Legacy non-timestamped file
+              mostRecentCover = file.path;
+            }
+          }
+        }
+      }
+      
+      return mostRecentCover;
+    } catch (e) {
+      Logger.error('Error finding existing cover file', e);
+      return null;
+    }
+  }
+  
+  /// Clear Flutter's image cache for a specific file
+  Future<void> _clearFlutterCacheForFile(String filePath) async {
+    try {
+      // Get current cover path
+      final currentCoverPath = _coverCache[filePath];
+      if (currentCoverPath != null) {
+        final file = File(currentCoverPath);
+        await FileImage(file).evict();
+        Logger.debug('Evicted Flutter cache for: $currentCoverPath');
+      }
+      
+      // Also clear general cache as a safety measure
+      PaintingBinding.instance.imageCache.clear();
+      
+    } catch (e) {
+      Logger.debug('Error clearing Flutter cache: $e');
+    }
+  }
+  
+  /// Download cover with timestamp
+  Future<String?> _downloadCoverWithTimestamp(String filePath, String imageUrl) async {
+    try {
+      final fileId = FileUtils.generateFileId(filePath);
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final uri = Uri.parse(imageUrl);
+      
+      // Determine extension
+      String extension = '.jpg';
+      if (imageUrl.contains('.png')) extension = '.png';
+      else if (imageUrl.contains('.webp')) extension = '.webp';
+      else if (imageUrl.contains('.jpeg')) extension = '.jpeg';
+      
+      final coverPath = path_util.join(_coversDir!, '${fileId}_$timestamp$extension');
+      
+      // Download
+      final client = HttpClient();
+      try {
+        final request = await client.getUrl(uri);
+        final response = await request.close();
+        
+        if (response.statusCode == 200) {
+          final bytes = await consolidateHttpClientResponseBytes(response);
+          await File(coverPath).writeAsBytes(bytes);
+          return coverPath;
+        }
+      } finally {
+        client.close();
+      }
+      
+      return null;
+    } catch (e) {
+      Logger.error('Error downloading cover', e);
+      return null;
+    }
+  }
+  
+  /// Copy local file to timestamped location
+  Future<String?> _copyToTimestampedFile(String filePath, String sourcePath) async {
+    try {
+      final fileId = FileUtils.generateFileId(filePath);
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final extension = path_util.extension(sourcePath).toLowerCase();
+      final coverPath = path_util.join(_coversDir!, '${fileId}_$timestamp$extension');
+      
+      await File(sourcePath).copy(coverPath);
+      return coverPath;
+    } catch (e) {
+      Logger.error('Error copying to timestamped file', e);
+      return null;
+    }
+  }
+  
+  /// Extract embedded cover
+  Future<String?> _extractEmbeddedCover(String filePath) async {
+    try {
+      Logger.debug('Extracting embedded cover from: ${path_util.basename(filePath)}');
+      
+      final metadata = await MetadataGod.readMetadata(file: filePath);
+      if (metadata.picture == null || metadata.picture!.data.isEmpty) {
+        return null;
+      }
+      
+      // Determine extension
+      String extension = '.jpg';
+      final mimeType = metadata.picture!.mimeType?.toLowerCase();
+      if (mimeType != null) {
+        if (mimeType.contains('png')) extension = '.png';
+        else if (mimeType.contains('webp')) extension = '.webp';
+      }
+      
+      // Save with timestamp
+      final fileId = FileUtils.generateFileId(filePath);
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final coverPath = path_util.join(_coversDir!, '${fileId}_$timestamp$extension');
+      
+      await File(coverPath).writeAsBytes(metadata.picture!.data);
+      return coverPath;
+    } catch (e) {
+      Logger.error('Error extracting embedded cover', e);
+      return null;
+    }
+  }
+  
+  /// Remove all existing cover files for a file
+  Future<void> _removeExistingCovers(String filePath) async {
+    try {
+      final fileId = FileUtils.generateFileId(filePath);
+      final coversDirectory = Directory(_coversDir!);
+      
+      if (!await coversDirectory.exists()) return;
+      
+      final files = await coversDirectory.list().toList();
+      for (final file in files) {
+        if (file is File) {
+          final fileName = path_util.basename(file.path);
+          if (fileName.startsWith(fileId)) {
+            await file.delete();
+            Logger.debug('Removed cover file: ${file.path}');
+          }
+        }
+      }
+    } catch (e) {
+      Logger.error('Error removing existing covers', e);
+    }
+  }
+  
+  /// Consolidate HTTP response bytes
   Future<List<int>> consolidateHttpClientResponseBytes(HttpClientResponse response) async {
     final chunks = <List<int>>[];
     await for (final chunk in response) {
@@ -297,9 +388,16 @@ class CoverArtManager {
     return result;
   }
   
-  /// Clear cache
+  /// Clear all caches
   void clearCache() {
     _coverCache.clear();
+    PaintingBinding.instance.imageCache.clear();
+    Logger.debug('All caches cleared');
+  }
+  
+  /// Get cache info for debugging
+  Map<String, String> getCacheInfo() {
+    return Map<String, String>.from(_coverCache);
   }
   
   /// Dispose resources

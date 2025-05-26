@@ -307,28 +307,103 @@ class AudiobookMetadata {
   }
   
   // Merge with another metadata object (useful for combining online and local data)
-  AudiobookMetadata merge(AudiobookMetadata other) {
+  AudiobookMetadata enhance(AudiobookMetadata enhancement) {
     return copyWith(
-      title: title.isEmpty ? other.title : title,
-      authors: authors.isEmpty ? other.authors : authors,
-      description: description.isEmpty ? other.description : description,
-      publisher: publisher.isEmpty ? other.publisher : publisher,
-      publishedDate: publishedDate.isEmpty ? other.publishedDate : publishedDate,
-      categories: categories.isEmpty ? other.categories : categories,
-      averageRating: averageRating == 0.0 ? other.averageRating : averageRating,
-      ratingsCount: ratingsCount == 0 ? other.ratingsCount : ratingsCount,
-      thumbnailUrl: thumbnailUrl.isEmpty ? other.thumbnailUrl : thumbnailUrl,
-      language: language.isEmpty ? other.language : language,
-      series: series.isEmpty ? other.series : series,
-      seriesPosition: seriesPosition.isEmpty ? other.seriesPosition : seriesPosition,
-      audioDuration: audioDuration ?? other.audioDuration,
-      bitrate: bitrate ?? other.bitrate,
-      channels: channels ?? other.channels,
-      sampleRate: sampleRate ?? other.sampleRate,
-      fileFormat: fileFormat.isEmpty ? other.fileFormat : fileFormat,
-      // Preserve user data from this instance
+      // Only use enhancement's values if current values are empty/default
+      title: title.isNotEmpty ? title : enhancement.title,
+      authors: authors.isNotEmpty ? authors : enhancement.authors,
+      description: description.isNotEmpty ? description : enhancement.description,
+      publisher: publisher.isNotEmpty ? publisher : enhancement.publisher,
+      publishedDate: publishedDate.isNotEmpty ? publishedDate : enhancement.publishedDate,
+      categories: categories.isNotEmpty ? categories : enhancement.categories,
+      averageRating: averageRating > 0.0 ? averageRating : enhancement.averageRating,
+      ratingsCount: ratingsCount > 0 ? ratingsCount : enhancement.ratingsCount,
+      thumbnailUrl: thumbnailUrl.isNotEmpty ? thumbnailUrl : enhancement.thumbnailUrl,
+      language: language.isNotEmpty ? language : enhancement.language,
+      series: series.isNotEmpty ? series : enhancement.series,
+      seriesPosition: seriesPosition.isNotEmpty ? seriesPosition : enhancement.seriesPosition,
+      audioDuration: audioDuration ?? enhancement.audioDuration,
+      bitrate: bitrate ?? enhancement.bitrate,
+      channels: channels ?? enhancement.channels,
+      sampleRate: sampleRate ?? enhancement.sampleRate,
+      fileFormat: fileFormat.isNotEmpty ? fileFormat : enhancement.fileFormat,
+      provider: provider.isNotEmpty ? provider : enhancement.provider,
+      // Preserve ALL user data
+      userRating: userRating,
+      lastPlayedPosition: lastPlayedPosition,
+      playbackPosition: playbackPosition,
+      userTags: userTags,
+      isFavorite: isFavorite,
       bookmarks: bookmarks,
       notes: notes,
+    );
+  }
+  
+  // 2. UPDATE: Replace metadata while keeping user data (same book, better info)
+  AudiobookMetadata updateVersion(AudiobookMetadata newVersion) {
+    return AudiobookMetadata(
+      // Use all values from the new version
+      id: id, // Keep original file-based ID
+      title: newVersion.title,
+      authors: newVersion.authors,
+      description: newVersion.description,
+      publisher: newVersion.publisher,
+      publishedDate: newVersion.publishedDate,
+      categories: newVersion.categories,
+      averageRating: newVersion.averageRating,
+      ratingsCount: newVersion.ratingsCount,
+      thumbnailUrl: newVersion.thumbnailUrl,
+      language: newVersion.language,
+      series: newVersion.series,
+      seriesPosition: newVersion.seriesPosition,
+      audioDuration: newVersion.audioDuration,
+      bitrate: newVersion.bitrate,
+      channels: newVersion.channels,
+      sampleRate: newVersion.sampleRate,
+      fileFormat: newVersion.fileFormat,
+      provider: newVersion.provider,
+      // PRESERVE user data - same book, just better metadata
+      userRating: userRating,
+      lastPlayedPosition: lastPlayedPosition,
+      playbackPosition: playbackPosition,
+      userTags: userTags,
+      isFavorite: isFavorite,
+      bookmarks: bookmarks,
+      notes: notes,
+    );
+  }
+  
+  // 3. REPLACE: Completely different book - reset everything
+  AudiobookMetadata replaceBook(AudiobookMetadata newBook) {
+    return AudiobookMetadata(
+      // Use all values from the new book
+      id: id, // Keep original file-based ID (same file, different book)
+      title: newBook.title,
+      authors: newBook.authors,
+      description: newBook.description,
+      publisher: newBook.publisher,
+      publishedDate: newBook.publishedDate,
+      categories: newBook.categories,
+      averageRating: newBook.averageRating,
+      ratingsCount: newBook.ratingsCount,
+      thumbnailUrl: newBook.thumbnailUrl,
+      language: newBook.language,
+      series: newBook.series,
+      seriesPosition: newBook.seriesPosition,
+      audioDuration: newBook.audioDuration,
+      bitrate: newBook.bitrate,
+      channels: newBook.channels,
+      sampleRate: newBook.sampleRate,
+      fileFormat: newBook.fileFormat,
+      provider: newBook.provider,
+      // RESET user data - this is a different book entirely
+      userRating: 0,
+      lastPlayedPosition: null,
+      playbackPosition: null,
+      userTags: const [],
+      isFavorite: false,
+      bookmarks: const [],
+      notes: const [],
     );
   }
 }

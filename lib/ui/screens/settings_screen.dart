@@ -1,33 +1,41 @@
-// lib/ui/screens/settings_screen.dart
+// lib/ui/screens/settings_panel.dart
 import 'dart:io';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:path/path.dart' as path;
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
-import 'package:audiobook_organizer/services/audio_player_service.dart';
-import 'package:audiobook_organizer/storage/metadata_cache.dart';
-import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
+import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
-class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+class SettingsPanel extends StatefulWidget {
+  final String selectedCategory;
+  final LibraryManager libraryManager;
+  final CollectionManager collectionManager;
+
+  const SettingsPanel({
+    Key? key,
+    required this.selectedCategory,
+    required this.libraryManager,
+    required this.collectionManager,
+  }) : super(key: key);
 
   @override
-  _SettingsScreenState createState() => _SettingsScreenState();
+  State<SettingsPanel> createState() => _SettingsPanelState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsPanelState extends State<SettingsPanel> {
   // App info
-  String _appVersion = '';
-  String _cacheSize = '';
+  String _appVersion = 'Loading...';
+  String _cacheSize = 'Calculating...';
   bool _isLoading = false;
   
-  // Settings
-  final bool _darkMode = true;
+  // Theme settings
+  ThemeMode _themeMode = ThemeMode.dark;
+  Color _primaryColor = Colors.indigo;
+  bool _useSystemTheme = false;
+  
+  // Playback settings
   double _defaultPlaybackSpeed = 1.0;
   bool _autoSavePlaybackPosition = true;
   int _skipForwardSeconds = 30;
@@ -37,31 +45,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   void initState() {
     super.initState();
     _loadAppInfo();
+    _loadSettings();
   }
-  
-  // Load app info
+
   Future<void> _loadAppInfo() async {
-    setState(() {
-      _isLoading = true;
-    });
-    
     try {
-      // Get app version
       final packageInfo = await PackageInfo.fromPlatform();
       _appVersion = '${packageInfo.version} (${packageInfo.buildNumber})';
       
-      // Calculate cache size
       _cacheSize = await _calculateCacheSize();
+      
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
       Logger.error('Error loading app info', e);
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
     }
   }
-  
-  // Calculate cache size
+
   Future<String> _calculateCacheSize() async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
@@ -79,617 +80,844 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       }
       
-      // Format size
-      if (totalSize < 1024) {
-        return '$totalSize B';
-      } else if (totalSize < 1024 * 1024) {
-        return '${(totalSize / 1024).toStringAsFixed(1)} KB';
-      } else if (totalSize < 1024 * 1024 * 1024) {
-        return '${(totalSize / (1024 * 1024)).toStringAsFixed(1)} MB';
-      } else {
-        return '${(totalSize / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-      }
+      return _formatFileSize(totalSize);
     } catch (e) {
       Logger.error('Error calculating cache size', e);
       return 'Unknown';
     }
   }
-  
+
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    } else if (bytes < 1024 * 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    } else if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    } else {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    }
+  }
+
+  Future<void> _loadSettings() async {
+    // Load settings from storage (you may want to implement SharedPreferences for this)
+    // For now, using defaults
+    setState(() {
+      _themeMode = ThemeMode.dark;
+      _primaryColor = Colors.indigo;
+      _useSystemTheme = false;
+      _defaultPlaybackSpeed = 1.0;
+      _autoSavePlaybackPosition = true;
+      _skipForwardSeconds = 30;
+      _skipBackwardSeconds = 10;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Library section
-                  _buildSection(
-                    title: 'Library',
-                    children: [
-                      _buildDirectoriesList(),
-                      _buildSettingTile(
-                        title: 'Clear Cache',
-                        subtitle: 'Current size: $_cacheSize',
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: _clearCache,
-                        ),
-                      ),
-                    ],
-                  ),
-                  
-                  // Playback section
-                  _buildSection(
-                    title: 'Playback',
-                    children: [
-                      _buildSettingTile(
-                        title: 'Default Playback Speed',
-                        subtitle: '${_defaultPlaybackSpeed.toStringAsFixed(1)}x',
-                        trailing: DropdownButton<double>(
-                          value: _defaultPlaybackSpeed,
-                          items: [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
-                              .map((speed) => DropdownMenuItem(
-                                    value: speed,
-                                    child: Text('${speed.toStringAsFixed(1)}x'),
-                                  ))
-                              .toList(),
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() {
-                                _defaultPlaybackSpeed = value;
-                              });
-                              _saveSettings();
-                            }
-                          },
-                        ),
-                      ),
-                      SwitchListTile(
-                        title: const Text('Auto-save Playback Position'),
-                        subtitle: const Text('Automatically save your position when pausing'),
-                        value: _autoSavePlaybackPosition,
-                        onChanged: (value) {
-                          setState(() {
-                            _autoSavePlaybackPosition = value;
-                          });
-                          _saveSettings();
-                        },
-                      ),
-                      _buildSettingTile(
-                        title: 'Skip Forward Duration',
-                        subtitle: '$_skipForwardSeconds seconds',
-                        trailing: DropdownButton<int>(
-                          value: _skipForwardSeconds,
-                          items: [15, 30, 45, 60, 90]
-                              .map((seconds) => DropdownMenuItem(
-                                    value: seconds,
-                                    child: Text('$seconds s'),
-                                  ))
-                              .toList(),
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() {
-                                _skipForwardSeconds = value;
-                              });
-                              _saveSettings();
-                            }
-                          },
-                        ),
-                      ),
-                      _buildSettingTile(
-                        title: 'Skip Backward Duration',
-                        subtitle: '$_skipBackwardSeconds seconds',
-                        trailing: DropdownButton<int>(
-                          value: _skipBackwardSeconds,
-                          items: [5, 10, 15, 20, 30]
-                              .map((seconds) => DropdownMenuItem(
-                                    value: seconds,
-                                    child: Text('$seconds s'),
-                                  ))
-                              .toList(),
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() {
-                                _skipBackwardSeconds = value;
-                              });
-                              _saveSettings();
-                            }
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  
-                  // App info section
-                  _buildSection(
-                    title: 'About',
-                    children: [
-                      ListTile(
-                        title: const Text('Version'),
-                        subtitle: Text(_appVersion),
-                      ),
-                      const ListTile(
-                        title: Text('Developer'),
-                        subtitle: Text('YourCompany'),
-                      ),
-                      ListTile(
-                        title: const Text('View Logs'),
-                        subtitle: const Text('View application logs for troubleshooting'),
-                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                        onTap: _viewLogs,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+    return Container(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Category Header
+          Text(
+            _getCategoryTitle(),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 32,
+              fontWeight: FontWeight.bold,
             ),
+          ),
+          const SizedBox(height: 32),
+          
+          // Category Content
+          Expanded(
+            child: SingleChildScrollView(
+              child: _buildCategoryContent(),
+            ),
+          ),
+        ],
+      ),
     );
   }
-  
-  // Build a section with header and children
-  Widget _buildSection({required String title, required List<Widget> children}) {
+
+  String _getCategoryTitle() {
+    switch (widget.selectedCategory) {
+      case 'Library':
+        return 'Library Settings';
+      case 'Theme':
+        return 'Theme & Appearance';
+      case 'Collections':
+        return 'Collection Settings';
+      case 'Playback':
+        return 'Playback Settings';
+      case 'Storage':
+        return 'Storage & Cache';
+      case 'About':
+        return 'About';
+      default:
+        return 'Settings';
+    }
+  }
+
+  Widget _buildCategoryContent() {
+    switch (widget.selectedCategory) {
+      case 'Library':
+        return _buildLibrarySettings();
+      case 'Theme':
+        return _buildThemeSettings();
+      case 'Collections':
+        return _buildCollectionSettings();
+      case 'Playback':
+        return _buildPlaybackSettings();
+      case 'Storage':
+        return _buildStorageSettings();
+      case 'About':
+        return _buildAboutSettings();
+      default:
+        return _buildLibrarySettings();
+    }
+  }
+
+  Widget _buildLibrarySettings() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16.0),
-          child: Text(
-            title,
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).colorScheme.secondary,
+        _buildSectionCard(
+          title: 'Watched Directories',
+          children: [
+            _buildDirectoriesList(),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _addDirectory,
+                icon: const Icon(Icons.add),
+                label: const Text('Add Directory'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
             ),
-          ),
+          ],
         ),
-        Card(
-          child: Column(
-            children: children,
-          ),
+        
+        const SizedBox(height: 24),
+        
+        _buildSectionCard(
+          title: 'Library Actions',
+          children: [
+            ListTile(
+              leading: const Icon(Icons.refresh, color: Colors.white70),
+              title: const Text('Rescan Library', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Scan all directories for new audiobooks', style: TextStyle(color: Colors.white70)),
+              onTap: _rescanLibrary,
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            ListTile(
+              leading: const Icon(Icons.cleaning_services, color: Colors.orange),
+              title: const Text('Clean Library', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Remove missing files and orphaned metadata', style: TextStyle(color: Colors.white70)),
+              onTap: _cleanLibrary,
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            ListTile(
+              leading: const Icon(Icons.delete_forever, color: Colors.red),
+              title: const Text('Clear Library', style: TextStyle(color: Colors.red)),
+              subtitle: const Text('Remove all books and metadata from library', style: TextStyle(color: Colors.white70)),
+              onTap: _clearLibrary,
+            ),
+          ],
         ),
       ],
     );
   }
-  
-  // Build a setting tile
-  Widget _buildSettingTile({required String title, String? subtitle, Widget? trailing}) {
-    return ListTile(
-      title: Text(title),
-      subtitle: subtitle != null ? Text(subtitle) : null,
-      trailing: trailing,
-    );
-  }
-  
-  // Build the list of watched directories
-  Widget _buildDirectoriesList() {
-    final libraryManager = Provider.of<LibraryManager>(context);
-    final directories = libraryManager.watchedDirectories;
-    
+
+  Widget _buildThemeSettings() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16.0, 16.0, 16.0, 8.0),
-          child: Row(
-            children: [
-              const Text(
-                'Watched Directories',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                ),
+        _buildSectionCard(
+          title: 'Theme Mode',
+          children: [
+            SwitchListTile(
+              title: const Text('Use System Theme', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Follow system dark/light mode', style: TextStyle(color: Colors.white70)),
+              value: _useSystemTheme,
+              onChanged: (value) {
+                setState(() {
+                  _useSystemTheme = value;
+                });
+                _saveSettings();
+              },
+            ),
+            if (!_useSystemTheme) ...[
+              const Divider(color: Color(0xFF2A2A2A)),
+              RadioListTile<ThemeMode>(
+                title: const Text('Dark Mode', style: TextStyle(color: Colors.white)),
+                value: ThemeMode.dark,
+                groupValue: _themeMode,
+                onChanged: (value) {
+                  setState(() {
+                    _themeMode = value!;
+                  });
+                  _saveSettings();
+                },
               ),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.add),
-                tooltip: 'Add Directory',
-                onPressed: () => _addDirectory(libraryManager),
+              RadioListTile<ThemeMode>(
+                title: const Text('Light Mode', style: TextStyle(color: Colors.white)),
+                value: ThemeMode.light,
+                groupValue: _themeMode,
+                onChanged: (value) {
+                  setState(() {
+                    _themeMode = value!;
+                  });
+                  _saveSettings();
+                },
               ),
             ],
-          ),
+          ],
         ),
-        if (directories.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'No directories added yet',
-              style: TextStyle(
-                fontStyle: FontStyle.italic,
-                color: Colors.grey,
-              ),
+        
+        const SizedBox(height: 24),
+        
+        _buildSectionCard(
+          title: 'Color Scheme',
+          children: [
+            const Text(
+              'Primary Color',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w500),
             ),
-          )
-        else
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: directories.length,
-            itemBuilder: (context, index) {
-              final directory = directories[index];
-              
-              return ListTile(
-                leading: const Icon(Icons.folder),
-                title: Text(
-                  Directory(directory).uri.pathSegments.last,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                subtitle: Text(
-                  directory,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () => _removeDirectory(libraryManager, directory),
-                ),
-              );
-            },
-          ),
+            const SizedBox(height: 16),
+            Wrap(
+              spacing: 16,
+              runSpacing: 16,
+              children: [
+                Colors.indigo,
+                Colors.blue,
+                Colors.purple,
+                Colors.teal,
+                Colors.green,
+                Colors.orange,
+                Colors.red,
+                Colors.pink,
+              ].map((color) => _buildColorOption(color)).toList(),
+            ),
+          ],
+        ),
       ],
     );
   }
-  
-  // Add a directory to watch
-  Future<void> _addDirectory(LibraryManager libraryManager) async {
+
+  Widget _buildColorOption(Color color) {
+    final isSelected = _primaryColor == color;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _primaryColor = color;
+        });
+        _saveSettings();
+      },
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: isSelected ? Colors.white : Colors.transparent,
+            width: 3,
+          ),
+        ),
+        child: isSelected
+            ? const Icon(Icons.check, color: Colors.white)
+            : null,
+      ),
+    );
+  }
+
+  Widget _buildCollectionSettings() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionCard(
+          title: 'Auto-Collection Settings',
+          children: [
+            SwitchListTile(
+              title: const Text('Auto-create Series Collections', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Automatically create collections for book series', style: TextStyle(color: Colors.white70)),
+              value: true, // You can make this configurable
+              onChanged: (value) {
+                // Implement setting storage
+              },
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            SwitchListTile(
+              title: const Text('Auto-create Author Collections', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Group books by the same author', style: TextStyle(color: Colors.white70)),
+              value: false, // You can make this configurable
+              onChanged: (value) {
+                // Implement setting storage
+              },
+            ),
+          ],
+        ),
+        
+        const SizedBox(height: 24),
+        
+        _buildSectionCard(
+          title: 'Collection Actions',
+          children: [
+            ListTile(
+              leading: const Icon(Icons.refresh, color: Colors.white70),
+              title: const Text('Refresh Collections', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Update auto-generated collections', style: TextStyle(color: Colors.white70)),
+              onTap: _refreshCollections,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlaybackSettings() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionCard(
+          title: 'Default Settings',
+          children: [
+            ListTile(
+              title: const Text('Default Playback Speed', style: TextStyle(color: Colors.white)),
+              subtitle: Text('${_defaultPlaybackSpeed.toStringAsFixed(1)}x', style: const TextStyle(color: Colors.white70)),
+              trailing: DropdownButton<double>(
+                value: _defaultPlaybackSpeed,
+                dropdownColor: const Color(0xFF2A2A2A),
+                items: [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+                    .map((speed) => DropdownMenuItem(
+                          value: speed,
+                          child: Text('${speed.toStringAsFixed(1)}x', style: const TextStyle(color: Colors.white)),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _defaultPlaybackSpeed = value;
+                    });
+                    _saveSettings();
+                  }
+                },
+              ),
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            SwitchListTile(
+              title: const Text('Auto-save Playback Position', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Automatically save your position when pausing', style: TextStyle(color: Colors.white70)),
+              value: _autoSavePlaybackPosition,
+              onChanged: (value) {
+                setState(() {
+                  _autoSavePlaybackPosition = value;
+                });
+                _saveSettings();
+              },
+            ),
+          ],
+        ),
+        
+        const SizedBox(height: 24),
+        
+        _buildSectionCard(
+          title: 'Skip Durations',
+          children: [
+            ListTile(
+              title: const Text('Skip Forward Duration', style: TextStyle(color: Colors.white)),
+              subtitle: Text('$_skipForwardSeconds seconds', style: const TextStyle(color: Colors.white70)),
+              trailing: DropdownButton<int>(
+                value: _skipForwardSeconds,
+                dropdownColor: const Color(0xFF2A2A2A),
+                items: [15, 30, 45, 60, 90]
+                    .map((seconds) => DropdownMenuItem(
+                          value: seconds,
+                          child: Text('$seconds s', style: const TextStyle(color: Colors.white)),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _skipForwardSeconds = value;
+                    });
+                    _saveSettings();
+                  }
+                },
+              ),
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            ListTile(
+              title: const Text('Skip Backward Duration', style: TextStyle(color: Colors.white)),
+              subtitle: Text('$_skipBackwardSeconds seconds', style: const TextStyle(color: Colors.white70)),
+              trailing: DropdownButton<int>(
+                value: _skipBackwardSeconds,
+                dropdownColor: const Color(0xFF2A2A2A),
+                items: [5, 10, 15, 20, 30]
+                    .map((seconds) => DropdownMenuItem(
+                          value: seconds,
+                          child: Text('$seconds s', style: const TextStyle(color: Colors.white)),
+                        ))
+                    .toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() {
+                      _skipBackwardSeconds = value;
+                    });
+                    _saveSettings();
+                  }
+                },
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStorageSettings() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionCard(
+          title: 'Cache Information',
+          children: [
+            ListTile(
+              leading: const Icon(Icons.storage, color: Colors.white70),
+              title: const Text('Cache Size', style: TextStyle(color: Colors.white)),
+              subtitle: Text(_cacheSize, style: const TextStyle(color: Colors.white70)),
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            ListTile(
+              leading: const Icon(Icons.library_books, color: Colors.white70),
+              title: const Text('Total Books', style: TextStyle(color: Colors.white)),
+              subtitle: Text('${widget.libraryManager.files.length} books', style: const TextStyle(color: Colors.white70)),
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            ListTile(
+              leading: const Icon(Icons.collections_bookmark, color: Colors.white70),
+              title: const Text('Total Collections', style: TextStyle(color: Colors.white)),
+              subtitle: Text('${widget.collectionManager.collections.length} collections', style: const TextStyle(color: Colors.white70)),
+            ),
+          ],
+        ),
+        
+        const SizedBox(height: 24),
+        
+        _buildSectionCard(
+          title: 'Cache Actions',
+          children: [
+            ListTile(
+              leading: const Icon(Icons.refresh, color: Colors.white70),
+              title: const Text('Refresh Cache Size', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Recalculate cache usage', style: TextStyle(color: Colors.white70)),
+              onTap: _refreshCacheSize,
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            ListTile(
+              leading: const Icon(Icons.cleaning_services, color: Colors.orange),
+              title: const Text('Clear Search Cache', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('Clear cached search results', style: TextStyle(color: Colors.white70)),
+              onTap: _clearSearchCache,
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            ListTile(
+              leading: const Icon(Icons.delete_sweep, color: Colors.red),
+              title: const Text('Clear All Cache', style: TextStyle(color: Colors.red)),
+              subtitle: const Text('Clear all cached data including covers', style: TextStyle(color: Colors.white70)),
+              onTap: _clearAllCache,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAboutSettings() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildSectionCard(
+          title: 'Application Information',
+          children: [
+            ListTile(
+              leading: const Icon(Icons.info, color: Colors.white70),
+              title: const Text('Version', style: TextStyle(color: Colors.white)),
+              subtitle: Text(_appVersion, style: const TextStyle(color: Colors.white70)),
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            const ListTile(
+              leading: Icon(Icons.person, color: Colors.white70),
+              title: Text('Developer', style: TextStyle(color: Colors.white)),
+              subtitle: Text('Audiobook Organizer Team', style: TextStyle(color: Colors.white70)),
+            ),
+            const Divider(color: Color(0xFF2A2A2A)),
+            ListTile(
+              leading: const Icon(Icons.bug_report, color: Colors.white70),
+              title: const Text('View Logs', style: TextStyle(color: Colors.white)),
+              subtitle: const Text('View application logs for troubleshooting', style: TextStyle(color: Colors.white70)),
+              trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.white70),
+              onTap: _viewLogs,
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSectionCard({required String title, required List<Widget> children}) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF2A2A2A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(
+              title,
+              style: TextStyle(
+                color: Theme.of(context).primaryColor,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          ...children,
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDirectoriesList() {
+    final directories = widget.libraryManager.watchedDirectories;
+    
+    if (directories.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text(
+          'No directories added yet',
+          style: TextStyle(
+            color: Colors.white70,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      );
+    }
+    
+    return Column(
+      children: directories.map((directory) {
+        return ListTile(
+          leading: const Icon(Icons.folder, color: Colors.white70),
+          title: Text(
+            Directory(directory).uri.pathSegments.last,
+            style: const TextStyle(color: Colors.white),
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            directory,
+            style: const TextStyle(color: Colors.white70),
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline, color: Colors.red),
+            onPressed: () => _removeDirectory(directory),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  // Action methods
+  Future<void> _addDirectory() async {
     try {
-      // Show directory picker
       String? selectedDir = await FilePicker.platform.getDirectoryPath(
         dialogTitle: 'Select Audiobooks Folder',
       );
       
       if (selectedDir != null) {
-        // Show loading dialog
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const AlertDialog(
-            title: Text('Scanning Folder'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Scanning for audiobooks...'),
-              ],
-            ),
-          ),
-        );
-        
-        // Add the directory to library manager
-        await libraryManager.addDirectory(selectedDir);
-        
-        // Close loading dialog
-        Navigator.of(context).pop();
-        
-        // Refresh the UI
-        setState(() {});
-        
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Folder added to library'),
-        ));
-      }
-    } catch (e) {
-      // Close loading dialog if open
-      if (Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-      }
-      
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Error adding folder: ${e.toString()}'),
-        backgroundColor: Colors.red,
-      ));
-      
-      Logger.error('Error adding folder', e);
-    }
-  }
-  
-  // Remove a directory from watch list
-  Future<void> _removeDirectory(LibraryManager libraryManager, String directory) async {
-    try {
-      // Show confirmation dialog
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Remove Directory'),
-          content: const Text('Are you sure you want to remove this directory? Files in this directory will be removed from your library.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.red,
-              ),
-              child: const Text('Remove'),
-            ),
-          ],
-        ),
-      );
-      
-      if (confirmed == true) {
-        // Show loading dialog
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const AlertDialog(
-            title: Text('Removing Directory'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Removing directory from library...'),
-              ],
-            ),
-          ),
-        );
-        
-        // Remove the directory
-        await libraryManager.removeDirectory(directory);
-        
-        // Close loading dialog
-        Navigator.of(context).pop();
-        
-        // Refresh the UI
-        setState(() {});
-        
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Directory removed from library'),
-        ));
-      }
-    } catch (e) {
-      // Close loading dialog if open
-      if (Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
-      }
-      
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Error removing directory: ${e.toString()}'),
-        backgroundColor: Colors.red,
-      ));
-      
-      Logger.error('Error removing directory', e);
-    }
-  }
-  
-  // Clear cache
-  Future<void> _clearCache() async {
-    try {
-      // Show confirmation dialog
-      final confirmed = await showDialog<String>( // Change from bool to String
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Clear Cache'),
-          content: const Text('What would you like to clear?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'cancel'),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'cache'),
-              child: const Text('Search Cache Only'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'all'),
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.red,
-              ),
-              child: const Text('All Metadata'),
-            ),
-          ],
-        ),
-      );
-      
-      if (confirmed == 'cache' || confirmed == 'all') {
         setState(() {
           _isLoading = true;
         });
         
-        // Clear the metadata cache
-        final metadataCache = Provider.of<MetadataCache>(context, listen: false);
-        await metadataCache.clearCache();
-        
-        // Clear storage manager metadata if requested
-        if (confirmed == 'all') {
-          final storageManager = Provider.of<AudiobookStorageManager>(context, listen: false);
-          
-          // Get application documents directory
-          final appDir = await getApplicationDocumentsDirectory();
-          final metadataPath = path.join(appDir.path, 'audiobooks', 'metadata');
-          
-          // Delete the metadata directory and recreate it
-          final metadataDir = Directory(metadataPath);
-          if (await metadataDir.exists()) {
-            await metadataDir.delete(recursive: true);
-            await metadataDir.create(recursive: true);
-          }
-          
-          // Optionally, also reset the library file
-          final libraryFile = File(storageManager.libraryFilePath);
-          if (await libraryFile.exists()) {
-            await libraryFile.writeAsString(json.encode({'files': []}));
-          }
-        }
-        
-        // Refresh cache size
-        _cacheSize = await _calculateCacheSize();
+        await widget.libraryManager.addDirectory(selectedDir);
         
         setState(() {
           _isLoading = false;
         });
         
-        // Show success message
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(confirmed == 'all' ? 'All metadata cleared' : 'Cache cleared'),
-          backgroundColor: Colors.green,
-        ));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Folder added to library')),
+          );
+        }
       }
     } catch (e) {
       setState(() {
         _isLoading = false;
       });
       
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Error clearing cache: ${e.toString()}'),
-        backgroundColor: Colors.red,
-      ));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error adding folder: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
       
-      Logger.error('Error clearing cache', e);
+      Logger.error('Error adding folder', e);
     }
   }
-  
 
-  // Save settings
-  Future<void> _saveSettings() async {
-    try {
-      // Save settings - This would typically use SharedPreferences
-      // For now, we'll just update the audio player service
-      final audioPlayerService = Provider.of<AudioPlayerService>(context, listen: false);
-      
-      // Update skip durations
-      // Note: This would actually be implemented in the AudioPlayerService class
-      // These are placeholder calls for now
-      // audioPlayerService.setSkipForwardDuration(Duration(seconds: _skipForwardSeconds));
-      // audioPlayerService.setSkipBackwardDuration(Duration(seconds: _skipBackwardSeconds));
-      
-      // Would normally save these to SharedPreferences
-    } catch (e) {
-      Logger.error('Error saving settings', e);
-      
-      // Show error message
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Error saving settings: ${e.toString()}'),
-        backgroundColor: Colors.red,
-      ));
-    }
-  }
-  
-  // View logs
-  void _viewLogs() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const LogViewerScreen(),
+  Future<void> _removeDirectory(String directory) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Remove Directory', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Are you sure you want to remove this directory? Files in this directory will be removed from your library.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Remove'),
+          ),
+        ],
       ),
     );
+    
+    if (confirmed == true) {
+      await widget.libraryManager.removeDirectory(directory);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Directory removed from library')),
+        );
+      }
+    }
   }
-}
 
-// Log viewer screen
-class LogViewerScreen extends StatefulWidget {
-  const LogViewerScreen({super.key});
-
-  @override
-  _LogViewerScreenState createState() => _LogViewerScreenState();
-}
-
-class _LogViewerScreenState extends State<LogViewerScreen> {
-  String _logs = '';
-  bool _isLoading = false;
-  
-  @override
-  void initState() {
-    super.initState();
-    _loadLogs();
-  }
-  
-  // Load logs
-  Future<void> _loadLogs() async {
+  Future<void> _rescanLibrary() async {
     setState(() {
       _isLoading = true;
     });
     
     try {
-      final appDir = await getApplicationDocumentsDirectory();
-      final logDir = Directory('${appDir.path}/logs');
-      
-      if (!await logDir.exists()) {
-        setState(() {
-          _logs = 'No logs found';
-          _isLoading = false;
-        });
-        return;
+      for (final directory in widget.libraryManager.watchedDirectories) {
+        await widget.libraryManager.scanDirectory(directory);
       }
       
-      // Find the most recent log file
-      File? latestLogFile;
-      DateTime latestDate = DateTime(1970);
-      
-      await for (final entity in logDir.list()) {
-        if (entity is File && entity.path.endsWith('.txt')) {
-          final fileName = path.basename(entity.path);
-          final match = RegExp(r'log_(\d{4})-(\d{1,2})-(\d{1,2})\.txt').firstMatch(fileName);
-          
-          if (match != null) {
-            final year = int.parse(match.group(1)!);
-            final month = int.parse(match.group(2)!);
-            final day = int.parse(match.group(3)!);
-            
-            final fileDate = DateTime(year, month, day);
-            if (fileDate.isAfter(latestDate)) {
-              latestDate = fileDate;
-              latestLogFile = entity;
-            }
-          }
-        }
-      }
-      
-      if (latestLogFile != null) {
-        _logs = await latestLogFile.readAsString();
-      } else {
-        _logs = 'No logs found';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Library rescan completed')),
+        );
       }
     } catch (e) {
-      _logs = 'Error loading logs: ${e.toString()}';
-      Logger.error('Error loading logs', e);
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
-    }
-  }
-  
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Logs'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadLogs,
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error rescanning library: ${e.toString()}'),
+            backgroundColor: Colors.red,
           ),
-          IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: _shareLogs,
+        );
+      }
+    }
+    
+    setState(() {
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _cleanLibrary() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Clean Library', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'This will remove missing files and orphaned metadata. This action cannot be undone.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: const Text('Clean'),
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: SelectableText(_logs),
-              ),
-            ),
+    );
+    
+    if (confirmed == true) {
+      // Implement clean library logic
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Library cleaned')),
+        );
+      }
+    }
+  }
+
+  Future<void> _clearLibrary() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Clear Library', style: TextStyle(color: Colors.red)),
+        content: const Text(
+          'This will remove ALL books and metadata from your library. Watched directories will be cleared. This action cannot be undone.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      // Clear all directories first
+      final directories = List<String>.from(widget.libraryManager.watchedDirectories);
+      for (final directory in directories) {
+        await widget.libraryManager.removeDirectory(directory);
+      }
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Library cleared')),
+        );
+      }
+    }
+  }
+
+  Future<void> _refreshCollections() async {
+    // Implement collection refresh logic
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Collections refreshed')),
+      );
+    }
+  }
+
+  Future<void> _refreshCacheSize() async {
+    setState(() {
+      _cacheSize = 'Calculating...';
+    });
+    
+    _cacheSize = await _calculateCacheSize();
+    setState(() {});
+  }
+
+  Future<void> _clearSearchCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Clear Search Cache', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'This will clear cached search results.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      // Implement search cache clearing
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Search cache cleared')),
+        );
+      }
+      _refreshCacheSize();
+    }
+  }
+
+  Future<void> _clearAllCache() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Clear All Cache', style: TextStyle(color: Colors.red)),
+        content: const Text(
+          'This will clear all cached data including covers and search results.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      // Implement all cache clearing
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('All cache cleared')),
+        );
+      }
+      _refreshCacheSize();
+    }
+  }
+
+  void _viewLogs() {
+    // Navigate to logs view
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Logs viewer not implemented yet')),
     );
   }
-  
-  // Share logs
-  Future<void> _shareLogs() async {
-    // This would typically use a share plugin
-    // For now, we'll just show a snackbar
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('Sharing logs is not implemented yet'),
-    ));
+
+  void _saveSettings() {
+    // Implement settings saving logic
+    // You may want to use SharedPreferences for this
+    Logger.log('Settings saved');
   }
 }

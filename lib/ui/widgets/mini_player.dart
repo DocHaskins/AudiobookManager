@@ -543,11 +543,11 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
           style: TextStyle(
             color: hasActiveAudio ? Colors.white : Colors.grey[400],
             fontWeight: FontWeight.w500,
-            fontSize: 14,
+            fontSize: 12,
           ),
           child: Text(
             metadata?.title.isNotEmpty == true ? metadata!.title : file.filename,
-            maxLines: 1,
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -559,7 +559,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
           duration: const Duration(milliseconds: 200),
           style: TextStyle(
             color: Colors.grey[400],
-            fontSize: 12,
+            fontSize: 11,
           ),
           child: Text(
             metadata?.authorsFormatted.isNotEmpty == true

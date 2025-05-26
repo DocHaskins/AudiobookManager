@@ -1,4 +1,4 @@
-// lib/services/metadata_matcher.dart - REFACTORED
+// lib/services/metadata_matcher.dart - UPDATED with three distinct operations
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
@@ -41,7 +41,7 @@ class MetadataMatcher {
     await _coverArtManager.initialize();
   }
   
-  /// Match a file with online metadata
+  /// ORIGINAL: Match a file with online metadata (now uses enhance by default)
   Future<AudiobookMetadata?> matchWithOnlineSources(AudiobookMetadata metadata, String filePath) async {
     try {
       // FIRST: Ensure we have the cover from the file (embedded or existing)
@@ -60,10 +60,10 @@ class MetadataMatcher {
       final cachedResult = cache.getMetadata(searchQuery);
       if (cachedResult != null) {
         Logger.log('Found cached result for query: "$searchQuery"');
-        // Merge with cached result but preserve file-specific data
-        final mergedMetadata = metadata.merge(cachedResult);
-        await storageManager.updateMetadataForFile(filePath, mergedMetadata, force: true);
-        return mergedMetadata;
+        // Use enhance method for automatic operations
+        final enhancedMetadata = metadata.enhance(cachedResult);
+        await storageManager.updateMetadataForFile(filePath, enhancedMetadata, force: true);
+        return enhancedMetadata;
       }
       
       // Search for matches
@@ -75,11 +75,12 @@ class MetadataMatcher {
         // Cache the search result
         await cache.saveMetadata(searchQuery, onlineMetadata);
         
-        // Merge the metadata (using built-in merge method)
-        AudiobookMetadata mergedMetadata = metadata.merge(onlineMetadata);
+        // Use enhance method for automatic operations - fills gaps without overwriting
+        AudiobookMetadata enhancedMetadata = metadata.enhance(onlineMetadata);
         
+        // Special handling for series information
         if (onlineMetadata.series.isEmpty && metadata.series.isNotEmpty) {
-          mergedMetadata = mergedMetadata.copyWith(
+          enhancedMetadata = enhancedMetadata.copyWith(
             series: metadata.series,
             seriesPosition: metadata.seriesPosition,
           );
@@ -95,24 +96,24 @@ class MetadataMatcher {
             coverPath == null) {
           
           Logger.log('No existing cover found, attempting to download online cover');
-          final downloadedCoverPath = await _coverArtManager.downloadCover(filePath, onlineMetadata.thumbnailUrl);
+          final downloadedCoverPath = await _coverArtManager.updateCoverFromUrl(filePath, onlineMetadata.thumbnailUrl);
           if (downloadedCoverPath != null) {
-            // Update merged metadata with downloaded cover path
-            mergedMetadata = mergedMetadata.copyWith(thumbnailUrl: downloadedCoverPath);
+            // Update enhanced metadata with downloaded cover path
+            enhancedMetadata = enhancedMetadata.copyWith(thumbnailUrl: downloadedCoverPath);
             Logger.log('Downloaded and set cover image: $downloadedCoverPath');
           }
         } else if (coverPath != null) {
           Logger.log('Keeping existing cover instead of downloading online cover');
           // Ensure the existing cover path is preserved
-          mergedMetadata = mergedMetadata.copyWith(thumbnailUrl: coverPath);
+          enhancedMetadata = enhancedMetadata.copyWith(thumbnailUrl: coverPath);
         } else if (!autoDownloadCovers) {
           Logger.log('Auto-download covers disabled, skipping online cover');
         }
         
-        // Save the final merged metadata using storage manager
-        await storageManager.updateMetadataForFile(filePath, mergedMetadata, force: true);
+        // Save the final enhanced metadata using storage manager
+        await storageManager.updateMetadataForFile(filePath, enhancedMetadata, force: true);
         
-        return mergedMetadata;
+        return enhancedMetadata;
       }
       
       // If no online match, just ensure we have the cover
@@ -127,6 +128,153 @@ class MetadataMatcher {
       return null;
     }
   }
+
+  Future<AudiobookMetadata?> enhanceMetadata(AudiobookFile file, AudiobookMetadata enhancement) async {
+    try {
+      if (file.metadata == null) {
+        // No existing metadata, use enhancement directly
+        final success = await storageManager.updateMetadataForFile(file.path, enhancement, force: true);
+        if (success) {
+          file.metadata = enhancement;
+          Logger.log('No existing metadata, using enhancement directly for: ${file.filename}');
+          return enhancement;
+        }
+        return null;
+      }
+      
+      // Enhance existing metadata - only fills empty fields (does NOT update cover automatically)
+      AudiobookMetadata enhancedMetadata = file.metadata!.enhance(enhancement);
+      
+      // Save the enhanced metadata
+      final success = await storageManager.updateMetadataForFile(file.path, enhancedMetadata, force: true);
+      if (success) {
+        file.metadata = enhancedMetadata;
+        Logger.log('Enhanced metadata for: ${file.filename}');
+        
+        // CRITICAL: Save the entire library to ensure persistence
+        await storageManager.saveLibrary([file]); // This might need to be called differently based on your LibraryManager structure
+        
+        return enhancedMetadata;
+      }
+      
+      return null;
+    } catch (e) {
+      Logger.error('Error enhancing metadata for file: ${file.path}', e);
+      return null;
+    }
+  }
+
+  // 2. UPDATE: Replace with better version of same book
+  Future<AudiobookMetadata?> updateToNewVersion(AudiobookFile file, AudiobookMetadata newVersion, {bool updateCover = false}) async {
+    try {
+      if (file.metadata == null) {
+        // No existing metadata, use new version directly
+        final success = await storageManager.updateMetadataForFile(file.path, newVersion, force: true);
+        if (success) {
+          file.metadata = newVersion;
+          Logger.log('No existing metadata, using new version directly for: ${file.filename}');
+          return newVersion;
+        }
+        return null;
+      }
+      
+      // Update to new version while preserving user data
+      AudiobookMetadata updatedMetadata = file.metadata!.updateVersion(newVersion);
+      
+      // Handle cover update if requested using CoverArtManager's simple API
+      if (updateCover && newVersion.thumbnailUrl.isNotEmpty) {
+        Logger.log('Updating cover for new version: ${file.filename}');
+        
+        String? localCoverPath;
+        if (newVersion.thumbnailUrl.startsWith('http')) {
+          // Download cover using CoverArtManager
+          localCoverPath = await _coverArtManager.updateCoverFromUrl(file.path, newVersion.thumbnailUrl);
+        } else {
+          // Update from local path using CoverArtManager
+          localCoverPath = await _coverArtManager.updateCoverFromLocalFile(file.path, newVersion.thumbnailUrl);
+        }
+        
+        if (localCoverPath != null) {
+          updatedMetadata = updatedMetadata.copyWith(thumbnailUrl: localCoverPath);
+          Logger.log('Updated cover for: ${file.filename}');
+        } else {
+          Logger.warning('Failed to update cover from: ${newVersion.thumbnailUrl}');
+        }
+      }
+      
+      // Save the updated metadata
+      final success = await storageManager.updateMetadataForFile(file.path, updatedMetadata, force: true);
+      if (success) {
+        file.metadata = updatedMetadata;
+        Logger.log('Updated to new version for: ${file.filename}');
+        
+        // CRITICAL: Force save the changes
+        await storageManager.saveLibrary([file]);
+        
+        return updatedMetadata;
+      }
+      
+      return null;
+    } catch (e) {
+      Logger.error('Error updating to new version for file: ${file.path}', e);
+      return null;
+    }
+  }
+
+  // 3. REPLACE: Completely different book
+  Future<AudiobookMetadata?> replaceWithDifferentBook(AudiobookFile file, AudiobookMetadata newBook, {bool updateCover = false}) async {
+    try {
+      AudiobookMetadata replacedMetadata;
+      
+      if (file.metadata == null) {
+        // No existing metadata, use new book directly
+        replacedMetadata = newBook.copyWith(id: file.path); // Ensure ID matches file path
+        Logger.log('No existing metadata, using new book directly for: ${file.filename}');
+      } else {
+        // Replace with different book - resets user data
+        replacedMetadata = file.metadata!.replaceBook(newBook);
+        Logger.log('Replacing with different book (resetting user data) for: ${file.filename}');
+      }
+      
+      // Handle cover update if requested using CoverArtManager's simple API
+      if (updateCover && newBook.thumbnailUrl.isNotEmpty) {
+        Logger.log('Replacing cover for different book: ${file.filename}');
+        
+        String? localCoverPath;
+        if (newBook.thumbnailUrl.startsWith('http')) {
+          // Download new cover using CoverArtManager
+          localCoverPath = await _coverArtManager.updateCoverFromUrl(file.path, newBook.thumbnailUrl);
+        } else {
+          // Update from local path using CoverArtManager
+          localCoverPath = await _coverArtManager.updateCoverFromLocalFile(file.path, newBook.thumbnailUrl);
+        }
+        
+        if (localCoverPath != null) {
+          replacedMetadata = replacedMetadata.copyWith(thumbnailUrl: localCoverPath);
+          Logger.log('Set new cover for replaced book: ${file.filename}');
+        } else {
+          Logger.warning('Failed to update cover from: ${newBook.thumbnailUrl}');
+        }
+      }
+      
+      // Save the replaced metadata
+      final success = await storageManager.updateMetadataForFile(file.path, replacedMetadata, force: true);
+      if (success) {
+        file.metadata = replacedMetadata;
+        Logger.log('Successfully replaced with different book for: ${file.filename}');
+        
+        // CRITICAL: Force save the changes
+        await storageManager.saveLibrary([file]);
+        
+        return replacedMetadata;
+      }
+      
+      return null;
+    } catch (e) {
+      Logger.error('Error replacing with different book for file: ${file.path}', e);
+      return null;
+    }
+  }
   
   /// Manually download cover for a file (user-initiated)
   Future<AudiobookMetadata?> downloadCoverForFile(AudiobookFile file, String imageUrl) async {
@@ -135,7 +283,7 @@ class MetadataMatcher {
       
       Logger.log('User-initiated cover download for: ${file.filename}');
       
-      final downloadedCoverPath = await _coverArtManager.downloadCover(file.path, imageUrl);
+      final downloadedCoverPath = await _coverArtManager.updateCoverFromUrl(file.path, imageUrl);
       if (downloadedCoverPath != null) {
         // Update metadata with downloaded cover
         final updatedMetadata = file.metadata!.copyWith(thumbnailUrl: downloadedCoverPath);
@@ -189,6 +337,72 @@ class MetadataMatcher {
       Logger.error('Error searching covers online', e);
       return [];
     }
+  }
+  
+  /// Get similarity score between current and new metadata (for UI suggestions)
+  double calculateSimilarity(AudiobookMetadata current, AudiobookMetadata new_) {
+    double score = 0.0;
+    int checks = 0;
+    
+    // Title similarity (40% weight)
+    if (current.title.isNotEmpty && new_.title.isNotEmpty) {
+      final titleSimilarity = _stringSimilarity(current.title.toLowerCase(), new_.title.toLowerCase());
+      score += titleSimilarity * 0.4;
+      checks++;
+    }
+    
+    // Author similarity (40% weight)
+    if (current.authors.isNotEmpty && new_.authors.isNotEmpty) {
+      final authorSimilarity = _listSimilarity(
+        current.authors.map((a) => a.toLowerCase()).toList(),
+        new_.authors.map((a) => a.toLowerCase()).toList(),
+      );
+      score += authorSimilarity * 0.4;
+      checks++;
+    }
+    
+    // Series similarity (20% weight)
+    if (current.series.isNotEmpty && new_.series.isNotEmpty) {
+      final seriesSimilarity = _stringSimilarity(current.series.toLowerCase(), new_.series.toLowerCase());
+      score += seriesSimilarity * 0.2;
+      checks++;
+    }
+    
+    return checks > 0 ? score : 0.0;
+  }
+  
+  /// Calculate string similarity using Jaccard index
+  double _stringSimilarity(String a, String b) {
+    if (a == b) return 1.0;
+    if (a.isEmpty || b.isEmpty) return 0.0;
+    
+    // Simple similarity based on common words
+    final wordsA = a.split(' ').where((w) => w.length > 2).toSet();
+    final wordsB = b.split(' ').where((w) => w.length > 2).toSet();
+    
+    if (wordsA.isEmpty || wordsB.isEmpty) return 0.0;
+    
+    final intersection = wordsA.intersection(wordsB).length;
+    final union = wordsA.union(wordsB).length;
+    
+    return intersection / union;
+  }
+  
+  /// Calculate similarity between two lists of strings
+  double _listSimilarity(List<String> a, List<String> b) {
+    if (a.isEmpty || b.isEmpty) return 0.0;
+    
+    int matches = 0;
+    for (final itemA in a) {
+      for (final itemB in b) {
+        if (_stringSimilarity(itemA, itemB) > 0.8) {
+          matches++;
+          break;
+        }
+      }
+    }
+    
+    return matches / (a.length > b.length ? a.length : b.length);
   }
   
   /// Build a simple search query with title and author
@@ -329,31 +543,6 @@ class MetadataMatcher {
       return false;
     } catch (e) {
       Logger.error('Error updating metadata for file', e);
-      return false;
-    }
-  }
-  
-  /// Update cover image for a file (public method)
-  Future<bool> updateCoverImage(AudiobookFile file, String coverSource) async {
-    try {
-      if (file.metadata == null) return false;
-      
-      String? localPath;
-      if (coverSource.startsWith('http://') || coverSource.startsWith('https://')) {
-        // Download from URL
-        localPath = await _coverArtManager.updateCover(file.path, downloadUrl: coverSource);
-      } else {
-        // Set from local file
-        localPath = await _coverArtManager.updateCover(file.path, localImagePath: coverSource);
-      }
-      
-      if (localPath == null) return false;
-      
-      // Update metadata with new cover path
-      final updatedMetadata = file.metadata!.copyWith(thumbnailUrl: localPath);
-      return await updateMetadataForFile(file, updatedMetadata);
-    } catch (e) {
-      Logger.error('Error updating cover image', e);
       return false;
     }
   }

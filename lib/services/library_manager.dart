@@ -319,31 +319,57 @@ class LibraryManager {
     AudiobookMetadata Function(AudiobookMetadata) updateFunction,
   ) async {
     try {
-      if (file.metadata == null) return false;
+      if (file.metadata == null) {
+        Logger.warning('Cannot update metadata for file without existing metadata: ${file.filename}');
+        return false;
+      }
       
       final updatedMetadata = updateFunction(file.metadata!);
+      
+      return await updateMetadata(file, updatedMetadata);
+    } catch (e) {
+      Logger.error('Error in _updateFileMetadata for ${file.filename}', e);
+      return false;
+    }
+  }
+
+  Future<bool> updateMetadata(AudiobookFile file, AudiobookMetadata metadata) async {
+    try {
+      Logger.log('Updating metadata for file: ${file.filename}');
+      
+      // Update the metadata in storage first
       final success = await _storageManager.updateMetadataForFile(
         file.path, 
-        updatedMetadata, 
+        metadata, 
         force: true
       );
       
       if (success) {
-        file.metadata = updatedMetadata;
+        // Update the file object
+        file.metadata = metadata;
+        
+        // CRITICAL: Save the entire library to ensure persistence
         await _storageManager.saveLibrary(_files);
+        
+        // Find and update the file in the library list
+        final fileIndex = _files.indexWhere((f) => f.path == file.path);
+        if (fileIndex != -1) {
+          _files[fileIndex] = file;
+        }
+        
+        // Notify listeners about the change
         _notifyLibraryChanged();
+        
+        Logger.log('Successfully updated metadata for: ${file.filename}');
+        return true;
       }
       
-      return success;
+      Logger.error('Failed to update metadata in storage for: ${file.filename}');
+      return false;
     } catch (e) {
-      Logger.error('Error updating metadata', e);
+      Logger.error('Error updating metadata for ${file.filename}', e);
       return false;
     }
-  }
-  
-  // Update metadata for a specific file
-  Future<bool> updateMetadata(AudiobookFile file, AudiobookMetadata metadata) async {
-    return _updateFileMetadata(file, (_) => metadata);
   }
 
   // Get the current library
@@ -359,22 +385,41 @@ class LibraryManager {
   // Update cover image for a specific file
   Future<bool> updateCoverImage(AudiobookFile file, String coverSource) async {
     try {
-      final success = await _metadataMatcher.updateCoverImage(file, coverSource);
+      Logger.log('Updating cover image for: ${file.filename} from source: $coverSource');
       
-      if (success) {
-        // Reload the metadata from storage
-        final updatedMetadata = await _storageManager.getMetadataForFile(file.path);
-        if (updatedMetadata != null) {
-          file.metadata = updatedMetadata;
-        }
-        
-        await _storageManager.saveLibrary(_files);
-        _notifyLibraryChanged();
-        
-        Logger.log('Successfully updated cover image for: ${file.filename}');
+      String? localCoverPath;
+      
+      if (coverSource.startsWith('http://') || coverSource.startsWith('https://')) {
+        // Download from URL using CoverArtManager (handles all cache management)
+        localCoverPath = await _coverArtManager.updateCoverFromUrl(file.path, coverSource);
+      } else {
+        // Update from local file using CoverArtManager (handles all cache management)
+        localCoverPath = await _coverArtManager.updateCoverFromLocalFile(file.path, coverSource);
       }
       
-      return success;
+      if (localCoverPath == null) {
+        Logger.error('CoverArtManager failed to update cover from: $coverSource');
+        return false;
+      }
+      
+      // Update the metadata with the new cover path (CoverArtManager gives us unique path)
+      if (file.metadata != null) {
+        final updatedMetadata = file.metadata!.copyWith(thumbnailUrl: localCoverPath);
+        
+        // Use the standard updateMetadata method to ensure proper persistence
+        final success = await updateMetadata(file, updatedMetadata);
+        
+        if (success) {
+          Logger.log('Successfully updated cover image for: ${file.filename} -> $localCoverPath');
+          return true;
+        } else {
+          Logger.error('Failed to update metadata with new cover path');
+          return false;
+        }
+      } else {
+        Logger.error('Cannot update cover for file without metadata: ${file.filename}');
+        return false;
+      }
     } catch (e) {
       Logger.error('Error updating cover image for file: ${file.path}', e);
       return false;

@@ -95,9 +95,8 @@ class AudiobookGridItem extends StatelessWidget {
             ),
           ),
           
-          // Bottom section with book info and controls - FIXED HEIGHT, docked to bottom
           Container(
-            height: 112, // Fixed bottom section height (increased slightly)
+            height: 130, // Increased height to accommodate genre
             width: double.infinity,
             decoration: const BoxDecoration(
               borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
@@ -114,6 +113,7 @@ class AudiobookGridItem extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.start,
                       children: [
+                        const SizedBox(height: 8),
                         // Title - Fixed height
                         SizedBox(
                           height: 32, // Fixed height for 2 lines
@@ -130,7 +130,7 @@ class AudiobookGridItem extends StatelessWidget {
                           ),
                         ),
                         
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 8),
                         
                         // Author - Fixed height
                         SizedBox(
@@ -147,6 +147,26 @@ class AudiobookGridItem extends StatelessWidget {
                           ),
                         ),
                         
+                        const SizedBox(height: 6),
+                        
+                        // Genre - New addition
+                        SizedBox(
+                          height: 14,
+                          child: Text(
+                            _getGenreText(metadata),
+                            style: TextStyle(
+                              color: Theme.of(context).primaryColor.withOpacity(0.7),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w400,
+                              height: 1.1,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        
+                        const SizedBox(height: 4),
+                        
                         // Series info if available
                         if (metadata?.series.isNotEmpty == true)
                           SizedBox(
@@ -154,7 +174,7 @@ class AudiobookGridItem extends StatelessWidget {
                             child: Text(
                               '${metadata!.series}${metadata.seriesPosition.isNotEmpty ? " #${metadata.seriesPosition}" : ""}',
                               style: TextStyle(
-                                color: Theme.of(context).primaryColor.withOpacity(0.8),
+                                color: Colors.grey[500],
                                 fontSize: 10,
                                 fontWeight: FontWeight.w500,
                                 height: 1.1,
@@ -242,6 +262,53 @@ class AudiobookGridItem extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  String _getGenreText(dynamic metadata) {
+    if (metadata == null) return '';
+    
+    // Combine categories and user tags for genre display
+    final List<String> allGenres = [];
+    
+    // Add categories - safely handle different types
+    if (metadata.categories != null) {
+      try {
+        if (metadata.categories is List) {
+          for (var cat in metadata.categories) {
+            final genreStr = cat.toString().trim();
+            if (genreStr.isNotEmpty) {
+              allGenres.add(genreStr);
+            }
+          }
+        }
+      } catch (e) {
+        print('Error processing categories: $e');
+      }
+    }
+    
+    // Add user tags - safely handle different types
+    if (metadata.userTags != null) {
+      try {
+        if (metadata.userTags is List) {
+          for (var tag in metadata.userTags) {
+            final tagStr = tag.toString().trim();
+            if (tagStr.isNotEmpty) {
+              allGenres.add(tagStr);
+            }
+          }
+        }
+      } catch (e) {
+        print('Error processing userTags: $e');
+      }
+    }
+    
+    final uniqueGenres = allGenres.toSet().where((genre) => genre.isNotEmpty).toList();
+    
+    if (uniqueGenres.length == 1) {
+      return uniqueGenres.first;
+    } else {
+      return '${uniqueGenres.first}, ${uniqueGenres[1]}';
+    }
   }
 
   Widget _buildPlaceholder() {

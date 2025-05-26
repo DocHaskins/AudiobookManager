@@ -1,4 +1,5 @@
-// lib/ui/screens/library_screen.dart - Updated to work better with mini-player
+// lib/ui/screens/library_screen.dart - Updated with Settings toggle
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/collection.dart';
@@ -9,6 +10,7 @@ import 'package:audiobook_organizer/ui/widgets/audiobook_list_item.dart';
 import 'package:audiobook_organizer/ui/widgets/collection_grid_item.dart';
 import 'package:audiobook_organizer/ui/widgets/collection_detail_view.dart';
 import 'package:audiobook_organizer/ui/widgets/audiobook_detail_view.dart';
+import 'package:audiobook_organizer/ui/screens/settings_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
   final LibraryManager libraryManager;
@@ -28,6 +30,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   // View states
   bool _showCollections = false;
   bool _isGridView = true;
+  bool _showSettings = false; // NEW: Settings mode
   String _searchQuery = '';
   String _selectedCategory = 'All';
   
@@ -37,16 +40,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
   // Filtered data
   List<AudiobookFile> _filteredBooks = [];
   List<Collection> _filteredCollections = [];
+  
+  // Dynamic genres
+  List<String> _availableGenres = [];
 
   @override
   void initState() {
     super.initState();
+    _updateGenres();
     _updateFilteredData();
     
     // Listen to library changes
     widget.libraryManager.libraryChanged.listen((_) {
       if (mounted) {
         setState(() {
+          _updateGenres();
           _updateFilteredData();
         });
       }
@@ -60,6 +68,79 @@ class _LibraryScreenState extends State<LibraryScreen> {
         });
       }
     });
+  }
+
+  void _updateGenres() {
+    final Set<String> genres = <String>{};
+    
+    // Extract genres from all books
+    for (final book in widget.libraryManager.files) {
+      if (book.metadata != null) {
+        // Check categories field
+        if (book.metadata!.categories.isNotEmpty) {
+          for (final category in book.metadata!.categories) {
+            final cleanGenre = category.trim();
+            if (cleanGenre.isNotEmpty) {
+              genres.add(cleanGenre);
+            }
+          }
+        }
+        
+        // Also check if there are user tags that could be genres
+        if (book.metadata!.userTags.isNotEmpty) {
+          for (final tag in book.metadata!.userTags) {
+            final cleanTag = tag.trim();
+            if (cleanTag.isNotEmpty) {
+              genres.add(cleanTag);
+            }
+          }
+        }
+        
+        // Try to infer genres from series names or titles if no explicit genres
+        if (genres.isEmpty) {
+          final title = book.metadata!.title.toLowerCase();
+          final series = book.metadata!.series.toLowerCase();
+          
+          // Add some basic genre inference based on common patterns
+          if (title.contains('dragon') || series.contains('dragon') || 
+              title.contains('magic') || title.contains('wizard') || 
+              title.contains('fantasy')) {
+            genres.add('Fantasy');
+          } else if (title.contains('murder') || title.contains('detective') || 
+                    title.contains('mystery') || title.contains('crime')) {
+            genres.add('Mystery');
+          } else if (title.contains('romance') || title.contains('love')) {
+            genres.add('Romance');
+          } else if (title.contains('space') || title.contains('sci-fi') || 
+                    title.contains('science fiction') || title.contains('future')) {
+            genres.add('Science Fiction');
+          }
+        }
+      }
+    }
+    
+    // If still no genres found, check if we can add some based on common audiobook patterns
+    if (genres.isEmpty) {
+      // Add common genres that might apply to any collection
+      final commonGenres = ['Fiction', 'Non-Fiction', 'Literature'];
+      for (final book in widget.libraryManager.files) {
+        if (book.metadata != null) {
+          // Simple heuristic: if it's part of a series, likely fiction
+          if (book.metadata!.series.isNotEmpty) {
+            genres.add('Fiction');
+            break;
+          }
+        }
+      }
+    }
+    
+    // Convert to sorted list
+    _availableGenres = genres.toList()..sort();
+    
+    // Debug: Print available genres to console
+    print('Available genres: $_availableGenres');
+    print('Total books: ${widget.libraryManager.files.length}');
+    print('Books with metadata: ${widget.libraryManager.files.where((b) => b.metadata != null).length}');
   }
 
   void _updateFilteredData() {
@@ -83,12 +164,40 @@ class _LibraryScreenState extends State<LibraryScreen> {
             
             final matchesCategory = _selectedCategory == 'All' ||
                 (_selectedCategory == 'Favorites' && metadata.isFavorite) ||
-                metadata.categories.any((cat) => cat.contains(_selectedCategory));
+                (_selectedCategory == 'Recently Added' && _isRecentlyAdded(book)) ||
+                (_selectedCategory == 'In Progress' && _isInProgress(book)) ||
+                metadata.categories.any((cat) => cat.trim() == _selectedCategory);
             
             return matchesSearch && matchesCategory;
           })
           .toList();
     }
+  }
+
+  bool _isRecentlyAdded(AudiobookFile book) {
+    // Check if book was added in the last 30 days
+    final now = DateTime.now();
+    final thirtyDaysAgo = now.subtract(const Duration(days: 30));
+    
+    // You might need to adjust this based on how you track when books were added
+    // For now, we'll use file modification time as a proxy
+    try {
+      final file = File(book.path);
+      final lastModified = file.lastModifiedSync();
+      return lastModified.isAfter(thirtyDaysAgo);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  bool _isInProgress(AudiobookFile book) {
+    // Check if the book has been started but not finished
+    final metadata = book.metadata;
+    if (metadata?.playbackPosition != null && metadata!.audioDuration != null) {
+      final progress = metadata.playbackPosition!.inMilliseconds / metadata.audioDuration!.inMilliseconds;
+      return progress > 0.01 && progress < 0.95; // Started but not nearly finished
+    }
+    return false;
   }
 
   void _navigateToDetail(Widget detailView) {
@@ -105,6 +214,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  // NEW: Toggle settings mode
+  void _toggleSettings() {
+    setState(() {
+      _showSettings = !_showSettings;
+      if (_showSettings) {
+        // Reset other states when entering settings
+        _searchQuery = '';
+        _selectedCategory = 'All';
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -115,16 +236,18 @@ class _LibraryScreenState extends State<LibraryScreen> {
           Container(
             width: 280,
             color: const Color(0xFF000000),
-            child: _buildSidebar(),
+            child: _showSettings ? _buildSettingsSidebar() : _buildSidebar(),
           ),
           
           // Main Content Area
           Expanded(
             child: Container(
               color: const Color(0xFF121212),
-              child: _navigationStack.isEmpty
-                  ? _buildMainContent()
-                  : _buildDetailContent(),
+              child: _showSettings 
+                  ? _buildSettingsContent()
+                  : (_navigationStack.isEmpty
+                      ? _buildMainContent()
+                      : _buildDetailContent()),
             ),
           ),
         ],
@@ -135,7 +258,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget _buildSidebar() {
     return Column(
       children: [
-        // Logo/App Name
+        // Logo/App Name with Settings Icon
         Container(
           padding: const EdgeInsets.all(24),
           child: Row(
@@ -146,13 +269,25 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 size: 32,
               ),
               const SizedBox(width: 12),
-              const Text(
-                'Audiobooks',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
+              const Expanded(
+                child: Text(
+                  'Audiobooks',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
+              ),
+              // NEW: Settings Icon
+              IconButton(
+                icon: const Icon(
+                  Icons.settings,
+                  color: Colors.white70,
+                  size: 24,
+                ),
+                onPressed: _toggleSettings,
+                tooltip: 'Settings',
               ),
             ],
           ),
@@ -226,26 +361,47 @@ class _LibraryScreenState extends State<LibraryScreen> {
         
         // Categories/Filters
         Expanded(
-          child: ListView(
+          child: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 16),
-            children: [
-              _buildCategoryItem('All', Icons.library_books),
-              if (!_showCollections) ...[
-                _buildCategoryItem('Favorites', Icons.favorite),
-                _buildCategoryItem('Recently Added', Icons.new_releases),
-                _buildCategoryItem('In Progress', Icons.play_circle_outline),
-                const Divider(color: Color(0xFF2A2A2A), height: 32),
-                _buildSectionTitle('GENRES'),
-                _buildCategoryItem('Fiction', Icons.auto_stories),
-                _buildCategoryItem('Non-Fiction', Icons.menu_book),
-                _buildCategoryItem('Mystery', Icons.search),
-                _buildCategoryItem('Sci-Fi', Icons.rocket_launch),
-              ] else ...[
-                _buildCategoryItem('Series', Icons.collections_bookmark),
-                _buildCategoryItem('Custom', Icons.folder_special),
-                _buildCategoryItem('Author', Icons.person),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildCategoryItem('All', Icons.library_books),
+                if (!_showCollections) ...[
+                  _buildCategoryItem('Favorites', Icons.favorite),
+                  _buildCategoryItem('Recently Added', Icons.new_releases),
+                  _buildCategoryItem('In Progress', Icons.play_circle_outline),
+                  if (_availableGenres.isNotEmpty) ...[
+                    const Divider(color: Color(0xFF2A2A2A), height: 32),
+                    _buildSectionTitle('GENRES'),
+                    // Scrollable genre list
+                    Container(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height * 0.4, // Max 40% of screen height
+                      ),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        physics: const BouncingScrollPhysics(),
+                        itemCount: _availableGenres.length,
+                        itemBuilder: (context, index) {
+                          final genre = _availableGenres[index];
+                          return _buildCategoryItem(
+                            genre,
+                            _getGenreIcon(genre),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ] else ...[
+                  _buildCategoryItem('Series', Icons.collections_bookmark),
+                  _buildCategoryItem('Custom', Icons.folder_special),
+                  _buildCategoryItem('Author', Icons.person),
+                ],
+                // Add some bottom padding to ensure last item is visible
+                const SizedBox(height: 16),
               ],
-            ],
+            ),
           ),
         ),
         
@@ -282,6 +438,143 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ],
     );
+  }
+
+  // NEW: Settings Sidebar
+  Widget _buildSettingsSidebar() {
+    return Column(
+      children: [
+        // Header with back button
+        Container(
+          padding: const EdgeInsets.all(24),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(
+                  Icons.arrow_back,
+                  color: Colors.white70,
+                  size: 24,
+                ),
+                onPressed: _toggleSettings,
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'Settings',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+        
+        // Settings Categories
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildSettingsCategoryItem('Library', Icons.library_books, 'Library'),
+                _buildSettingsCategoryItem('Theme', Icons.palette, 'Theme'),
+                _buildSettingsCategoryItem('Collections', Icons.collections_bookmark, 'Collections'),
+                _buildSettingsCategoryItem('Playback', Icons.play_circle, 'Playback'),
+                _buildSettingsCategoryItem('Storage', Icons.storage, 'Storage'),
+                _buildSettingsCategoryItem('About', Icons.info_outline, 'About'),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // NEW: Settings category item
+  Widget _buildSettingsCategoryItem(String title, IconData icon, String category) {
+    final isSelected = _selectedCategory == category;
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _selectedCategory = category;
+        });
+      },
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF2A2A2A) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? Theme.of(context).primaryColor : Colors.grey[400],
+              size: 22,
+            ),
+            const SizedBox(width: 16),
+            Text(
+              title,
+              style: TextStyle(
+                color: isSelected ? Colors.white : Colors.grey[400],
+                fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // NEW: Settings Content
+  Widget _buildSettingsContent() {
+    return SettingsPanel(
+      selectedCategory: _selectedCategory,
+      libraryManager: widget.libraryManager,
+      collectionManager: widget.collectionManager,
+    );
+  }
+
+  IconData _getGenreIcon(String genre) {
+    // Map common genres to appropriate icons
+    final genreMap = {
+      'fiction': Icons.auto_stories,
+      'non-fiction': Icons.menu_book,
+      'mystery': Icons.search,
+      'sci-fi': Icons.rocket_launch,
+      'science fiction': Icons.rocket_launch,
+      'fantasy': Icons.castle,
+      'romance': Icons.favorite,
+      'thriller': Icons.flash_on,
+      'horror': Icons.warning,
+      'biography': Icons.person,
+      'autobiography': Icons.person,
+      'history': Icons.history_edu,
+      'business': Icons.business,
+      'self-help': Icons.psychology,
+      'health': Icons.health_and_safety,
+      'cooking': Icons.restaurant,
+      'travel': Icons.flight,
+      'technology': Icons.computer,
+      'science': Icons.science,
+      'philosophy': Icons.psychology_alt,
+      'religion': Icons.church,
+      'spirituality': Icons.spa,
+      'true crime': Icons.gavel,
+      'comedy': Icons.sentiment_very_satisfied,
+      'drama': Icons.theater_comedy,
+      'adventure': Icons.explore,
+      'children': Icons.child_care,
+      'young adult': Icons.school,
+      'classic': Icons.library_books,
+      'poetry': Icons.format_quote,
+    };
+
+    final lowerGenre = genre.toLowerCase();
+    return genreMap[lowerGenre] ?? Icons.category;
   }
 
   Widget _buildToggleButton(String label, bool isSelected, VoidCallback onTap) {
