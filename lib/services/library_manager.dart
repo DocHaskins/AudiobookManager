@@ -1,4 +1,4 @@
-// lib/services/library_manager.dart - ENHANCED with proper cache clearing
+// lib/services/library_manager.dart
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';

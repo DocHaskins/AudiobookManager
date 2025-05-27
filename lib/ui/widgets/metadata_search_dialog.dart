@@ -1,4 +1,4 @@
-// lib/ui/widgets/metadata_search_dialog.dart - FIXED
+// lib/ui/widgets/metadata_search_dialog.dart
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';

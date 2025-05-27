@@ -1,4 +1,4 @@
-// lib/utils/logger.dart - Enhanced for better debugging
+// lib/utils/logger.dart 
 import 'dart:io';
 import 'dart:async';
 import 'dart:collection';

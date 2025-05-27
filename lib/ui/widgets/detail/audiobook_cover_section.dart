@@ -1,4 +1,4 @@
-// lib/ui/widgets/detail/audiobook_cover_section.dart - FIXED
+// lib/ui/widgets/detail/audiobook_cover_section.dart
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:io';

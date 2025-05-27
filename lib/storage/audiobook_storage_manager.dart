@@ -1,4 +1,4 @@
-// lib/storage/audiobook_storage_manager.dart - UPDATED to support all three operations
+// lib/storage/audiobook_storage_manager.dart
 import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';

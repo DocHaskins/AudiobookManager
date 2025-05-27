@@ -1,6 +1,4 @@
-// =============================================================================
-// lib/ui/widgets/detail/missing_file_widget.dart - Missing file display
-// =============================================================================
+// lib/ui/widgets/detail/missing_file_widget.dart
 
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';

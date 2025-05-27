@@ -1,4 +1,4 @@
-// lib/ui/screens/library_screen.dart - Updated with proper responsive grid for new cards
+// lib/ui/screens/library_screen.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -754,7 +754,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: GridView.builder(
-                // FIXED: Custom delegate with absolutely fixed dimensions
                 gridDelegate: _FixedSizeGridDelegate(
                   crossAxisCount: crossAxisCount,
                   itemWidth: cardWidth,
@@ -850,7 +849,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Simple calculation for collection grid: fixed item width
-        const double itemWidth = 200;  // Fixed width for each collection
+        const double itemWidth = 200;
         const double spacing = 20;
         
         // Calculate how many items fit across the width

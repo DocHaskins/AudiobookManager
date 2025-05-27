@@ -1,6 +1,4 @@
-// =============================================================================
-// lib/ui/widgets/detail/detail_controllers_mixin.dart - Controllers management
-// =============================================================================
+// lib/ui/widgets/detail/detail_controllers_mixin.dart
 
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';

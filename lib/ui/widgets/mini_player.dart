@@ -1,4 +1,4 @@
-// lib/widgets/mini_player.dart - Three-section Spotify layout with centered progress
+// lib/widgets/mini_player.dart 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
@@ -376,7 +376,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
     );
   }
 
-  // CENTER SECTION: Just player controls now
+  // CENTER SECTION
   Widget _buildCenterControlsSection(bool hasActiveAudio) {
     return Consumer<AudioPlayerService>(
       builder: (context, playerService, child) {
@@ -387,7 +387,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
             IconButton(
               icon: Icon(
                 Icons.replay_10,
-                size: 20,
+                size: 32,
                 color: hasActiveAudio ? Colors.white : Colors.grey[500],
               ),
               onPressed: hasActiveAudio ? () async {
@@ -406,8 +406,8 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
             
             // Play/Pause button
             Container(
-              width: 32,
-              height: 32,
+              width: 48,
+              height: 48,
               decoration: const BoxDecoration(
                 color: Colors.white,
                 shape: BoxShape.circle,
@@ -420,7 +420,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                   child: Icon(
                     _isPlaying ? Icons.pause : Icons.play_arrow,
                     color: Colors.black,
-                    size: 18,
+                    size: 28,
                   ),
                 ),
               ),
@@ -432,7 +432,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
             IconButton(
               icon: Icon(
                 Icons.forward_30,
-                size: 20,
+                size: 32,
                 color: hasActiveAudio ? Colors.white : Colors.grey[500],
               ),
               onPressed: hasActiveAudio ? () async {

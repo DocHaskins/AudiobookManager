@@ -42,9 +42,9 @@ class CollectionGridItem extends StatelessWidget {
               ),
             ),
             
-            // Collection Info - FIXED HEIGHT, docked to bottom
+            // Collection Info
             Container(
-              height: 72, // Fixed bottom section height
+              height: 72,
               width: double.infinity,
               decoration: const BoxDecoration(
                 borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),

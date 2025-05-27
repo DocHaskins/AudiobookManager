@@ -221,7 +221,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                       ),
                     ),
                     
-                    // Info Section - Fixed Height
+                    // Info Section
                     Container(
                       height: 140,
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -247,7 +247,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                           
                           const SizedBox(height: 6), // Reduced from 8
                           
-                          // Author - Fixed space
+                          // Author
                           SizedBox(
                             height: 15, // Reduced from 16
                             child: Text(
@@ -266,7 +266,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                           
                           // Series and Duration Row
                           SizedBox(
-                            height: 14, // Fixed height for this row
+                            height: 14,
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
@@ -299,12 +299,12 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                             ),
                           ),
                           
-                          const SizedBox(height: 8), // Fixed spacing instead of Spacer
+                          const SizedBox(height: 8),
                           
                           // Genre Tag at Bottom
                           if (_getGenreText(metadata).isNotEmpty)
                             Container(
-                              height: 20, // Fixed height for genre tag
+                              height: 20,
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                               decoration: BoxDecoration(
                                 color: const Color(0xFF6366F1).withOpacity(0.2),

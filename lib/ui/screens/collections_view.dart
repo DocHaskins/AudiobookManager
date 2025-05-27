@@ -238,7 +238,7 @@ class _CollectionsViewState extends State<CollectionsView>
     return LayoutBuilder(
       builder: (context, constraints) {
         // Simple calculation for collection grid: fixed item width
-        const double itemWidth = 200;  // Fixed width for each collection (same as books)
+        const double itemWidth = 200;
         const double spacing = 20;
         
         // Calculate how many items fit across the width

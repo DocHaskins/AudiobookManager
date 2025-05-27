@@ -1,4 +1,4 @@
-// lib/ui/screens/player_screen.dart - Responsive three-section layout
+// lib/ui/screens/player_screen.dart
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';

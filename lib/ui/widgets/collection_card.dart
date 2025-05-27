@@ -101,9 +101,9 @@ class CollectionCard extends StatelessWidget {
                 ),
               ),
               
-              // Bottom section - FIXED HEIGHT, docked to bottom
+              // Bottom section
               Container(
-                height: 80, // Fixed bottom section height
+                height: 80,
                 width: double.infinity,
                 padding: const EdgeInsets.only(top: 12),
                 child: Column(
@@ -294,7 +294,7 @@ class CollectionGridView extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Simple calculation for collection grid: fixed item width
-        const double itemWidth = 220;  // Fixed width for each collection
+        const double itemWidth = 220;
         const double spacing = 16;
         
         // Calculate how many items fit across the width
