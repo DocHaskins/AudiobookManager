@@ -800,6 +800,100 @@ class LibraryManager {
       return false;
     }
   }
+
+  Future<bool> replaceFileInLibrary(
+    String oldFilePath,
+    String newFilePath,
+    AudiobookMetadata metadata,
+  ) async {
+    try {
+      Logger.log('Replacing file in library: $oldFilePath -> $newFilePath');
+      
+      // Find the existing file in the library
+      final existingFileIndex = _files.indexWhere((f) => f.path == oldFilePath);
+      if (existingFileIndex == -1) {
+        Logger.error('Original file not found in library: $oldFilePath');
+        return false;
+      }
+      
+      final existingFile = _files[existingFileIndex];
+      
+      // Verify the new file exists
+      final newFile = File(newFilePath);
+      if (!await newFile.exists()) {
+        Logger.error('New file does not exist: $newFilePath');
+        return false;
+      }
+      
+      // Create new AudiobookFile object
+      final stat = await newFile.stat();
+      final newAudiobookFile = AudiobookFile(
+        path: newFilePath,
+        lastModified: stat.modified,
+        fileSize: stat.size,
+        metadata: metadata.copyWith(
+          fileFormat: path_util.extension(newFilePath).toLowerCase().replaceFirst('.', '').toUpperCase(),
+        ),
+      );
+      
+      // Update metadata in storage for new file path
+      final metadataSuccess = await _storageManager.updateMetadataForFile(
+        newFilePath,
+        newAudiobookFile.metadata!,
+        force: true,
+      );
+      
+      if (!metadataSuccess) {
+        Logger.error('Failed to store metadata for new file: $newFilePath');
+        return false;
+      }
+      
+      // Handle cover art transfer
+      if (existingFile.metadata?.thumbnailUrl.isNotEmpty ?? false) {
+        final oldCoverPath = existingFile.metadata!.thumbnailUrl;
+        if (!oldCoverPath.startsWith('http') && await File(oldCoverPath).exists()) {
+          // Update cover art manager with new file path
+          final newCoverPath = await _coverArtManager.transferCover(oldFilePath, newFilePath, oldCoverPath);
+          if (newCoverPath != null) {
+            newAudiobookFile.metadata = newAudiobookFile.metadata!.copyWith(thumbnailUrl: newCoverPath);
+            await _storageManager.updateMetadataForFile(newFilePath, newAudiobookFile.metadata!, force: true);
+          }
+        }
+      }
+      
+      // Update collections if the file is in any
+      if (_collectionManager != null) {
+        final collections = _collectionManager!.getCollectionsForBook(oldFilePath);
+        for (final collection in collections) {
+          await _collectionManager!.removeBookFromCollection(collection.id, oldFilePath);
+          await _collectionManager!.addBookToCollection(collection.id, newFilePath);
+        }
+        Logger.log('Updated ${collections.length} collections with new file path');
+      }
+      
+      // Replace the file in the library list
+      _files[existingFileIndex] = newAudiobookFile;
+      
+      // Clean up old metadata
+      await _storageManager.deleteMetadataForFile(oldFilePath);
+      
+      // Clean up old cover
+      await _coverArtManager.removeCover(oldFilePath);
+      
+      // Save the updated library
+      await _storageManager.saveLibrary(_files);
+      
+      // Notify listeners
+      _notifyLibraryChanged();
+      
+      Logger.log('Successfully replaced file in library: $oldFilePath -> $newFilePath');
+      return true;
+      
+    } catch (e) {
+      Logger.error('Error replacing file in library: $oldFilePath -> $newFilePath', e);
+      return false;
+    }
+  }
   
   // Get file by path
   AudiobookFile? getFileByPath(String path) {

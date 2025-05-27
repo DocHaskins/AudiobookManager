@@ -164,10 +164,10 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                                     ),
                                   ),
                                 ),
-                              ),
+                              ),     
                             ),
                           
-                          // Hover Controls
+                          // Hover Controls - Positioned at Bottom
                           AnimatedOpacity(
                             opacity: _isHovered ? 1.0 : 0.0,
                             duration: const Duration(milliseconds: 200),
@@ -178,41 +178,57 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                                 color: Colors.black.withOpacity(0.3),
                                 borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                               ),
-                              child: Center(
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    // Favorite Button
-                                    _buildHoverButton(
-                                      icon: metadata?.isFavorite == true 
-                                          ? Icons.favorite 
-                                          : Icons.favorite_border,
-                                      color: metadata?.isFavorite == true 
-                                          ? Colors.red 
-                                          : Colors.white,
-                                      backgroundColor: Colors.black.withOpacity(0.7),
-                                      onPressed: () => _handleFavoritePress(context),
+                              child: Align(
+                                alignment: Alignment.bottomCenter,
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.transparent,
+                                        Colors.black.withOpacity(0.8),
+                                      ],
                                     ),
-                                    
-                                    const SizedBox(width: 12),
-                                    
-                                    // Play Button
-                                    Consumer<AudioPlayerService>(
-                                      builder: (context, playerService, child) {
-                                        final isCurrentBook = playerService.currentFile?.path == widget.book.path;
-                                        final isPlaying = playerService.isPlaying && isCurrentBook;
-                                        
-                                        return _buildHoverButton(
-                                          icon: isPlaying ? Icons.pause : Icons.play_arrow,
-                                          color: Colors.white,
-                                          backgroundColor: const Color(0xFF3B82F6),
-                                          size: 50,
-                                          iconSize: 24,
-                                          onPressed: () => _handlePlayPress(context, playerService),
-                                        );
-                                      },
-                                    ),
-                                  ],
+                                    borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      // Favorite Button
+                                      _buildHoverButton(
+                                        icon: metadata?.isFavorite == true 
+                                            ? Icons.favorite 
+                                            : Icons.favorite_border,
+                                        color: metadata?.isFavorite == true 
+                                            ? Colors.red 
+                                            : Colors.white,
+                                        backgroundColor: Colors.black.withOpacity(0.7),
+                                        onPressed: () => _handleFavoritePress(context),
+                                      ),
+                                      
+                                      const SizedBox(width: 12),
+                                      
+                                      // Play Button
+                                      Consumer<AudioPlayerService>(
+                                        builder: (context, playerService, child) {
+                                          final isCurrentBook = playerService.currentFile?.path == widget.book.path;
+                                          final isPlaying = playerService.isPlaying && isCurrentBook;
+                                          
+                                          return _buildHoverButton(
+                                            icon: isPlaying ? Icons.pause : Icons.play_arrow,
+                                            color: Colors.white,
+                                            backgroundColor: const Color(0xFF3B82F6),
+                                            size: 50,
+                                            iconSize: 24,
+                                            onPressed: () => _handlePlayPress(context, playerService),
+                                          );
+                                        },
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),

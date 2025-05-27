@@ -1,12 +1,17 @@
 // lib/ui/widgets/detail/utils/detail_actions.dart
+import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:path/path.dart' as path_util;
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
+import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/ui/widgets/detail/detail_controllers_mixin.dart';
 import 'package:audiobook_organizer/ui/widgets/metadata_search_dialog.dart';
+import 'package:audiobook_organizer/ui/widgets/conversion_progress_dialog.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
 class DetailActions {
@@ -278,6 +283,265 @@ class DetailActions {
       }
     } finally {
       onUpdateMetadataStatus(false);
+    }
+  }
+
+  // NEW: Convert MP3 to M4B method with progress dialog
+  Future<void> convertToM4B(
+    BuildContext context,
+    AudiobookFile book,
+  ) async {
+    if (book.extension.toLowerCase() != '.mp3') {
+      if (context.mounted) {
+        _showSnackBar(context, 'Can only convert MP3 files to M4B', Colors.orange);
+      }
+      return;
+    }
+
+    if (book.metadata == null) {
+      if (context.mounted) {
+        _showSnackBar(context, 'Cannot convert file without metadata', Colors.orange);
+      }
+      return;
+    }
+
+    // Show confirmation dialog
+    if (context.mounted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.transform, color: Colors.purple),
+              SizedBox(width: 8),
+              Text('Convert to M4B'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Convert "${book.filename}" to M4B format?'),
+              const SizedBox(height: 16),
+              const Text(
+                'This will:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const Text('• Convert MP3 to M4B using FFmpeg'),
+              const Text('• Transfer all metadata to new file'),
+              const Text('• Delete original MP3 file'),
+              const Text('• Update library with new M4B file'),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.1),
+                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.warning, color: Colors.orange, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'This action cannot be undone. Make sure you have backups if needed.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.purple,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Convert'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true) {
+        return;
+      }
+    }
+
+    try {
+      Logger.log('Starting MP3 to M4B conversion for: ${book.filename}');
+      
+      // Check if FFmpeg is available using MetadataService
+      final metadataService = MetadataService();
+      final ffmpegAvailable = await metadataService.isFFmpegAvailableForConversion();
+      
+      if (!ffmpegAvailable) {
+        Logger.error('FFmpeg not available for conversion');
+        if (context.mounted) {
+          _showSnackBar(
+            context,
+            'FFmpeg is required for conversion.\nPlease install FFmpeg and add it to your system PATH.\nDownload from: https://ffmpeg.org/download.html',
+            Colors.red,
+            duration: const Duration(seconds: 8),
+          );
+        }
+        return;
+      }
+
+      Logger.log('FFmpeg is available for conversion');
+
+      // Create M4B file path
+      final originalPath = book.path;
+      final directory = path_util.dirname(originalPath);
+      final baseName = path_util.basenameWithoutExtension(originalPath);
+      final m4bPath = path_util.join(directory, '$baseName.m4b');
+
+      // Check if M4B file already exists
+      if (await File(m4bPath).exists()) {
+        Logger.error('M4B file already exists: $m4bPath');
+        if (context.mounted) {
+          _showSnackBar(
+            context,
+            'M4B file already exists at target location',
+            Colors.red,
+          );
+        }
+        return;
+      }
+
+      Logger.log('Converting $originalPath to $m4bPath');
+      
+      // Create progress controller
+      final progressController = StreamController<ConversionProgress>.broadcast();
+      bool isCancelled = false;
+      
+      // Show progress dialog
+      if (context.mounted) {
+        ConversionProgressDialog.show(
+          context: context,
+          fileName: book.filename,
+          totalDuration: book.metadata?.audioDuration,
+          onCancel: () {
+            isCancelled = true;
+            progressController.add(ConversionProgress.cancelled());
+            Navigator.of(context).pop();
+            Logger.log('Conversion cancelled by user');
+          },
+          progressStream: progressController.stream,
+        );
+      }
+      
+      // Perform the conversion using MetadataService with progress tracking
+      final success = await metadataService.convertMP3ToM4B(
+        originalPath,
+        m4bPath,
+        book.metadata!,
+        progressController: progressController,
+        totalDuration: book.metadata?.audioDuration,
+      );
+
+      // Close progress controller
+      await progressController.close();
+
+      if (isCancelled) {
+        // Clean up partial file if conversion was cancelled
+        try {
+          final m4bFile = File(m4bPath);
+          if (await m4bFile.exists()) {
+            await m4bFile.delete();
+            Logger.log('Cleaned up partial conversion file');
+          }
+        } catch (e) {
+          Logger.warning('Failed to cleanup partial file: $e');
+        }
+        return;
+      }
+
+      if (success) {
+        Logger.log('Conversion successful, updating library...');
+        
+        // Update the library manager to replace the old file with the new one
+        final updateSuccess = await libraryManager.replaceFileInLibrary(
+          originalPath,
+          m4bPath,
+          book.metadata!,
+        );
+
+        if (updateSuccess) {
+          // Delete the original MP3 file
+          try {
+            await File(originalPath).delete();
+            Logger.log('Deleted original MP3 file: $originalPath');
+          } catch (e) {
+            Logger.warning('Failed to delete original file: $e');
+            // Continue anyway, conversion was successful
+          }
+
+          // Update the book object with new path
+          final updatedBook = AudiobookFile(
+            path: m4bPath,
+            lastModified: await File(m4bPath).lastModified(),
+            fileSize: await File(m4bPath).length(),
+            metadata: book.metadata,
+          );
+
+          // Refresh the UI
+          onRefreshBook();
+          onBookUpdated?.call(updatedBook);
+
+          // Close progress dialog if still open
+          if (context.mounted) {
+            Navigator.of(context).pop();
+            _showSnackBar(
+              context,
+              'Successfully converted "${book.metadata!.title}" to M4B format',
+              Colors.green,
+              duration: const Duration(seconds: 4),
+            );
+          }
+
+          Logger.log('MP3 to M4B conversion completed successfully');
+        } else {
+          Logger.error('Failed to update library after conversion');
+          if (context.mounted) {
+            Navigator.of(context).pop();
+            _showSnackBar(
+              context,
+              'Conversion succeeded but failed to update library',
+              Colors.orange,
+            );
+          }
+        }
+      } else {
+        Logger.error('Failed to convert MP3 to M4B');
+        if (context.mounted) {
+          Navigator.of(context).pop();
+          _showSnackBar(
+            context,
+            'Failed to convert file to M4B format',
+            Colors.red,
+          );
+        }
+      }
+    } catch (e) {
+      Logger.error('Error during MP3 to M4B conversion: $e');
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        _showSnackBar(
+          context,
+          'Error during conversion: ${e.toString()}',
+          Colors.red,
+          duration: const Duration(seconds: 6),
+        );
+      }
     }
   }
 

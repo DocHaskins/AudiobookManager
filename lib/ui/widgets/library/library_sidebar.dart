@@ -54,11 +54,11 @@ class LibrarySidebar extends StatelessWidget {
     return Column(
       children: [
         _buildHeader(context),
+        _buildViewToggle(context),
+        const SizedBox(height: 16),
         _buildSearchBar(),
         const SizedBox(height: 16),
         _buildSortDropdown(context),
-        const SizedBox(height: 16),
-        _buildViewToggle(context),
         const SizedBox(height: 24),
         Expanded(child: _buildCategories(context)),
         _buildBottomStats(),

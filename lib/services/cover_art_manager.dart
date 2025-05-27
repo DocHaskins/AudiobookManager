@@ -176,6 +176,38 @@ class CoverArtManager {
       return null;
     }
   }
+
+  Future<String?> transferCover(String oldFilePath, String newFilePath, String oldCoverPath) async {
+    try {
+      Logger.log('Transferring cover from $oldFilePath to $newFilePath');
+      
+      // Verify old cover exists
+      final oldCoverFile = File(oldCoverPath);
+      if (!await oldCoverFile.exists()) {
+        Logger.warning('Old cover file does not exist: $oldCoverPath');
+        return null;
+      }
+      
+      // Generate new cover path based on new file path
+      final newFileId = FileUtils.generateFileId(newFilePath);
+      final coverExtension = path_util.extension(oldCoverPath);
+      final newCoverPath = path_util.join(_coversDir!, '$newFileId$coverExtension');
+      
+      // Copy the cover file to new location
+      await oldCoverFile.copy(newCoverPath);
+      
+      // Update internal cache
+      _coverCache[newFilePath] = newCoverPath;
+      _coverCache.remove(oldFilePath);
+      
+      Logger.log('Successfully transferred cover: $oldCoverPath -> $newCoverPath');
+      return newCoverPath;
+      
+    } catch (e) {
+      Logger.error('Error transferring cover from $oldFilePath to $newFilePath: $e');
+      return null;
+    }
+  }
   
   Future<void> removeCover(String filePath) async {
     if (!_isInitialized) await initialize();

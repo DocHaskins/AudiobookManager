@@ -1,6 +1,8 @@
 // lib/services/metadata_service.dart
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:async';
+import 'dart:convert';
 import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter/ffmpeg_session.dart';
 import 'package:ffmpeg_kit_flutter/return_code.dart';
@@ -11,6 +13,7 @@ import 'package:mime/mime.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 import 'package:audiobook_organizer/utils/file_utils.dart';
+import 'package:audiobook_organizer/ui/widgets/conversion_progress_dialog.dart';
 
 class MetadataService {
   // Singleton pattern
@@ -1163,6 +1166,212 @@ class MetadataService {
   // Legacy method maintained for backward compatibility
   Future<bool> writeMetadata(String filePath, AudiobookMetadata metadata, {String? coverImagePath}) async {
     return writeMetadataWithDiagnostics(filePath, metadata, coverImagePath: coverImagePath);
+  }
+
+  Future<bool> isFFmpegAvailableForConversion() async {
+    try {
+      await initialize(); // Ensure we're initialized
+      return _systemFFmpegAvailable;
+    } catch (e) {
+      Logger.error('Error checking FFmpeg availability for conversion: $e');
+      return false;
+    }
+  }
+
+  // Convert MP3 to M4B with metadata preservation and progress tracking
+  Future<bool> convertMP3ToM4B(
+    String inputPath, 
+    String outputPath, 
+    AudiobookMetadata metadata, {
+    StreamController<ConversionProgress>? progressController,
+    Duration? totalDuration,
+  }) async {
+    try {
+      Logger.log('Starting MP3 to M4B conversion: $inputPath -> $outputPath');
+      
+      // Ensure FFmpeg is available
+      if (!_systemFFmpegAvailable || _systemFFmpegPath == null) {
+        Logger.error('System FFmpeg not available for conversion');
+        return false;
+      }
+      
+      // Step 1: Convert audio format with progress tracking
+      progressController?.add(ConversionProgress.initial());
+      
+      final conversionSuccess = await _convertAudioFormatWithProgress(
+        inputPath, 
+        outputPath,
+        progressController: progressController,
+        totalDuration: totalDuration,
+      );
+      
+      if (!conversionSuccess) {
+        Logger.error('Audio format conversion failed');
+        return false;
+      }
+      
+      Logger.log('Audio conversion successful, embedding metadata...');
+      
+      // Step 2: Embed metadata into the converted M4B file
+      progressController?.add(ConversionProgress.embeddingMetadata());
+      
+      final metadataSuccess = await writeMetadataWithDiagnostics(
+        outputPath,
+        metadata,
+        coverImagePath: metadata.thumbnailUrl.isNotEmpty && 
+                       !metadata.thumbnailUrl.startsWith('http') 
+                         ? metadata.thumbnailUrl 
+                         : null,
+      );
+      
+      if (metadataSuccess) {
+        Logger.log('MP3 to M4B conversion completed successfully');
+        progressController?.add(ConversionProgress.completed());
+        return true;
+      } else {
+        Logger.error('Failed to embed metadata in converted M4B file');
+        // Clean up the converted file if metadata embedding failed
+        try {
+          await File(outputPath).delete();
+        } catch (e) {
+          Logger.warning('Failed to cleanup failed conversion file: $e');
+        }
+        return false;
+      }
+    } catch (e) {
+      Logger.error('Error in MP3 to M4B conversion: $e');
+      return false;
+    }
+  }
+
+  // Helper method to convert audio format with progress tracking
+  Future<bool> _convertAudioFormatWithProgress(
+    String inputPath, 
+    String outputPath, {
+    StreamController<ConversionProgress>? progressController,
+    Duration? totalDuration,
+  }) async {
+    try {
+      Logger.log('Converting audio format with progress tracking: $inputPath -> $outputPath');
+      
+      if (_systemFFmpegPath == null) {
+        Logger.error('System FFmpeg path not available');
+        return false;
+      }
+      
+      // Build FFmpeg arguments for MP3 to M4B conversion with progress
+      final List<String> args = [
+        '-i', inputPath,              // Input MP3 file
+        '-map', '0:a',               // Map only audio stream
+        '-c:a', 'aac',               // Use AAC codec
+        '-b:a', '64k',               // Set bitrate to 64k
+        '-f', 'mp4',                 // Force MP4 container format
+        '-movflags', '+faststart',   // Optimize for streaming
+        '-avoid_negative_ts', 'make_zero', // Handle timestamp issues
+        '-progress', 'pipe:2',       // Send progress to stderr
+        '-y',                        // Overwrite output file if exists
+        outputPath,                  // Output M4B file
+      ];
+      
+      Logger.log('FFmpeg command with progress: $_systemFFmpegPath ${args.join(' ')}');
+      
+      // Start FFmpeg process
+      final process = await Process.start(_systemFFmpegPath!, args);
+      
+      // Track progress by parsing stderr
+      final Completer<bool> completer = Completer<bool>();
+      bool hasError = false;
+      
+      // Parse progress from stderr
+      process.stderr.transform(const SystemEncoding().decoder).listen((data) {
+        _parseFFmpegProgress(data, progressController, totalDuration);
+      });
+      
+      // Log stdout for debugging
+      process.stdout.transform(const SystemEncoding().decoder).listen((data) {
+        Logger.debug('FFmpeg stdout: $data');
+      });
+      
+      // Wait for process completion
+      process.exitCode.then((exitCode) {
+        if (exitCode == 0) {
+          Logger.log('Audio conversion successful');
+          completer.complete(true);
+        } else {
+          Logger.error('FFmpeg conversion failed with exit code: $exitCode');
+          hasError = true;
+          completer.complete(false);
+        }
+      });
+      
+      return await completer.future;
+      
+    } catch (e) {
+      Logger.error('Error in audio format conversion with progress: $e');
+      return false;
+    }
+  }
+
+  // Parse FFmpeg progress output
+  void _parseFFmpegProgress(
+    String data, 
+    StreamController<ConversionProgress>? progressController,
+    Duration? totalDuration,
+  ) {
+    if (progressController == null) return;
+    
+    try {
+      // FFmpeg progress format includes lines like:
+      // out_time_ms=12345678
+      // progress=continue
+      // speed=1.23x
+      
+      final lines = data.split('\n');
+      Duration? currentTime;
+      String speed = '';
+      
+      for (final line in lines) {
+        final trimmedLine = line.trim();
+        
+        if (trimmedLine.startsWith('out_time_ms=')) {
+          final timeMs = int.tryParse(trimmedLine.substring('out_time_ms='.length));
+          if (timeMs != null) {
+            currentTime = Duration(microseconds: timeMs);
+          }
+        } else if (trimmedLine.startsWith('speed=')) {
+          speed = trimmedLine.substring('speed='.length);
+        }
+      }
+      
+      // Calculate progress percentage if we have both current and total time
+      if (currentTime != null && totalDuration != null && totalDuration.inMicroseconds > 0) {
+        final percentage = (currentTime.inMicroseconds / totalDuration.inMicroseconds).clamp(0.0, 1.0);
+        
+        // Calculate ETA
+        Duration? eta;
+        if (percentage > 0 && speed.isNotEmpty) {
+          try {
+            final speedValue = double.tryParse(speed.replaceAll('x', ''));
+            if (speedValue != null && speedValue > 0) {
+              final remainingTime = totalDuration - currentTime;
+              eta = Duration(microseconds: (remainingTime.inMicroseconds / speedValue).round());
+            }
+          } catch (e) {
+            // Ignore speed parsing errors
+          }
+        }
+        
+        progressController.add(ConversionProgress.converting(
+          percentage: percentage,
+          currentTime: currentTime,
+          eta: eta,
+          speed: speed,
+        ));
+      }
+    } catch (e) {
+      Logger.debug('Error parsing FFmpeg progress: $e');
+      // Don't fail the conversion for progress parsing errors
+    }
   }
   
   // Extract detailed audio information for debugging (existing method)

@@ -43,6 +43,7 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
   
   bool _isFavoriteAnimating = false;
   bool _isCollectionAnimating = false;
+  bool _isConverting = false; // NEW: Track conversion state
 
   @override
   void initState() {
@@ -220,6 +221,22 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
             isLoading: widget.isUpdatingMetadata,
           ),
         ),
+        
+        // NEW: Convert to M4B button (only show for MP3 files)
+        if (widget.book.extension.toLowerCase() == '.mp3') ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: _buildSecondaryButton(
+              context,
+              onPressed: (_isConverting || widget.isUpdatingMetadata) ? null : () => _convertToM4B(context),
+              icon: Icons.transform,
+              label: 'Convert to M4B (FFMPEG)',
+              iconColor: Colors.purple,
+              isLoading: _isConverting,
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -445,6 +462,37 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
     );
     
     await actions.saveMetadataToFile(context, widget.book);
+  }
+
+  // NEW: Convert MP3 to M4B method
+  Future<void> _convertToM4B(BuildContext context) async {
+    if (_isConverting) return;
+    
+    setState(() {
+      _isConverting = true;
+    });
+
+    try {
+      final actions = DetailActions(
+        libraryManager: widget.libraryManager,
+        onRefreshBook: widget.onRefreshBook,
+        onUpdateMetadataStatus: widget.onUpdateMetadataStatus,
+        onBookUpdated: widget.onBookUpdated,
+      );
+      
+      await actions.convertToM4B(context, widget.book);
+    } catch (e) {
+      Logger.error('Error in convert to M4B: $e');
+      if (context.mounted) {
+        _showSnackBar(context, 'Error converting to M4B: ${e.toString()}', Colors.red);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isConverting = false;
+        });
+      }
+    }
   }
 
   Future<void> _showDebugInfo(BuildContext context) async {
