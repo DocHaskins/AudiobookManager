@@ -30,7 +30,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   // View states
   bool _showCollections = false;
   bool _isGridView = true;
-  bool _showSettings = false; // NEW: Settings mode
+  bool _showSettings = false;
   String _searchQuery = '';
   String _selectedCategory = 'All';
   
@@ -95,52 +95,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
             }
           }
         }
-        
-        // Try to infer genres from series names or titles if no explicit genres
-        if (genres.isEmpty) {
-          final title = book.metadata!.title.toLowerCase();
-          final series = book.metadata!.series.toLowerCase();
-          
-          // Add some basic genre inference based on common patterns
-          if (title.contains('dragon') || series.contains('dragon') || 
-              title.contains('magic') || title.contains('wizard') || 
-              title.contains('fantasy')) {
-            genres.add('Fantasy');
-          } else if (title.contains('murder') || title.contains('detective') || 
-                    title.contains('mystery') || title.contains('crime')) {
-            genres.add('Mystery');
-          } else if (title.contains('romance') || title.contains('love')) {
-            genres.add('Romance');
-          } else if (title.contains('space') || title.contains('sci-fi') || 
-                    title.contains('science fiction') || title.contains('future')) {
-            genres.add('Science Fiction');
-          }
-        }
       }
     }
-    
-    // If still no genres found, check if we can add some based on common audiobook patterns
-    if (genres.isEmpty) {
-      // Add common genres that might apply to any collection
-      final commonGenres = ['Fiction', 'Non-Fiction', 'Literature'];
-      for (final book in widget.libraryManager.files) {
-        if (book.metadata != null) {
-          // Simple heuristic: if it's part of a series, likely fiction
-          if (book.metadata!.series.isNotEmpty) {
-            genres.add('Fiction');
-            break;
-          }
-        }
-      }
-    }
-    
+
     // Convert to sorted list
     _availableGenres = genres.toList()..sort();
-    
-    // Debug: Print available genres to console
-    print('Available genres: $_availableGenres');
-    print('Total books: ${widget.libraryManager.files.length}');
-    print('Books with metadata: ${widget.libraryManager.files.where((b) => b.metadata != null).length}');
   }
 
   void _updateFilteredData() {
@@ -763,20 +722,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
     }
 
+    // Check _isGridView to determine which view to show
+    if (_isGridView) {
+      return _buildGridView();
+    } else {
+      return _buildListView();
+    }
+  }
+
+  Widget _buildGridView() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Simple calculation: fixed item width + spacing
-        const double itemWidth = 200;  // Fixed width for each book
+        const double itemWidth = 200;
         const double spacing = 20;
         
-        // Calculate how many items fit across the width
         final int crossAxisCount = ((constraints.maxWidth + spacing) / (itemWidth + spacing)).floor().clamp(1, 20);
         
         return GridView.builder(
           padding: const EdgeInsets.all(24),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            childAspectRatio: 0.67, // 200 width / 300 height
+            childAspectRatio: 0.67,
             crossAxisSpacing: spacing,
             mainAxisSpacing: spacing,
           ),
@@ -794,6 +760,26 @@ class _LibraryScreenState extends State<LibraryScreen> {
               onFavoriteTap: () => _toggleFavorite(book),
             );
           },
+        );
+      },
+    );
+  }
+
+  Widget _buildListView() {
+    return ListView.builder(
+      padding: const EdgeInsets.all(24),
+      itemCount: _filteredBooks.length,
+      itemBuilder: (context, index) {
+        final book = _filteredBooks[index];
+        return AudiobookListItem(
+          book: book,
+          onTap: () => _navigateToDetail(
+            AudiobookDetailView(
+              book: book,
+              libraryManager: widget.libraryManager,
+            ),
+          ),
+          //onFavoriteTap: () => _toggleFavorite(book),
         );
       },
     );

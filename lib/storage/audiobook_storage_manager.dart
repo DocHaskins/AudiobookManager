@@ -38,10 +38,8 @@ class AudiobookStorageManager {
     }
   }
   
-  // Get the library JSON file path
   String get libraryFilePath => path_util.join(_baseDirPath, _libraryFile);
   
-  // ENHANCED: Update metadata with explicit operation type
   Future<bool> updateMetadataForFile(
     String filePath, 
     AudiobookMetadata metadata, {
@@ -49,7 +47,6 @@ class AudiobookStorageManager {
     MetadataUpdateOperation operation = MetadataUpdateOperation.enhance,
   }) async {
     try {
-      // Use centralized file ID generation
       final String fileId = FileUtils.generateFileId(filePath);
       final String metadataFilePath = path_util.join(_metadataDirPath, '$fileId.json');
       
@@ -57,7 +54,6 @@ class AudiobookStorageManager {
       AudiobookMetadata finalMetadata = metadata;
       
       if (await metadataFile.exists() && !force) {
-        // If not forcing, apply the specified operation
         try {
           final existingJson = await metadataFile.readAsString();
           final existingMetadata = AudiobookMetadata.fromJson(json.decode(existingJson));
@@ -101,7 +97,6 @@ class AudiobookStorageManager {
     }
   }
   
-  // ENHANCED: Direct methods for each operation type
   Future<bool> enhanceMetadataForFile(String filePath, AudiobookMetadata enhancement) async {
     return updateMetadataForFile(
       filePath, 
@@ -233,7 +228,6 @@ class AudiobookStorageManager {
     }
   }
   
-  // ENHANCED: Update user data with explicit force
   Future<bool> updateUserData(String filePath, {
     int? userRating,
     DateTime? lastPlayedPosition,

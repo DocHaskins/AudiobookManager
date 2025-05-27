@@ -674,28 +674,6 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          if (widget.currentMetadata != null && similarity > 0) ...[
-                            const SizedBox(width: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: similarity > 0.8 ? Colors.green.withOpacity(0.2) : 
-                                       similarity > 0.5 ? Colors.orange.withOpacity(0.2) :
-                                       Colors.red.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Text(
-                                '${(similarity * 100).round()}%',
-                                style: TextStyle(
-                                  color: similarity > 0.8 ? Colors.green[400] : 
-                                         similarity > 0.5 ? Colors.orange[400] :
-                                         Colors.red[400],
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
                       
@@ -793,15 +771,12 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
                       const Icon(
                         Icons.check_circle,
                         color: Colors.indigo,
-                        size: 18,
+                        size: 20,
                       )
                     else
                       const SizedBox(height: 18),
                     
-                    const SizedBox(height: 8),
                     
-                    // Data completeness indicator
-                    _buildCompactnessIndicator(metadata),
                   ],
                 ),
               ],
@@ -1295,12 +1270,6 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
             ),
           ),
         ],
-        
-        // Data Completeness Indicator (for non-compact view)
-        if (!isCompact) ...[
-          const SizedBox(height: 16),
-          _buildDataCompletenessIndicator(metadata),
-        ],
       ],
     );
   }
@@ -1320,83 +1289,6 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildDataCompletenessIndicator(AudiobookMetadata metadata) {
-    // Calculate completeness score
-    int totalFields = 15; // Total possible fields
-    int filledFields = 0;
-    
-    if (metadata.title.isNotEmpty) filledFields++;
-    if (metadata.authors.isNotEmpty) filledFields++;
-    if (metadata.description.isNotEmpty) filledFields++;
-    if (metadata.publisher.isNotEmpty) filledFields++;
-    if (metadata.publishedDate.isNotEmpty) filledFields++;
-    if (metadata.categories.isNotEmpty) filledFields++;
-    if (metadata.language.isNotEmpty) filledFields++;
-    if (metadata.series.isNotEmpty) filledFields++;
-    if (metadata.seriesPosition.isNotEmpty) filledFields++;
-    if (metadata.averageRating > 0) filledFields++;
-    if (metadata.ratingsCount > 0) filledFields++;
-    if (metadata.thumbnailUrl.isNotEmpty) filledFields++;
-    if (metadata.audioDuration != null) filledFields++;
-    if (metadata.provider.isNotEmpty) filledFields++;
-    
-    double completeness = filledFields / totalFields;
-    Color completenessColor = completeness > 0.8 ? Colors.green : 
-                             completeness > 0.5 ? Colors.orange : 
-                             Colors.red;
-    
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: completenessColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: completenessColor.withOpacity(0.3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.assessment, color: completenessColor, size: 16),
-              const SizedBox(width: 6),
-              Text(
-                'Data Completeness',
-                style: TextStyle(
-                  color: completenessColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              Text(
-                '${(completeness * 100).round()}%',
-                style: TextStyle(
-                  color: completenessColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(
-            value: completeness,
-            backgroundColor: Colors.grey[800],
-            valueColor: AlwaysStoppedAnimation<Color>(completenessColor),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '$filledFields of $totalFields fields available',
-            style: TextStyle(
-              color: Colors.grey[500],
-              fontSize: 10,
-            ),
-          ),
-        ],
-      ),
     );
   }
 

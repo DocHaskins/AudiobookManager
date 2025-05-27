@@ -7,7 +7,6 @@ import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
-import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/ui/screens/player_screen.dart';
 import 'package:audiobook_organizer/ui/widgets/metadata_search_dialog.dart';
 import 'package:audiobook_organizer/ui/widgets/cover_image_dialog.dart';
@@ -33,9 +32,8 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
   late AudiobookFile _book;
   bool _isEditingMetadata = false;
   bool _isUpdatingMetadata = false;
-  
-  // Edit controllers
-  // Change the controller declarations to nullable
+  bool _isDescriptionExpanded = false;
+
   TextEditingController? _titleController;
   TextEditingController? _authorController;
   TextEditingController? _seriesController;
@@ -43,8 +41,6 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
   TextEditingController? _descriptionController;
   TextEditingController? _categoriesController;
   TextEditingController? _userTagsController;
-
-  // Stream subscription for library changes
   late StreamSubscription<List<AudiobookFile>> _librarySubscription;
 
   @override
@@ -53,7 +49,6 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
     _book = widget.book;
     _initializeControllers();
     
-    // Listen to library changes with proper error handling
     _librarySubscription = widget.libraryManager.libraryChanged.listen(
       _onLibraryChanged,
       onError: (error) {
@@ -70,8 +65,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
         (b) => b.path == _book.path,
         orElse: () => _book,
       );
-      
-      // ENHANCED: Always update if the book object changed
+
       if (updatedBook != _book) {
         Logger.debug('Book object changed, updating UI for: ${_book.filename}');
         setState(() {
@@ -292,7 +286,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
                       // Cover Image
                       Container(
                         width: 320,
-                        height: 320,
+                        height: 520,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(12),
                           color: Colors.grey[900],
@@ -393,7 +387,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
 
                         const SizedBox(height: 24),
                         // Rating and genres section - Goodreads style
-                        _buildRatingAndGenresSection(metadata),
+                        _buildRating(metadata),
                         
                         const SizedBox(height: 24),
 
@@ -503,29 +497,13 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
           children: [
             Row(
               children: [
-                Icon(
-                  Icons.library_books,
-                  color: Theme.of(context).primaryColor,
-                  size: 16,
-                ),
-                const SizedBox(width: 8),
                 Text(
                   '${metadata!.series}${metadata.seriesPosition.isNotEmpty ? " #${metadata.seriesPosition}" : ""}',
                   style: TextStyle(
-                    color: Theme.of(context).primaryColor,
+                    color: Theme.of(context).secondaryHeaderColor,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: () => _viewSeries(metadata.series),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Theme.of(context).primaryColor,
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    minimumSize: Size.zero,
-                  ),
-                  child: const Text('View Series', style: TextStyle(fontSize: 12)),
                 ),
               ],
             ),
@@ -617,7 +595,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
           );
   }
 
-  Widget _buildRatingAndGenresSection(AudiobookMetadata? metadata) {
+  Widget _buildRating(AudiobookMetadata? metadata) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -668,77 +646,6 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
               _buildUserRating(metadata?.userRating ?? 0),
             ],
           ),
-          
-          const SizedBox(height: 16),
-          
-          // Genres - Debug and display
-          Builder(builder: (context) {
-            final categories = metadata?.categories ?? [];
-            final hasCategories = categories.isNotEmpty;
-            
-            if (hasCategories || _isEditingMetadata) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Genres',
-                    style: TextStyle(
-                      color: Colors.grey[400],
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1.0,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (_isEditingMetadata)
-                    TextField(
-                      controller: _categoriesController,
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                      decoration: const InputDecoration(
-                        hintText: 'Enter genres separated by commas',
-                        border: UnderlineInputBorder(),
-                      ),
-                    )
-                  else if (hasCategories)
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: categories.map((genre) => 
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: Theme.of(context).primaryColor.withOpacity(0.5),
-                            ),
-                          ),
-                          child: Text(
-                            genre.trim(), // Ensure no whitespace issues
-                            style: TextStyle(
-                              color: Theme.of(context).primaryColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                      ).toList(),
-                    )
-                  else
-                    Text(
-                      'No genres available',
-                      style: TextStyle(
-                        color: Colors.grey[600],
-                        fontSize: 12,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                ],
-              );
-            } else {
-              return const SizedBox.shrink(); // Don't show anything if no categories
-            }
-          }),
         ],
       ),
     );
@@ -780,6 +687,12 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
     final description = metadata?.description ?? '';
     final hasDescription = description.isNotEmpty;
     
+    const int characterLimit = 300;
+    final bool shouldTruncate = description.length > characterLimit;
+    final String displayText = _isDescriptionExpanded || !shouldTruncate
+        ? description
+        : description.substring(0, characterLimit);
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -813,76 +726,67 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
             ),
           )
         else if (hasDescription)
-          Text(
-            description,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 14,
-              height: 1.6,
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                displayText + (!_isDescriptionExpanded && shouldTruncate ? '...' : ''),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  height: 1.6,
+                ),
+              ),
+              if (shouldTruncate) ...[
+                const SizedBox(height: 12),
+                InkWell(
+                  onTap: () {
+                    setState(() {
+                      _isDescriptionExpanded = !_isDescriptionExpanded;
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).secondaryHeaderColor.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: Theme.of(context).secondaryHeaderColor,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _isDescriptionExpanded ? 'Show less' : 'Show more',
+                          style: TextStyle(
+                            color: Theme.of(context).secondaryHeaderColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Icon(
+                          _isDescriptionExpanded 
+                              ? Icons.expand_less 
+                              : Icons.expand_more,
+                          color: Theme.of(context).secondaryHeaderColor,
+                          size: 18,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ],
           )
         else
           Text(
             'No description available',
-            style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: 14,
-              fontStyle: FontStyle.italic,
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildUserTagsSection(AudiobookMetadata? metadata) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'PERSONAL TAGS',
-          style: TextStyle(
-            color: Colors.grey[600],
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 1.2,
-          ),
-        ),
-        const SizedBox(height: 12),
-        if (_isEditingMetadata)
-          TextField(
-            controller: _userTagsController,
-            style: const TextStyle(color: Colors.white, fontSize: 14),
-            decoration: const InputDecoration(
-              hintText: 'Enter tags separated by commas',
-              border: UnderlineInputBorder(),
-            ),
-          )
-        else if (metadata?.userTags.isNotEmpty ?? false)
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: metadata!.userTags.map((tag) => 
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.blue.withOpacity(0.5)),
-                ),
-                child: Text(
-                  tag,
-                  style: const TextStyle(
-                    color: Colors.blue,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ).toList(),
-          )
-        else
-          Text(
-            'No personal tags',
             style: TextStyle(
               color: Colors.grey[600],
               fontSize: 14,
@@ -980,161 +884,6 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
     );
   }
 
-  Widget _buildSeriesEditingSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Series Information:',
-          style: TextStyle(
-            color: Colors.grey[500],
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              flex: 2,
-              child: TextField(
-                controller: _seriesController,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-                decoration: InputDecoration(
-                  labelText: 'Series Name',
-                  labelStyle: TextStyle(color: Colors.grey[500]),
-                  filled: true,
-                  fillColor: const Color(0xFF2A2A2A),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(6),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _seriesPositionController!,
-                style: const TextStyle(color: Colors.white, fontSize: 14),
-                decoration: InputDecoration(
-                  labelText: 'Position #',
-                  labelStyle: TextStyle(color: Colors.grey[500]),
-                  filled: true,
-                  fillColor: const Color(0xFF2A2A2A),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(6),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-                keyboardType: TextInputType.number,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAddSeriesHint() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Series Information:',
-          style: TextStyle(
-            color: Colors.grey[500],
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Text(
-              'Not part of a series',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 14,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
-            const SizedBox(width: 8),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _isEditingMetadata = true;
-                });
-              },
-              style: TextButton.styleFrom(
-                foregroundColor: Theme.of(context).primaryColor,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-              ),
-              child: const Text('Add to Series', style: TextStyle(fontSize: 12)),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Future<void> _viewSeries(String seriesName) async {
-    try {
-      final seriesBooks = widget.libraryManager.getFilesBySeries(seriesName);
-      
-      if (seriesBooks.isNotEmpty) {
-        // Sort books by series position
-        seriesBooks.sort((a, b) {
-          final aPos = int.tryParse(a.metadata?.seriesPosition ?? '') ?? 0;
-          final bPos = int.tryParse(b.metadata?.seriesPosition ?? '') ?? 0;
-          return aPos.compareTo(bPos);
-        });
-        
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text('$seriesName Series'),
-            content: SizedBox(
-              width: 400,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('${seriesBooks.length} books in this series:'),
-                  const SizedBox(height: 16),
-                  ...seriesBooks.map((book) => ListTile(
-                    leading: Icon(
-                      book.path == _book.path ? Icons.play_arrow : Icons.book,
-                      color: book.path == _book.path ? Theme.of(context).primaryColor : null,
-                    ),
-                    title: Text(
-                      book.metadata?.title ?? book.filename,
-                      style: TextStyle(
-                        fontWeight: book.path == _book.path ? FontWeight.bold : FontWeight.normal,
-                        color: book.path == _book.path ? Theme.of(context).primaryColor : null,
-                      ),
-                    ),
-                    subtitle: Text('Position: ${book.metadata?.seriesPosition ?? "Unknown"}'),
-                    dense: true,
-                  )),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Close'),
-              ),
-            ],
-          ),
-        );
-      }
-    } catch (e) {
-      Logger.error('Error viewing series: $e');
-    }
-  }
-
   Future<void> _removeFromCollection(dynamic collection) async {
     try {
       final collectionManager = widget.libraryManager.collectionManager;
@@ -1196,7 +945,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
               child: _buildSecondaryButton(
                 onPressed: _addToCollections,
                 icon: Icons.add,
-                label: 'Add to\nCollection',
+                label: 'Add to Collection',
               ),
             ),
             const SizedBox(width: 12),
@@ -1318,10 +1067,6 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
             _buildInfoRow('Duration', metadata!.durationFormatted)
           else
             _buildInfoRow('Duration', 'Not available'),
-            
-          if (metadata?.fileFormat.isNotEmpty ?? false)
-            _buildInfoRow('Audio Format', metadata!.fileFormat),
-
         ],
       ),
     );
@@ -1399,39 +1144,6 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
     if (count < 1000) return count.toString();
     if (count < 1000000) return '${(count / 1000).toStringAsFixed(1)}K';
     return '${(count / 1000000).toStringAsFixed(1)}M';
-  }
-
-  bool _hasUserData(AudiobookMetadata metadata) {
-    return metadata.userRating > 0 ||
-           metadata.playbackPosition != null ||
-           metadata.userTags.isNotEmpty ||
-           metadata.isFavorite ||
-           metadata.bookmarks.isNotEmpty ||
-           metadata.notes.isNotEmpty;
-  }
-
-  String _getProgressInfo(AudiobookMetadata metadata) {
-    if (metadata.playbackPosition != null && metadata.audioDuration != null) {
-      final progress = (metadata.playbackPosition!.inMilliseconds / 
-                       metadata.audioDuration!.inMilliseconds * 100);
-      return '${progress.toStringAsFixed(1)}% complete';
-    } else if (metadata.playbackPosition != null) {
-      return 'Position: ${_formatDuration(metadata.playbackPosition!)}';
-    } else if (metadata.lastPlayedPosition != null) {
-      return 'Last played: ${_formatDate(metadata.lastPlayedPosition!)}';
-    }
-    return 'Not started';
-  }
-
-  String _formatDuration(Duration duration) {
-    final hours = duration.inHours;
-    final minutes = duration.inMinutes.remainder(60);
-    final seconds = duration.inSeconds.remainder(60);
-    
-    if (hours > 0) {
-      return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-    }
-    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
   // Action methods
