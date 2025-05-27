@@ -100,19 +100,16 @@ class GoogleBooksProvider implements MetadataProvider {
     }
   }
   
-  // Parse book data from Google Books API response
+  // Parse book data from Google Books API response with enhanced metadata extraction
   AudiobookMetadata? _parseBookData(Map<String, dynamic> data) {
     try {
       var volumeInfo = data['volumeInfo'] ?? {};
       if (volumeInfo.isEmpty) return null;
       
-      // Extract image links
+      // Extract image links (existing code)
       var imageLinks = volumeInfo['imageLinks'] ?? {};
-      
-      // Prioritize larger images when available
       String thumbnailUrl = '';
       if (imageLinks.isNotEmpty) {
-        // Try to get the best quality image, falling back to smaller ones
         thumbnailUrl = imageLinks['extraLarge'] ?? 
                       imageLinks['large'] ?? 
                       imageLinks['medium'] ?? 
@@ -120,12 +117,10 @@ class GoogleBooksProvider implements MetadataProvider {
                       imageLinks['thumbnail'] ?? 
                       imageLinks['smallThumbnail'] ?? '';
         
-        // Ensure URL uses HTTPS (Google Books sometimes returns HTTP URLs)
         if (thumbnailUrl.isNotEmpty && thumbnailUrl.startsWith('http:')) {
           thumbnailUrl = thumbnailUrl.replaceFirst('http:', 'https:');
         }
         
-        // Optimize image URL for better quality
         if (thumbnailUrl.isNotEmpty) {
           thumbnailUrl = _optimizeImageUrl(thumbnailUrl);
         }
@@ -142,6 +137,69 @@ class GoogleBooksProvider implements MetadataProvider {
       if (volumeInfo['categories'] != null && volumeInfo['categories'] is List) {
         categories = List<String>.from(volumeInfo['categories']);
       }
+      
+      // Extract subtitle
+      String subtitle = volumeInfo['subtitle'] as String? ?? '';
+      
+      // Extract industry identifiers and create AudiobookIdentifier objects
+      List<AudiobookIdentifier> identifiers = [];
+      if (volumeInfo['industryIdentifiers'] != null && volumeInfo['industryIdentifiers'] is List) {
+        final identifiersList = volumeInfo['industryIdentifiers'] as List;
+        for (final identifier in identifiersList) {
+          if (identifier is Map<String, dynamic>) {
+            final type = identifier['type'] as String? ?? '';
+            final id = identifier['identifier'] as String? ?? '';
+            
+            if (type.isNotEmpty && id.isNotEmpty) {
+              identifiers.add(AudiobookIdentifier(
+                type: type,
+                identifier: id,
+              ));
+            }
+          }
+        }
+      }
+      
+      // Extract page count
+      int pageCount = volumeInfo['pageCount'] as int? ?? 0;
+      
+      // Extract physical dimensions
+      Map<String, String> physicalDimensions = {};
+      if (volumeInfo['dimensions'] != null && volumeInfo['dimensions'] is Map) {
+        final dims = volumeInfo['dimensions'] as Map<String, dynamic>;
+        physicalDimensions = {
+          'height': dims['height'] as String? ?? '',
+          'width': dims['width'] as String? ?? '',
+          'thickness': dims['thickness'] as String? ?? '',
+        };
+      }
+      
+      // Extract print type
+      String printType = volumeInfo['printType'] as String? ?? '';
+      
+      // Extract main category (primary category with highest weight)
+      String mainCategory = volumeInfo['mainCategory'] as String? ?? '';
+      
+      // Extract maturity rating
+      String maturityRating = volumeInfo['maturityRating'] as String? ?? '';
+      
+      // Extract content version
+      String contentVersion = volumeInfo['contentVersion'] as String? ?? '';
+      
+      // Extract reading modes
+      Map<String, bool> readingModes = {};
+      if (volumeInfo['readingModes'] != null && volumeInfo['readingModes'] is Map) {
+        final modes = volumeInfo['readingModes'] as Map<String, dynamic>;
+        readingModes = {
+          'text': modes['text'] as bool? ?? false,
+          'image': modes['image'] as bool? ?? false,
+        };
+      }
+      
+      // Extract preview and info links
+      String previewLink = volumeInfo['previewLink'] as String? ?? '';
+      String infoLink = volumeInfo['infoLink'] as String? ?? '';
+      String canonicalVolumeLink = volumeInfo['canonicalVolumeLink'] as String? ?? '';
       
       // Extract series information from Google Books API
       String series = '';
@@ -178,7 +236,6 @@ class GoogleBooksProvider implements MetadataProvider {
       // If no series info found in seriesInfo, try to extract from title/subtitle
       if (series.isEmpty) {
         final title = volumeInfo['title'] as String? ?? '';
-        final subtitle = volumeInfo['subtitle'] as String? ?? '';
         
         // Try to extract from title
         final titleMatch = RegExp(r'(.*?)\s*(?:#|Book\s+)(\d+)', caseSensitive: false).firstMatch(title);
@@ -198,11 +255,13 @@ class GoogleBooksProvider implements MetadataProvider {
       return AudiobookMetadata(
         id: data['id'] ?? '',
         title: volumeInfo['title'] ?? 'Unknown Title',
+        subtitle: subtitle,
         authors: authors,
         description: volumeInfo['description'] ?? '',
         publisher: volumeInfo['publisher'] ?? '',
         publishedDate: volumeInfo['publishedDate'] ?? '',
         categories: categories,
+        mainCategory: mainCategory,
         averageRating: (volumeInfo['averageRating'] as num?)?.toDouble() ?? 0.0,
         ratingsCount: volumeInfo['ratingsCount'] ?? 0,
         thumbnailUrl: thumbnailUrl,
@@ -210,6 +269,31 @@ class GoogleBooksProvider implements MetadataProvider {
         series: series,
         seriesPosition: seriesPosition,
         provider: 'Google Books',
+        
+        // New enhanced metadata fields
+        identifiers: identifiers,
+        pageCount: pageCount,
+        printType: printType,
+        maturityRating: maturityRating,
+        contentVersion: contentVersion,
+        readingModes: readingModes,
+        previewLink: previewLink,
+        infoLink: infoLink,
+        physicalDimensions: physicalDimensions,
+        
+        // Audiobook-specific fields (will be empty from Google Books API)
+        narrator: '', // Google Books doesn't provide narrator info
+        
+        // Default values for other fields
+        audioDuration: null, // Will be filled by local metadata extraction
+        fileFormat: '', // Will be filled by local metadata extraction
+        userRating: 0,
+        lastPlayedPosition: null,
+        playbackPosition: null,
+        userTags: const [],
+        isFavorite: false,
+        bookmarks: const [],
+        notes: const [],
       );
     } catch (e) {
       Logger.error('Error parsing Google Books data', e);
@@ -244,6 +328,81 @@ class GoogleBooksProvider implements MetadataProvider {
     } catch (e) {
       // Return original URL if optimization fails
       return originalUrl;
+    }
+  }
+  
+  // Helper method to get detailed book information with full projection
+  Future<AudiobookMetadata?> getDetailedById(String id) async {
+    if (id.isEmpty) return null;
+    
+    try {
+      // Use full projection to get all available data
+      final Uri uri = apiKey.isEmpty 
+          ? Uri.parse('$baseUrl/$id?projection=full')
+          : Uri.parse('$baseUrl/$id?key=$apiKey&projection=full');
+      
+      final response = await _client.get(uri)
+          .timeout(_timeout, onTimeout: () {
+            throw TimeoutException('API request timed out after ${_timeout.inSeconds} seconds');
+          });
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        return _parseBookData(data);
+      } else {
+        Logger.error('API Error: ${response.statusCode} - ${response.body}');
+        if (response.statusCode == 403 || response.statusCode == 401) {
+          throw Exception('API key is invalid or quota exceeded');
+        }
+        return null;
+      }
+    } on TimeoutException catch (e) {
+      Logger.error('API request timed out', e);
+      throw Exception('Connection timed out. Please check your internet connection and try again.');
+    } catch (e) {
+      Logger.error('Error fetching detailed book by ID', e);
+      rethrow;
+    }
+  }
+  
+  // Helper method to search with full projection for maximum metadata
+  Future<List<AudiobookMetadata>> searchDetailed(String query, {int maxResults = 10}) async {
+    if (query.isEmpty) return [];
+    
+    try {
+      final Uri uri = apiKey.isEmpty 
+          ? Uri.parse('$baseUrl?q=${Uri.encodeComponent(query)}&maxResults=$maxResults&projection=full')
+          : Uri.parse('$baseUrl?q=${Uri.encodeComponent(query)}&key=$apiKey&maxResults=$maxResults&projection=full');
+      
+      final response = await _client.get(uri)
+          .timeout(_timeout, onTimeout: () {
+            throw TimeoutException('API request timed out after ${_timeout.inSeconds} seconds');
+          });
+      
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final items = data['items'] as List<dynamic>?;
+        
+        if (items == null) return [];
+        
+        return items
+          .map((item) => _parseBookData(item))
+          .where((metadata) => metadata != null)
+          .cast<AudiobookMetadata>()
+          .toList();
+      } else {
+        Logger.error('API Error: ${response.statusCode} - ${response.body}');
+        if (response.statusCode == 403 || response.statusCode == 401) {
+          throw Exception('API key is invalid or quota exceeded');
+        }
+        return [];
+      }
+    } on TimeoutException catch (e) {
+      Logger.error('API request timed out', e);
+      throw Exception('Connection timed out. Please check your internet connection and try again.');
+    } catch (e) {
+      Logger.error('Error searching Google Books with detailed projection', e);
+      rethrow;
     }
   }
 }

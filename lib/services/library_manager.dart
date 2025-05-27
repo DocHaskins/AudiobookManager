@@ -446,11 +446,9 @@ class LibraryManager {
       if (success) {
         // Update the file object
         file.metadata = metadata;
-        
-        // CRITICAL: Save the entire library to ensure persistence
+
         await _storageManager.saveLibrary(_files);
         
-        // Find and update the file in the library list
         final fileIndex = _files.indexWhere((f) => f.path == file.path);
         if (fileIndex != -1) {
           _files[fileIndex] = file;

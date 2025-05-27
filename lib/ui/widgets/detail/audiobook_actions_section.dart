@@ -1,21 +1,21 @@
-// lib/ui/widgets/detail/audiobook_actions_section.dart
+// lib/ui/widgets/detail/audiobook_actions_section.dart - FIXED IMPORT
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
-import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/ui/screens/player_screen.dart';
 import 'package:audiobook_organizer/ui/widgets/add_to_collection_dialog.dart';
 import 'package:audiobook_organizer/ui/widgets/detail/detail_actions.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
-class AudiobookActionsSection extends StatelessWidget {
+class AudiobookActionsSection extends StatefulWidget {
   final AudiobookFile book;
   final LibraryManager libraryManager;
   final VoidCallback onRefreshBook;
   final ValueChanged<bool> onUpdateMetadataStatus;
+  final Function(AudiobookFile)? onBookUpdated;
   final bool isUpdatingMetadata;
 
   const AudiobookActionsSection({
@@ -24,8 +24,77 @@ class AudiobookActionsSection extends StatelessWidget {
     required this.libraryManager,
     required this.onRefreshBook,
     required this.onUpdateMetadataStatus,
+    this.onBookUpdated,
     this.isUpdatingMetadata = false,
   }) : super(key: key);
+
+  @override
+  State<AudiobookActionsSection> createState() => _AudiobookActionsSectionState();
+}
+
+class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
+    with TickerProviderStateMixin {
+  late AnimationController _favoriteController;
+  late AnimationController _collectionController;
+  late Animation<double> _favoriteScaleAnimation;
+  late Animation<double> _collectionScaleAnimation;
+  late Animation<Color?> _favoriteColorAnimation;
+  late Animation<Color?> _collectionColorAnimation;
+  
+  bool _isFavoriteAnimating = false;
+  bool _isCollectionAnimating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    
+    // Favorite animation controller
+    _favoriteController = AnimationController(
+      duration: const Duration(milliseconds: 600),
+      vsync: this,
+    );
+    _favoriteScaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.3,
+    ).animate(CurvedAnimation(
+      parent: _favoriteController,
+      curve: Curves.elasticOut,
+    ));
+    _favoriteColorAnimation = ColorTween(
+      begin: Colors.grey[600],
+      end: Colors.red,
+    ).animate(CurvedAnimation(
+      parent: _favoriteController,
+      curve: Curves.easeInOut,
+    ));
+
+    // Collection animation controller
+    _collectionController = AnimationController(
+      duration: const Duration(milliseconds: 400),
+      vsync: this,
+    );
+    _collectionScaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.2,
+    ).animate(CurvedAnimation(
+      parent: _collectionController,
+      curve: Curves.bounceOut,
+    ));
+    _collectionColorAnimation = ColorTween(
+      begin: Colors.grey[600],
+      end: Colors.blue,
+    ).animate(CurvedAnimation(
+      parent: _collectionController,
+      curve: Curves.easeInOut,
+    ));
+  }
+
+  @override
+  void dispose() {
+    _favoriteController.dispose();
+    _collectionController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -79,28 +148,44 @@ class AudiobookActionsSection extends StatelessWidget {
   Widget _buildSecondaryActionsRow(BuildContext context) {
     return Row(
       children: [
+        // Collection button with animation
         Expanded(
-          child: _buildSecondaryButton(
-            context,
-            onPressed: () => _addToCollections(context),
-            icon: Icons.add,
-            label: 'Add to Collection',
+          child: AnimatedBuilder(
+            animation: _collectionController,
+            builder: (context, child) {
+              return Transform.scale(
+                scale: _collectionScaleAnimation.value,
+                child: _buildSecondaryButton(
+                  context,
+                  onPressed: _isCollectionAnimating ? null : () => _addToCollections(context),
+                  icon: Icons.add,
+                  label: 'Add to Collection',
+                  iconColor: _collectionColorAnimation.value,
+                  isLoading: _isCollectionAnimating,
+                ),
+              );
+            },
           ),
         ),
         const SizedBox(width: 12),
+        // Favorite button with animation
         Expanded(
-          child: _buildSecondaryButton(
-            context,
-            onPressed: () => _toggleFavorite(context),
-            icon: book.metadata?.isFavorite ?? false 
-                ? Icons.favorite 
-                : Icons.favorite_border,
-            label: book.metadata?.isFavorite ?? false 
-                ? 'Favorited' 
-                : 'Favorite',
-            iconColor: book.metadata?.isFavorite ?? false 
-                ? Colors.red 
-                : null,
+          child: AnimatedBuilder(
+            animation: _favoriteController,
+            builder: (context, child) {
+              final isFavorite = widget.book.metadata?.isFavorite ?? false;
+              return Transform.scale(
+                scale: _favoriteScaleAnimation.value,
+                child: _buildSecondaryButton(
+                  context,
+                  onPressed: _isFavoriteAnimating ? null : () => _toggleFavorite(context),
+                  icon: isFavorite ? Icons.favorite : Icons.favorite_border,
+                  label: isFavorite ? 'Favorited' : 'Favorite',
+                  iconColor: isFavorite ? Colors.red : _favoriteColorAnimation.value,
+                  isLoading: _isFavoriteAnimating,
+                ),
+              );
+            },
           ),
         ),
       ],
@@ -115,10 +200,10 @@ class AudiobookActionsSection extends StatelessWidget {
           width: double.infinity,
           child: _buildSecondaryButton(
             context,
-            onPressed: isUpdatingMetadata ? null : () => _searchOnlineMetadata(context),
+            onPressed: widget.isUpdatingMetadata ? null : () => _searchOnlineMetadata(context),
             icon: Icons.search,
             label: 'Search Online Metadata',
-            isLoading: isUpdatingMetadata,
+            isLoading: widget.isUpdatingMetadata,
           ),
         ),
         
@@ -129,10 +214,10 @@ class AudiobookActionsSection extends StatelessWidget {
           width: double.infinity,
           child: _buildSecondaryButton(
             context,
-            onPressed: isUpdatingMetadata ? null : () => _saveMetadataToFile(context),
+            onPressed: widget.isUpdatingMetadata ? null : () => _saveMetadataToFile(context),
             icon: Icons.save_alt,
             label: 'Save Metadata to File',
-            isLoading: isUpdatingMetadata,
+            isLoading: widget.isUpdatingMetadata,
           ),
         ),
       ],
@@ -193,16 +278,16 @@ class AudiobookActionsSection extends StatelessWidget {
     );
   }
 
-  // Action methods
+  // Enhanced action methods with animations
   Future<void> _playAudiobook(BuildContext context) async {
     try {
       final playerService = Provider.of<AudioPlayerService>(context, listen: false);
-      final success = await playerService.play(book);
+      final success = await playerService.play(widget.book);
       
       if (success) {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (context) => PlayerScreen(file: book),
+            builder: (context) => PlayerScreen(file: widget.book),
           ),
         );
       } else {
@@ -215,103 +300,160 @@ class AudiobookActionsSection extends StatelessWidget {
   }
 
   Future<void> _toggleFavorite(BuildContext context) async {
+    if (_isFavoriteAnimating) return;
+    
+    setState(() {
+      _isFavoriteAnimating = true;
+    });
+
+    final wasFavorite = widget.book.metadata?.isFavorite ?? false;
+    
     try {
-      final success = await libraryManager.updateUserData(
-        book,
-        isFavorite: !(book.metadata?.isFavorite ?? false),
+      // Start animation immediately for visual feedback
+      _favoriteController.forward();
+      
+      final success = await widget.libraryManager.updateUserData(
+        widget.book,
+        isFavorite: !wasFavorite,
       );
       
       if (success) {
-        onRefreshBook();
-        final isFavorite = book.metadata?.isFavorite ?? false;
-        _showSnackBar(
+        widget.onRefreshBook();
+        
+        // Show enhanced success message with animation
+        final isFavorite = !wasFavorite;
+        _showEnhancedSnackBar(
           context,
-          isFavorite ? 'Added to favorites' : 'Removed from favorites',
-          Colors.green,
+          message: isFavorite 
+              ? 'Added "${widget.book.metadata?.title ?? widget.book.filename}" to favorites!' 
+              : 'Removed "${widget.book.metadata?.title ?? widget.book.filename}" from favorites',
+          color: isFavorite ? Colors.red : Colors.orange,
+          icon: isFavorite ? Icons.favorite : Icons.favorite_border,
         );
+        
+        // Complete animation
+        await _favoriteController.forward();
+        await Future.delayed(const Duration(milliseconds: 200));
+        await _favoriteController.reverse();
       } else {
+        _favoriteController.reverse();
         _showSnackBar(context, 'Failed to update favorite status', Colors.red);
       }
     } catch (e) {
+      _favoriteController.reverse();
       Logger.error('Error toggling favorite: $e');
       _showSnackBar(context, 'Error updating favorite: ${e.toString()}', Colors.red);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFavoriteAnimating = false;
+        });
+      }
     }
   }
 
   Future<void> _addToCollections(BuildContext context) async {
-    final collectionManager = libraryManager.collectionManager;
+    if (_isCollectionAnimating) return;
+    
+    final collectionManager = widget.libraryManager.collectionManager;
     if (collectionManager == null) {
       _showSnackBar(context, 'Collections not available', Colors.orange);
       return;
     }
     
-    final currentCollections = collectionManager.getCollectionsForBook(book.path);
-    
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AddToCollectionDialog(
-        collectionManager: collectionManager,
-        bookPath: book.path,
-        currentCollections: currentCollections,
-      ),
-    );
-    
-    if (result == true) {
-      onRefreshBook();
-      _showSnackBar(context, 'Collections updated', Colors.green);
+    setState(() {
+      _isCollectionAnimating = true;
+    });
+
+    try {
+      // Start animation for visual feedback
+      _collectionController.forward();
+      
+      final currentCollections = collectionManager.getCollectionsForBook(widget.book.path);
+      final initialCollectionCount = currentCollections.length;
+      
+      final result = await showDialog<bool>(
+        context: context,
+        builder: (context) => AddToCollectionDialog(
+          collectionManager: collectionManager,
+          bookPath: widget.book.path,
+          currentCollections: currentCollections,
+        ),
+      );
+      
+      if (result == true) {
+        widget.onRefreshBook();
+        
+        // Check new collection count for enhanced message
+        final newCollections = collectionManager.getCollectionsForBook(widget.book.path);
+        final newCollectionCount = newCollections.length;
+        
+        String message;
+        if (newCollectionCount > initialCollectionCount) {
+          final addedCount = newCollectionCount - initialCollectionCount;
+          message = 'Added "${widget.book.metadata?.title ?? widget.book.filename}" to $addedCount collection${addedCount > 1 ? 's' : ''}!';
+        } else if (newCollectionCount < initialCollectionCount) {
+          final removedCount = initialCollectionCount - newCollectionCount;
+          message = 'Removed "${widget.book.metadata?.title ?? widget.book.filename}" from $removedCount collection${removedCount > 1 ? 's' : ''}';
+        } else {
+          message = 'Collection membership updated';
+        }
+        
+        _showEnhancedSnackBar(
+          context,
+          message: message,
+          color: Colors.blue,
+          icon: Icons.folder_special,
+        );
+        
+        // Complete animation
+        await _collectionController.forward();
+        await Future.delayed(const Duration(milliseconds: 200));
+        await _collectionController.reverse();
+      } else {
+        _collectionController.reverse();
+      }
+    } catch (e) {
+      _collectionController.reverse();
+      Logger.error('Error managing collections: $e');
+      _showSnackBar(context, 'Error managing collections: ${e.toString()}', Colors.red);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCollectionAnimating = false;
+        });
+      }
     }
   }
 
   Future<void> _searchOnlineMetadata(BuildContext context) async {
     final actions = DetailActions(
-      libraryManager: libraryManager,
-      onRefreshBook: onRefreshBook,
-      onUpdateMetadataStatus: onUpdateMetadataStatus,
+      libraryManager: widget.libraryManager,
+      onRefreshBook: widget.onRefreshBook,
+      onUpdateMetadataStatus: widget.onUpdateMetadataStatus,
+      onBookUpdated: widget.onBookUpdated,
     );
     
-    await actions.searchOnlineMetadata(context, book);
+    await actions.searchOnlineMetadata(context, widget.book);
   }
 
   Future<void> _saveMetadataToFile(BuildContext context) async {
     final actions = DetailActions(
-      libraryManager: libraryManager,
-      onRefreshBook: onRefreshBook,
-      onUpdateMetadataStatus: onUpdateMetadataStatus,
+      libraryManager: widget.libraryManager,
+      onRefreshBook: widget.onRefreshBook,
+      onUpdateMetadataStatus: widget.onUpdateMetadataStatus,
     );
     
-    await actions.saveMetadataToFile(context, book);
-  }
-
-  Future<void> _refreshMetadata(BuildContext context) async {
-    onUpdateMetadataStatus(true);
-    
-    try {
-      Logger.log('Refreshing metadata for: ${book.filename}');
-      
-      // Force refresh metadata from file
-      final success = await book.refreshMetadata(forceRefresh: true);
-      
-      if (success) {
-        onRefreshBook();
-        _showSnackBar(context, 'Metadata refreshed successfully', Colors.green);
-      } else {
-        _showSnackBar(context, 'Failed to refresh metadata', Colors.orange);
-      }
-    } catch (e) {
-      Logger.error('Error refreshing metadata: $e');
-      _showSnackBar(context, 'Error refreshing metadata: ${e.toString()}', Colors.red);
-    } finally {
-      onUpdateMetadataStatus(false);
-    }
+    await actions.saveMetadataToFile(context, widget.book);
   }
 
   Future<void> _showDebugInfo(BuildContext context) async {
     try {
       // Get detailed information about this file
-      final detailedInfo = await book.extractDetailedInfoFromFile();
+      final detailedInfo = await widget.book.extractDetailedInfoFromFile();
       
       // Get library statistics
-      final stats = await libraryManager.getMetadataStatistics();
+      final stats = await widget.libraryManager.getMetadataStatistics();
       
       // Create comprehensive debug information
       final debugInfo = '''
@@ -325,35 +467,35 @@ ${_formatMapForDisplay(detailedInfo['raw_metadata_god_info'] as Map<String, dyna
 ${_formatMapForDisplay(stats)}
 
 🏥 HEALTH CHECK:
-  • Needs Repair: ${book.needsMetadataRepair ? 'YES' : 'NO'}
-  • Completion: ${book.metadata?.completionPercentage.toStringAsFixed(1) ?? '0'}%
-  • Has Duration: ${book.hasDuration ? 'YES' : 'NO'}
-  • Has Complete Metadata: ${book.hasCompleteMetadata ? 'YES' : 'NO'}
-  • Metadata Provider: ${book.metadata?.provider ?? 'None'}
+  • Needs Repair: ${widget.book.needsMetadataRepair ? 'YES' : 'NO'}
+  • Completion: ${widget.book.metadata?.completionPercentage.toStringAsFixed(1) ?? '0'}%
+  • Has Duration: ${widget.book.hasDuration ? 'YES' : 'NO'}
+  • Has Complete Metadata: ${widget.book.hasCompleteMetadata ? 'YES' : 'NO'}
+  • Metadata Provider: ${widget.book.metadata?.provider ?? 'None'}
 
 🎵 AUDIO INFORMATION:
-  • Duration: ${book.metadata?.durationFormatted ?? 'Unknown'}
-  • File Format: ${book.metadata?.fileFormat ?? book.extension.toUpperCase()}
-  • File Size: ${book.formattedFileSize}
+  • Duration: ${widget.book.metadata?.durationFormatted ?? 'Unknown'}
+  • File Format: ${widget.book.metadata?.fileFormat ?? widget.book.extension.toUpperCase()}
+  • File Size: ${widget.book.formattedFileSize}
 
 📚 CONTENT INFORMATION:
-  • Title: ${book.metadata?.title ?? 'None'}
-  • Authors: ${book.metadata?.authorsFormatted ?? 'None'}
-  • Series: ${book.metadata?.series ?? 'None'}
-  • Position: ${book.metadata?.seriesPosition ?? 'None'}
-  • Genres: ${book.metadata?.categories.join(', ') ?? 'None'}
-  • Publisher: ${book.metadata?.publisher ?? 'None'}
-  • Published: ${book.metadata?.publishedDate ?? 'None'}
-  • Description Length: ${book.metadata?.description.length ?? 0} chars
+  • Title: ${widget.book.metadata?.title ?? 'None'}
+  • Authors: ${widget.book.metadata?.authorsFormatted ?? 'None'}
+  • Series: ${widget.book.metadata?.series ?? 'None'}
+  • Position: ${widget.book.metadata?.seriesPosition ?? 'None'}
+  • Genres: ${widget.book.metadata?.categories.join(', ') ?? 'None'}
+  • Publisher: ${widget.book.metadata?.publisher ?? 'None'}
+  • Published: ${widget.book.metadata?.publishedDate ?? 'None'}
+  • Description Length: ${widget.book.metadata?.description.length ?? 0} chars
 
 ⭐ USER DATA:
-  • Rating: ${book.metadata?.userRating ?? 0}/5
-  • Favorite: ${book.metadata?.isFavorite ?? false ? 'YES' : 'NO'}
-  • Tags: ${book.metadata?.userTags.join(', ') ?? 'None'}
-  • Bookmarks: ${book.metadata?.bookmarks.length ?? 0}
-  • Notes: ${book.metadata?.notes.length ?? 0}
-  • Last Played: ${book.metadata?.lastPlayedPosition?.toIso8601String() ?? 'Never'}
-  • Playback Position: ${book.metadata?.playbackPosition?.inSeconds ?? 0}s
+  • Rating: ${widget.book.metadata?.userRating ?? 0}/5
+  • Favorite: ${widget.book.metadata?.isFavorite ?? false ? 'YES' : 'NO'}
+  • Tags: ${widget.book.metadata?.userTags.join(', ') ?? 'None'}
+  • Bookmarks: ${widget.book.metadata?.bookmarks.length ?? 0}
+  • Notes: ${widget.book.metadata?.notes.length ?? 0}
+  • Last Played: ${widget.book.metadata?.lastPlayedPosition?.toIso8601String() ?? 'Never'}
+  • Playback Position: ${widget.book.metadata?.playbackPosition?.inSeconds ?? 0}s
       ''';
       
       if (context.mounted) {
@@ -364,7 +506,7 @@ ${_formatMapForDisplay(stats)}
               children: [
                 const Icon(Icons.bug_report, color: Colors.orange),
                 const SizedBox(width: 8),
-                Expanded(child: Text('Debug Info: ${book.filename}')),
+                Expanded(child: Text('Debug Info: ${widget.book.filename}')),
               ],
             ),
             content: SizedBox(
@@ -387,19 +529,11 @@ ${_formatMapForDisplay(stats)}
               ),
               TextButton(
                 onPressed: () {
-                  Logger.log('Debug Info for ${book.filename}:\n$debugInfo');
+                  Logger.log('Debug Info for ${widget.book.filename}:\n$debugInfo');
                   Navigator.of(context).pop();
                   _showSnackBar(context, 'Debug info logged to console', Colors.blue);
                 },
                 child: const Text('Log to Console'),
-              ),
-              TextButton(
-                onPressed: () {
-                  // Export debug info functionality could be added here
-                  Navigator.of(context).pop();
-                  _showSnackBar(context, 'Debug export not implemented yet', Colors.orange);
-                },
-                child: const Text('Export'),
               ),
             ],
           ),
@@ -419,6 +553,43 @@ ${_formatMapForDisplay(stats)}
         .join('\n');
   }
 
+  void _showEnhancedSnackBar(
+    BuildContext context, {
+    required String message,
+    required Color color,
+    required IconData icon,
+  }) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(icon, color: Colors.white, size: 20),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  message,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: color,
+          duration: const Duration(seconds: 4),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          elevation: 6,
+        ),
+      );
+    }
+  }
+
   void _showSnackBar(BuildContext context, String message, Color color) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -426,6 +597,11 @@ ${_formatMapForDisplay(stats)}
           content: Text(message),
           backgroundColor: color,
           duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          margin: const EdgeInsets.all(12),
         ),
       );
     }

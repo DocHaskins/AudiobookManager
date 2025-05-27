@@ -1,7 +1,4 @@
-// =============================================================================
-// lib/ui/widgets/detail/utils/detail_actions.dart
-// =============================================================================
-
+// lib/ui/widgets/detail/utils/detail_actions.dart - FIXED context handling
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
@@ -16,11 +13,13 @@ class DetailActions {
   final LibraryManager libraryManager;
   final VoidCallback onRefreshBook;
   final ValueChanged<bool> onUpdateMetadataStatus;
+  final Function(AudiobookFile)? onBookUpdated;
 
   DetailActions({
     required this.libraryManager,
     required this.onRefreshBook,
     required this.onUpdateMetadataStatus,
+    this.onBookUpdated,
   });
 
   Future<void> saveMetadata(
@@ -69,13 +68,20 @@ class DetailActions {
         onRefreshBook();
         controllers.setEditingMetadata(false);
         
-        _showSnackBar(context, 'Metadata saved successfully', Colors.green);
+        // Check if context is still mounted before showing snackbar
+        if (context.mounted) {
+          _showSnackBar(context, 'Metadata saved successfully', Colors.green);
+        }
       } else {
-        _showSnackBar(context, 'Failed to save metadata', Colors.red);
+        if (context.mounted) {
+          _showSnackBar(context, 'Failed to save metadata', Colors.red);
+        }
       }
     } catch (e) {
       Logger.error('Error saving metadata: $e');
-      _showSnackBar(context, 'Error saving metadata: ${e.toString()}', Colors.red);
+      if (context.mounted) {
+        _showSnackBar(context, 'Error saving metadata: ${e.toString()}', Colors.red);
+      }
     }
   }
 
@@ -83,9 +89,16 @@ class DetailActions {
     BuildContext context,
     AudiobookFile book,
   ) async {
+    Logger.log('=== Starting metadata search for: ${book.filename} ===');
     onUpdateMetadataStatus(true);
 
     try {
+      // Ensure context is available and get the MetadataMatcher
+      if (!context.mounted) {
+        Logger.error('Context not mounted, cannot search metadata');
+        return;
+      }
+
       final metadataMatcher = Provider.of<MetadataMatcher>(context, listen: false);
       
       String searchQuery = '';
@@ -95,8 +108,14 @@ class DetailActions {
         searchQuery = book.filename.replaceAll(RegExp(r'\.[^.]+'), '');
       }
       
+      Logger.log('Search query: "$searchQuery"');
+      Logger.log('Available providers: ${metadataMatcher.providers.length}');
+      
       final providers = metadataMatcher.providers;
       
+      Logger.log('Showing metadata search dialog...');
+      
+      // Show dialog and wait for result
       final result = await MetadataSearchDialog.show(
         context: context,
         initialQuery: searchQuery,
@@ -104,42 +123,106 @@ class DetailActions {
         currentMetadata: book.metadata,
       );
       
+      Logger.log('Dialog completed. Result: ${result != null ? 'Found result' : 'No result'}');
+      
+      // Process the result if we have one
       if (result != null) {
+        Logger.log('Processing metadata update: ${result.updateType.name} operation for ${book.filename}');
+        Logger.log('Selected metadata title: "${result.metadata.title}"');
+        Logger.log('Update cover: ${result.updateCover}');
+        
+        bool success = false;
         AudiobookMetadata? finalMetadata;
         
+        // Handle cover update first if requested
+        if (result.updateCover && result.metadata.thumbnailUrl.isNotEmpty) {
+          Logger.log('Updating cover image from: ${result.metadata.thumbnailUrl}');
+          final coverSuccess = await libraryManager.updateCoverImage(book, result.metadata.thumbnailUrl);
+          Logger.log('Cover update success: $coverSuccess');
+        }
+        
+        // Apply the correct operation directly using the metadata merge methods
+        Logger.log('Applying ${result.updateType.name} operation...');
         switch (result.updateType) {
           case MetadataUpdateType.enhance:
-            finalMetadata = await metadataMatcher.enhanceMetadata(book, result.metadata);
-            if (result.updateCover && result.metadata.thumbnailUrl.isNotEmpty) {
-              await _handleCoverUpdate(book, result.metadata.thumbnailUrl);
-              onRefreshBook();
+            Logger.log('Enhancing metadata for: ${book.filename}');
+            if (book.metadata != null) {
+              finalMetadata = book.metadata!.enhance(result.metadata);
+              Logger.log('Enhanced existing metadata');
+            } else {
+              finalMetadata = result.metadata;
+              Logger.log('No existing metadata, using new metadata directly');
             }
+            success = await libraryManager.updateMetadata(book, finalMetadata);
+            Logger.log('Enhance operation success: $success');
             break;
+            
           case MetadataUpdateType.update:
-            finalMetadata = await metadataMatcher.updateToNewVersion(
-              book, 
-              result.metadata, 
-              updateCover: result.updateCover
-            );
+            Logger.log('Updating version for: ${book.filename}');
+            if (book.metadata != null) {
+              finalMetadata = book.metadata!.updateVersion(result.metadata);
+              Logger.log('Updated version keeping user data');
+            } else {
+              finalMetadata = result.metadata;
+              Logger.log('No existing metadata, using new metadata directly');
+            }
+            success = await libraryManager.updateMetadata(book, finalMetadata);
+            Logger.log('Update operation success: $success');
             break;
+            
           case MetadataUpdateType.replace:
-            finalMetadata = await metadataMatcher.replaceWithDifferentBook(
-              book, 
-              result.metadata, 
-              updateCover: result.updateCover
-            );
+            Logger.log('Replacing book metadata for: ${book.filename}');
+            if (book.metadata != null) {
+              finalMetadata = book.metadata!.replaceBook(result.metadata);
+              Logger.log('Replaced book, reset user data');
+            } else {
+              finalMetadata = result.metadata;
+              Logger.log('No existing metadata, using new metadata directly');
+            }
+            success = await libraryManager.updateMetadata(book, finalMetadata);
+            Logger.log('Replace operation success: $success');
             break;
         }
         
-        if (finalMetadata != null) {
+        if (success && finalMetadata != null) {
+          Logger.log('Metadata update successful, updating UI...');
+          
+          // Update the local book object
+          book.metadata = finalMetadata; 
+          
+          // Refresh the book data to ensure consistency
           onRefreshBook();
-          _showSnackBar(context, _getSuccessMessage(result.updateType), Colors.green);
+          
+          // Call the update callback with the updated book
+          onBookUpdated?.call(book);
+          
+          // Show success message if context is still mounted
+          if (context.mounted) {
+            _showSnackBar(context, _getSuccessMessage(result.updateType), Colors.green);
+          } else {
+            Logger.log('Context unmounted, success message not shown but operation completed successfully');
+          }
+          
+          Logger.log('Successfully updated metadata for: ${book.filename}');
+        } else {
+          Logger.error('Failed to update metadata for: ${book.filename} - Success: $success, FinalMetadata: ${finalMetadata != null}');
+          if (context.mounted) {
+            _showSnackBar(context, 'Failed to update metadata', Colors.red);
+          } else {
+            Logger.log('Context unmounted, error message not shown');
+          }
         }
+      } else {
+        Logger.log('No result from dialog - user cancelled or no selection made');
       }
     } catch (e) {
       Logger.error('Error updating metadata: $e');
-      _showSnackBar(context, 'Error updating metadata: ${e.toString()}', Colors.red);
+      Logger.error('Stack trace: ${StackTrace.current}');
+      if (context.mounted) {
+        _showSnackBar(context, 'Error updating metadata: ${e.toString()}', Colors.red);
+      }
     } finally {
+      Logger.log('=== Metadata search completed ===');
       onUpdateMetadataStatus(false);
     }
   }
@@ -149,7 +232,9 @@ class DetailActions {
     AudiobookFile book,
   ) async {
     if (book.metadata == null) {
-      _showSnackBar(context, 'No metadata to save', Colors.orange);
+      if (context.mounted) {
+        _showSnackBar(context, 'No metadata to save', Colors.orange);
+      }
       return;
     }
 
@@ -167,40 +252,32 @@ class DetailActions {
             ? " (Duration: ${book.metadata!.durationFormatted})" 
             : "";
             
-        _showSnackBar(
-          context, 
-          'Metadata saved to file successfully$durationText', 
-          Colors.green,
-          duration: const Duration(seconds: 4),
-        );
+        if (context.mounted) {
+          _showSnackBar(
+            context, 
+            'Metadata saved to file successfully$durationText', 
+            Colors.green,
+            duration: const Duration(seconds: 4),
+          );
+        }
       } else {
         Logger.error('Failed to save metadata to file: ${book.filename}');
-        _showSnackBar(context, 'Failed to save metadata to file', Colors.red);
+        if (context.mounted) {
+          _showSnackBar(context, 'Failed to save metadata to file', Colors.red);
+        }
       }
     } catch (e) {
       Logger.error('Error saving metadata to file: $e');
-      _showSnackBar(
-        context, 
-        'Error saving metadata to file: ${e.toString()}', 
-        Colors.red,
-        duration: const Duration(seconds: 6),
-      );
+      if (context.mounted) {
+        _showSnackBar(
+          context, 
+          'Error saving metadata to file: ${e.toString()}', 
+          Colors.red,
+          duration: const Duration(seconds: 6),
+        );
+      }
     } finally {
       onUpdateMetadataStatus(false);
-    }
-  }
-
-  Future<bool> _handleCoverUpdate(AudiobookFile book, String coverSource) async {
-    try {
-      final success = await libraryManager.updateCoverImage(book, coverSource);
-      if (success) {
-        Logger.log('Successfully updated cover art for: ${book.filename}');
-        return true;
-      }
-      return false;
-    } catch (e) {
-      Logger.error('Error updating cover art for: ${book.filename}', e);
-      return false;
     }
   }
 
@@ -221,12 +298,23 @@ class DetailActions {
     Color color, {
     Duration? duration,
   }) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: color,
-        duration: duration ?? const Duration(seconds: 3),
-      ),
-    );
+    // Additional safety check - only show snackbar if context is still mounted
+    if (!context.mounted) {
+      Logger.debug('Context not mounted, skipping snackbar: $message');
+      return;
+    }
+
+    try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: color,
+          duration: duration ?? const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      // Fallback logging if snackbar fails
+      Logger.error('Failed to show snackbar: $message', e);
+    }
   }
 }

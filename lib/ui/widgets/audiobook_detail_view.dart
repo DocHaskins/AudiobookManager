@@ -1,4 +1,4 @@
-// lib/ui/widgets/detail/audiobook_detail_view.dart - FIXED VERSION
+// lib/ui/widgets/detail/audiobook_detail_view.dart
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:io';
@@ -82,6 +82,16 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView>
     }
   }
 
+  void _onBookUpdated(AudiobookFile updatedBook) {
+    Logger.log('Book updated via metadata search: ${updatedBook.filename}');
+    setState(() {
+      _book = updatedBook;
+      if (!isEditingMetadata) {
+        initializeControllers(_book.metadata, _book.filename);
+      }
+    });
+  }
+
   // Add method to handle editing state changes
   void _onEditingStateChanged(bool isEditing) {
     setState(() {
@@ -145,6 +155,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView>
                       _isUpdatingMetadata = isUpdating;
                     });
                   },
+                  onBookUpdated: _onBookUpdated,
                   isUpdatingMetadata: _isUpdatingMetadata,
                 ),
                 
@@ -160,7 +171,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView>
                         _isUpdatingMetadata = isUpdating;
                       });
                     },
-                    onEditingStateChanged: _onEditingStateChanged,
+                    onEditingStateChanged: _onEditingStateChanged, // Add this callback
                     isUpdatingMetadata: _isUpdatingMetadata,
                   ),
                 ),

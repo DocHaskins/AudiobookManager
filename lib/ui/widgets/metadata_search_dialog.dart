@@ -1,4 +1,4 @@
-// lib/ui/widgets/metadata_search_dialog.dart - COMPREHENSIVE VERSION
+// lib/ui/widgets/metadata_search_dialog.dart - FIXED
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
@@ -42,7 +42,9 @@ class MetadataSearchDialog extends StatefulWidget {
     required List<MetadataProvider> providers,
     AudiobookMetadata? currentMetadata,
   }) async {
-    return showDialog<MetadataSearchResult>(
+    Logger.log('MetadataSearchDialog.show called with query: "$initialQuery"');
+    
+    final result = await showDialog<MetadataSearchResult>(
       context: context,
       barrierDismissible: false,
       builder: (context) => MetadataSearchDialog(
@@ -51,6 +53,9 @@ class MetadataSearchDialog extends StatefulWidget {
         currentMetadata: currentMetadata,
       ),
     );
+    
+    Logger.log('MetadataSearchDialog.show returning result: ${result != null ? "Found" : "Null"}');
+    return result;
   }
 
   @override
@@ -76,6 +81,7 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
   // Smart operation suggestion
   MetadataUpdateType _suggestedOperation = MetadataUpdateType.enhance;
   MetadataUpdateType _selectedOperation = MetadataUpdateType.enhance;
+  bool _updateCover = true;
   
   @override
   void initState() {
@@ -246,18 +252,25 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
   }
   
   void _onMetadataSelected(AudiobookMetadata metadata) {
+    Logger.log('Selected metadata: "${metadata.title}" by ${metadata.authorsFormatted}');
+    
     setState(() {
       _selectedMetadata = metadata;
       
       // Smart operation suggestion
       if (widget.currentMetadata != null) {
         final similarity = _calculateSimilarity(widget.currentMetadata!, metadata);
+        Logger.log('Similarity score: $similarity');
+        
         if (similarity < 0.3) {
           _suggestedOperation = MetadataUpdateType.replace; // Very different = replace
+          Logger.log('Suggesting REPLACE operation (low similarity)');
         } else if (similarity > 0.8) {
           _suggestedOperation = MetadataUpdateType.enhance; // Very similar = enhance
+          Logger.log('Suggesting ENHANCE operation (high similarity)');
         } else {
           _suggestedOperation = MetadataUpdateType.update; // Somewhat similar = update
+          Logger.log('Suggesting UPDATE operation (medium similarity)');
         }
         _selectedOperation = _suggestedOperation;
       }
@@ -342,7 +355,10 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
         ),
         const Spacer(),
         IconButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () {
+            Logger.log('Dialog cancelled by user');
+            Navigator.of(context).pop(null);
+          },
           icon: const Icon(Icons.close, color: Colors.white),
         ),
       ],
@@ -774,8 +790,6 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
                       )
                     else
                       const SizedBox(height: 18),
-                    
-                    
                   ],
                 ),
               ],
@@ -807,48 +821,6 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildCompactnessIndicator(AudiobookMetadata metadata) {
-    // Quick completeness calculation
-    int filledFields = 0;
-    int totalFields = 10; // Key fields only for compact view
-    
-    if (metadata.title.isNotEmpty) filledFields++;
-    if (metadata.authors.isNotEmpty) filledFields++;
-    if (metadata.description.isNotEmpty) filledFields++;
-    if (metadata.series.isNotEmpty) filledFields++;
-    if (metadata.publishedDate.isNotEmpty) filledFields++;
-    if (metadata.categories.isNotEmpty) filledFields++;
-    if (metadata.averageRating > 0) filledFields++;
-    if (metadata.thumbnailUrl.isNotEmpty) filledFields++;
-    if (metadata.publisher.isNotEmpty) filledFields++;
-    if (metadata.provider.isNotEmpty) filledFields++;
-    
-    double completeness = filledFields / totalFields;
-    Color color = completeness > 0.8 ? Colors.green : 
-                  completeness > 0.5 ? Colors.orange : 
-                  Colors.red;
-    
-    return Container(
-      width: 16,
-      height: 16,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: color.withOpacity(0.2),
-        border: Border.all(color: color, width: 1),
-      ),
-      child: Center(
-        child: Text(
-          '${(completeness * 100).round()}',
-          style: TextStyle(
-            color: color,
-            fontSize: 8,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
       ),
     );
   }
@@ -991,8 +963,6 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
       ],
     );
   }
-
-  bool _updateCover = true;
 
   Widget _buildOperationOption(
     MetadataUpdateType type, 
@@ -1361,7 +1331,10 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
         
         // Action buttons
         OutlinedButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () {
+            Logger.log('Dialog cancelled by user');
+            Navigator.of(context).pop(null);
+          },
           style: OutlinedButton.styleFrom(
             foregroundColor: Colors.white,
             side: BorderSide(color: Colors.grey[600]!),
@@ -1397,15 +1370,22 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
   }
 
   void _confirmSelection() {
-    if (_selectedMetadata == null) return;
+    if (_selectedMetadata == null) {
+      Logger.log('No metadata selected, cannot confirm');
+      return;
+    }
     
-    Navigator.of(context).pop(
-      MetadataSearchResult(
-        metadata: _selectedMetadata!,
-        updateCover: _updateCover,
-        updateType: _selectedOperation,
-      ),
+    Logger.log('Confirming selection: "${_selectedMetadata!.title}" with operation: ${_selectedOperation.name}');
+    Logger.log('Update cover: $_updateCover');
+    
+    final result = MetadataSearchResult(
+      metadata: _selectedMetadata!,
+      updateCover: _updateCover,
+      updateType: _selectedOperation,
     );
+    
+    Logger.log('Returning result from dialog');
+    Navigator.of(context).pop(result);
   }
 
   String _getProviderName(MetadataProvider provider) {
