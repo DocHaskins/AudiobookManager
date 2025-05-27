@@ -304,10 +304,14 @@ class AudiobookGridItem extends StatelessWidget {
     
     final uniqueGenres = allGenres.toSet().where((genre) => genre.isNotEmpty).toList();
     
-    if (uniqueGenres.length == 1) {
+    if (uniqueGenres.isEmpty) {
+      return '';
+    } else if (uniqueGenres.length == 1) {
       return uniqueGenres.first;
-    } else {
+    } else if (uniqueGenres.length >= 2) {
       return '${uniqueGenres.first}, ${uniqueGenres[1]}';
+    } else {
+      return uniqueGenres.first;
     }
   }
 

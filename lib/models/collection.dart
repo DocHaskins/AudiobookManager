@@ -1,6 +1,5 @@
 // lib/models/collection.dart
 import 'package:audiobook_organizer/models/audiobook_file.dart';
-import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 
 class Collection {
   final String id;

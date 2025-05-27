@@ -177,7 +177,6 @@ class CoverArtManager {
     }
   }
   
-  /// MAIN API: Remove cover for file (handles all cleanup)
   Future<void> removeCover(String filePath) async {
     if (!_isInitialized) await initialize();
     
@@ -266,8 +265,9 @@ class CoverArtManager {
       
       // Determine extension
       String extension = '.jpg';
-      if (imageUrl.contains('.png')) extension = '.png';
-      else if (imageUrl.contains('.webp')) extension = '.webp';
+      if (imageUrl.contains('.png')) {
+        extension = '.png';
+      } else if (imageUrl.contains('.webp')) extension = '.webp';
       else if (imageUrl.contains('.jpeg')) extension = '.jpeg';
       
       final coverPath = path_util.join(_coversDir!, '${fileId}_$timestamp$extension');
@@ -322,10 +322,11 @@ class CoverArtManager {
       
       // Determine extension
       String extension = '.jpg';
-      final mimeType = metadata.picture!.mimeType?.toLowerCase();
+      final mimeType = metadata.picture!.mimeType.toLowerCase();
       if (mimeType != null) {
-        if (mimeType.contains('png')) extension = '.png';
-        else if (mimeType.contains('webp')) extension = '.webp';
+        if (mimeType.contains('png')) {
+          extension = '.png';
+        } else if (mimeType.contains('webp')) extension = '.webp';
       }
       
       // Save with timestamp

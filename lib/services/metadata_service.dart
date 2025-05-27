@@ -1,5 +1,10 @@
 // lib/services/metadata_service.dart
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter/ffmpeg_session.dart';
+import 'package:ffmpeg_kit_flutter/return_code.dart';
+import 'package:ffmpeg_kit_flutter/log.dart';
 import 'package:metadata_god/metadata_god.dart';
 import 'package:path/path.dart' as path_util;
 import 'package:mime/mime.dart';
@@ -15,20 +20,187 @@ class MetadataService {
 
   final Map<String, AudiobookMetadata> _metadataCache = {};
   bool _isInitialized = false;
+  bool _ffmpegKitAvailable = false;
+  bool _systemFFmpegAvailable = false;
+  String? _systemFFmpegPath;
+  
+  // Computed property for overall FFmpeg availability
+  bool get _ffmpegAvailable => _ffmpegKitAvailable || _systemFFmpegAvailable;
   
   // Initialize the service
   Future<bool> initialize() async {
     if (_isInitialized) return true;
     
     try {
-      Logger.log('Initializing MetadataService with metadata_god');
+      Logger.log('Initializing MetadataService with metadata_god and FFmpeg detection');
+      
+      // Check FFmpeg availability using multiple methods
+      await _detectAllFFmpegSources();
+      
       _isInitialized = true;
       Logger.log('MetadataService initialized successfully');
+      Logger.log('- FFmpeg Kit: ${_ffmpegKitAvailable ? "✅" : "❌"}');
+      Logger.log('- System FFmpeg: ${_systemFFmpegAvailable ? "✅" : "❌"}${_systemFFmpegPath != null ? " ($_systemFFmpegPath)" : ""}');
+      Logger.log('- Overall FFmpeg: ${_ffmpegAvailable ? "✅" : "❌"}');
+      
+      if (!_ffmpegAvailable) {
+        Logger.log('💡 To enable FFmpeg features, install FFmpeg and add it to your system PATH');
+        Logger.log('   Download from: https://ffmpeg.org/download.html');
+      }
+      
       return true;
     } catch (e) {
       Logger.error('Failed to initialize MetadataService', e);
       return false;
     }
+  }
+
+  // Detect all FFmpeg sources
+  Future<void> _detectAllFFmpegSources() async {
+    Logger.log('Detecting FFmpeg availability from all sources...');
+    
+    // Check FFmpeg Kit first
+    await _checkFFmpegKitAvailability();
+    
+    // Check system FFmpeg
+    await _checkSystemFFmpegAvailability();
+    
+    // Log results
+    if (_ffmpegKitAvailable && _systemFFmpegAvailable) {
+      Logger.log('🎉 Both FFmpeg Kit and System FFmpeg available - maximum compatibility!');
+    } else if (_ffmpegKitAvailable) {
+      Logger.log('FFmpeg Kit available but no system FFmpeg detected');
+    } else if (_systemFFmpegAvailable) {
+      Logger.log('System FFmpeg available but FFmpeg Kit not working');
+    } else {
+      Logger.log('No FFmpeg sources available - will use metadata_god only');
+    }
+  }
+
+  // Check FFmpeg Kit availability (original method)
+  Future<void> _checkFFmpegKitAvailability() async {
+    try {
+      Logger.log('Checking FFmpeg Kit availability...');
+      
+      // Method 1: Try to execute a simple FFmpeg command
+      final session = await FFmpegKit.execute('-version');
+      final returnCode = await session.getReturnCode();
+      
+      if (ReturnCode.isSuccess(returnCode)) {
+        _ffmpegKitAvailable = true;
+        Logger.log('✅ FFmpeg Kit is available and working');
+        
+        // Get FFmpeg version for logging
+        final logs = await session.getAllLogsAsString();
+        final versionLine = (logs ?? '').split('\n').firstWhere(
+          (line) => line.contains('ffmpeg version'),
+          orElse: () => 'Unknown version'
+        );
+        Logger.log('FFmpeg Kit version: $versionLine');
+        
+      } else {
+        _ffmpegKitAvailable = false;
+        Logger.log('FFmpeg Kit returned non-success code: $returnCode');
+      }
+    } catch (e) {
+      _ffmpegKitAvailable = false;
+      Logger.log('FFmpeg Kit not available: ${e.toString()}');
+      
+      // Try alternative check
+      try {
+        final session = await FFmpegKit.executeAsync('-f lavfi -i testsrc=duration=1:size=320x240:rate=1 -f null -', 
+          (session) {
+            // Success callback
+          }, 
+          (log) {
+            // Log callback
+          }, 
+          (statistics) {
+            // Statistics callback
+          }
+        );
+        
+        await Future.delayed(const Duration(milliseconds: 500));
+        await session.cancel();
+        
+        final returnCode = await session.getReturnCode();
+        if (returnCode != null) {
+          _ffmpegKitAvailable = true;
+          Logger.log('✅ FFmpeg Kit async check successful');
+        }
+      } catch (asyncError) {
+        Logger.debug('FFmpeg Kit async check also failed: $asyncError');
+      }
+    }
+  }
+
+  // Check system FFmpeg availability
+  Future<void> _checkSystemFFmpegAvailability() async {
+    try {
+      Logger.log('Checking system FFmpeg installation...');
+      
+      // List of possible FFmpeg executable locations
+      final List<String> ffmpegCandidates = [
+        'ffmpeg',           // Standard name (Unix/Linux/macOS)
+        'ffmpeg.exe',       // Windows executable
+        '/usr/bin/ffmpeg',  // Common Linux path
+        '/usr/local/bin/ffmpeg', // Common macOS path
+        'C:\\ffmpeg\\bin\\ffmpeg.exe',          // Common Windows path
+        'C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe', // Program Files
+        'C:\\tools\\ffmpeg\\bin\\ffmpeg.exe',   // Chocolatey installation
+        Platform.environment['FFMPEG'] ?? '', // Environment variable
+        // Also check PATH environment variable
+        ...(_getPathExecutables('ffmpeg') + _getPathExecutables('ffmpeg.exe')),
+      ];
+      
+      for (final candidate in ffmpegCandidates) {
+        if (candidate.isEmpty) continue;
+        
+        try {
+          Logger.debug('Testing system FFmpeg candidate: $candidate');
+          
+          final result = await Process.run(
+            candidate,
+            ['-version'],
+          );
+          
+          if (result.exitCode == 0) {
+            _systemFFmpegAvailable = true;
+            _systemFFmpegPath = candidate;
+            Logger.log('✅ System FFmpeg found: $candidate');
+            
+            // Extract version info
+            final output = result.stdout.toString();
+            final versionLine = output.split('\n').firstWhere(
+              (line) => line.contains('ffmpeg version'),
+              orElse: () => 'Version info not found'
+            );
+            Logger.log('System FFmpeg version: $versionLine');
+            
+            return; // Found working FFmpeg, stop searching
+          }
+        } catch (e) {
+          Logger.debug('System FFmpeg candidate $candidate failed: $e');
+          continue;
+        }
+      }
+      
+      Logger.log('❌ No system FFmpeg installation found');
+    } catch (e) {
+      Logger.warning('Error checking system FFmpeg: $e');
+    }
+  }
+
+  // Helper to get executables from PATH
+  List<String> _getPathExecutables(String executableName) {
+    final pathEnv = Platform.environment['PATH'] ?? '';
+    final pathSeparator = Platform.isWindows ? ';' : ':';
+    
+    return pathEnv
+        .split(pathSeparator)
+        .where((path) => path.isNotEmpty)
+        .map((path) => path_util.join(path, executableName))
+        .toList();
   }
   
   // Primary method to extract metadata with all available MetadataGod fields
@@ -128,18 +300,750 @@ class MetadataService {
     }
   }
   
-  // Method to write metadata from AudiobookMetadata object
+  // Method to write metadata from AudiobookMetadata object with enhanced diagnostics
   Future<bool> writeMetadataFromObject(String filePath, AudiobookMetadata metadata) async {
-    return writeMetadata(filePath, metadata, coverImagePath: metadata.thumbnailUrl);
+    String? coverImagePath;
+    if (metadata.thumbnailUrl.isNotEmpty && 
+        !metadata.thumbnailUrl.startsWith('http')) {
+      final coverFile = File(metadata.thumbnailUrl);
+      if (await coverFile.exists()) {
+        coverImagePath = metadata.thumbnailUrl;
+        Logger.log('Using cover from metadata for writing: ${path_util.basename(coverImagePath)}');
+      }
+    }
+    
+    return writeMetadataWithDiagnostics(filePath, metadata, coverImagePath: coverImagePath);
   }
   
-  // Extract detailed audio information for debugging - only what MetadataGod actually provides
+  // Enhanced write method with comprehensive diagnostics
+  Future<bool> writeMetadataWithDiagnostics(String filePath, AudiobookMetadata metadata, {String? coverImagePath}) async {
+    try {
+      final fileExtension = path_util.extension(filePath).toLowerCase();
+      
+      if (fileExtension == '.m4b' && coverImagePath != null) {
+        Logger.log('M4B file with cover detected - using enhanced FFmpeg strategies');
+        
+        // Try FFmpeg approaches with priority order
+        bool ffmpegSuccess = false;
+        
+        // Priority 1: FFmpeg Kit (if available)
+        if (_ffmpegKitAvailable) {
+          Logger.log('Attempting FFmpeg Kit for M4B cover embedding');
+          ffmpegSuccess = await _writeM4BWithFFmpegKit(filePath, metadata, coverImagePath);
+          if (ffmpegSuccess) {
+            Logger.log('✅ FFmpeg Kit succeeded');
+            return true;
+          } else {
+            Logger.warning('FFmpeg Kit failed, trying system FFmpeg');
+          }
+        }
+        
+        // Priority 2: System FFmpeg (if available)
+        if (_systemFFmpegAvailable && !ffmpegSuccess) {
+          Logger.log('Attempting system FFmpeg for M4B cover embedding');
+          ffmpegSuccess = await _writeM4BWithSystemFFmpeg(filePath, metadata, coverImagePath);
+          if (ffmpegSuccess) {
+            Logger.log('✅ System FFmpeg succeeded');
+            return true;
+          } else {
+            Logger.warning('System FFmpeg failed, falling back to metadata_god strategies');
+          }
+        }
+        
+        // Priority 3: Enhanced metadata_god strategies
+        if (!ffmpegSuccess) {
+          Logger.log('All FFmpeg approaches failed, trying enhanced metadata_god strategies');
+          return await _tryEnhancedMetadataGodStrategies(filePath, metadata, coverImagePath);
+        }
+        
+      } else if (fileExtension == '.m4b') {
+        Logger.log('Using metadata_god for M4B metadata (no cover)');
+        return await _writeStandardMetadata(filePath, metadata, null);
+      } else {
+        Logger.log('Using standard metadata write for non-M4B files');
+        return await _writeStandardMetadata(filePath, metadata, coverImagePath);
+      }
+      
+      return false;
+    } catch (e) {
+      Logger.error('Error in writeMetadataWithDiagnostics', e);
+      return false;
+    }
+  }
+
+  // FFmpeg Kit implementation (original method)
+  Future<bool> _writeM4BWithFFmpegKit(String filePath, AudiobookMetadata metadata, String? coverImagePath) async {
+    FFmpegSession? session;
+    String? backupPath;
+    String? tempOutputPath;
+    
+    try {
+      Logger.log('Starting FFmpeg Kit M4B metadata write');
+      
+      // Create backup
+      backupPath = '$filePath.backup';
+      await File(filePath).copy(backupPath);
+      Logger.log('Created backup: $backupPath');
+      
+      // Create temporary output file
+      final tempDir = Directory.systemTemp;
+      tempOutputPath = path_util.join(tempDir.path, 'ffmpeg_kit_output_${DateTime.now().millisecondsSinceEpoch}.m4b');
+      
+      // Build FFmpeg command
+      final ffmpegArgs = await _buildFFmpegArgs(filePath, coverImagePath, metadata, tempOutputPath);
+      
+      Logger.log('FFmpeg Kit command: ffmpeg ${ffmpegArgs.join(' ')}');
+      
+      // Execute FFmpeg with proper session handling
+      session = await FFmpegKit.executeWithArguments(ffmpegArgs);
+      final returnCode = await session.getReturnCode();
+      
+      if (ReturnCode.isSuccess(returnCode)) {
+        return await _verifyAndReplaceFile(filePath, tempOutputPath, coverImagePath, backupPath, 'FFmpeg Kit');
+      } else {
+        // FFmpeg failed, get logs for debugging
+        final logs = await session.getAllLogsAsString();
+        Logger.error('FFmpeg Kit failed with return code: $returnCode');
+        Logger.error('FFmpeg Kit logs: $logs');
+        
+        await _restoreFromBackup(filePath, backupPath);
+        await _cleanupFiles([tempOutputPath]);
+        return false;
+      }
+    } catch (e) {
+      Logger.error('Error in _writeM4BWithFFmpegKit: $e');
+      
+      // Cancel session if it exists
+      if (session != null) {
+        try {
+          await session.cancel();
+        } catch (cancelError) {
+          Logger.debug('Error canceling FFmpeg Kit session: $cancelError');
+        }
+      }
+      
+      // Cleanup and restore
+      if (tempOutputPath != null) {
+        await _cleanupFiles([tempOutputPath]);
+      }
+      if (backupPath != null) {
+        await _restoreFromBackup(filePath, backupPath);
+      }
+      
+      return false;
+    }
+  }
+
+  // System FFmpeg implementation
+  Future<bool> _writeM4BWithSystemFFmpeg(String filePath, AudiobookMetadata metadata, String coverImagePath) async {
+    if (_systemFFmpegPath == null) return false;
+    
+    String? backupPath;
+    String? tempOutputPath;
+    
+    try {
+      Logger.log('Starting system FFmpeg M4B metadata write');
+      
+      // Create backup
+      backupPath = '$filePath.backup';
+      await File(filePath).copy(backupPath);
+      Logger.log('Created backup: $backupPath');
+      
+      // Create temporary output file
+      final tempDir = Directory.systemTemp;
+      tempOutputPath = path_util.join(tempDir.path, 'system_ffmpeg_output_${DateTime.now().millisecondsSinceEpoch}.m4b');
+      
+      // Build FFmpeg command
+      final ffmpegArgs = await _buildFFmpegArgs(filePath, coverImagePath, metadata, tempOutputPath);
+      
+      Logger.log('System FFmpeg command: $_systemFFmpegPath ${ffmpegArgs.join(' ')}');
+      
+      // Execute system FFmpeg
+      final result = await Process.run(
+        _systemFFmpegPath!,
+        ffmpegArgs,
+      );
+      
+      if (result.exitCode == 0) {
+        return await _verifyAndReplaceFile(filePath, tempOutputPath, coverImagePath, backupPath, 'System FFmpeg');
+      } else {
+        Logger.error('System FFmpeg failed with exit code: ${result.exitCode}');
+        Logger.error('System FFmpeg stderr: ${result.stderr}');
+        
+        await _restoreFromBackup(filePath, backupPath);
+        await _cleanupFiles([tempOutputPath]);
+        return false;
+      }
+    } catch (e) {
+      Logger.error('Error in _writeM4BWithSystemFFmpeg: $e');
+      
+      if (tempOutputPath != null) {
+        await _cleanupFiles([tempOutputPath]);
+      }
+      if (backupPath != null) {
+        await _restoreFromBackup(filePath, backupPath);
+      }
+      
+      return false;
+    }
+  }
+
+  // Build FFmpeg arguments for M4B processing
+  Future<List<String>> _buildFFmpegArgs(String inputPath, String? coverImagePath, AudiobookMetadata metadata, String outputPath) async {
+    final List<String> args = [
+      '-i', inputPath,  // Input file
+    ];
+    
+    // Add cover image if provided
+    if (coverImagePath != null && await File(coverImagePath).exists()) {
+      args.addAll([
+        '-i', coverImagePath,  // Input cover image
+        '-map', '0:a',         // Map audio from first input
+        '-map', '1:v',         // Map video (cover) from second input
+        '-c:a', 'copy',        // Copy audio without re-encoding
+        '-c:v', 'copy',        // Copy video without re-encoding
+        '-disposition:v:0', 'attached_pic',  // Mark video as attached picture
+      ]);
+      Logger.log('Adding cover image: ${path_util.basename(coverImagePath)}');
+    } else {
+      args.addAll([
+        '-c', 'copy',  // Copy all streams without re-encoding
+      ]);
+    }
+    
+    // Add metadata tags
+    if (metadata.title.isNotEmpty) {
+      args.addAll(['-metadata', 'title=${_escapeMetadataValue(metadata.title)}']);
+    }
+    
+    if (metadata.authors.isNotEmpty) {
+      args.addAll(['-metadata', 'artist=${_escapeMetadataValue(metadata.authors.first)}']);
+      if (metadata.authors.length > 1) {
+        args.addAll(['-metadata', 'albumartist=${_escapeMetadataValue(metadata.authors.join(', '))}']);
+      } else {
+        args.addAll(['-metadata', 'albumartist=${_escapeMetadataValue(metadata.authors.first)}']);
+      }
+    }
+    
+    if (metadata.series.isNotEmpty) {
+      args.addAll(['-metadata', 'album=${_escapeMetadataValue(metadata.series)}']);
+    } else if (metadata.title.isNotEmpty) {
+      args.addAll(['-metadata', 'album=${_escapeMetadataValue(metadata.title)}']);
+    }
+    
+    if (metadata.categories.isNotEmpty) {
+      args.addAll(['-metadata', 'genre=${_escapeMetadataValue(metadata.categories.first)}']);
+    } else {
+      args.addAll(['-metadata', 'genre=Audiobook']);
+    }
+    
+    if (metadata.publishedDate.isNotEmpty) {
+      args.addAll(['-metadata', 'date=${_escapeMetadataValue(metadata.publishedDate)}']);
+    }
+    
+    if (metadata.seriesPosition.isNotEmpty) {
+      args.addAll(['-metadata', 'track=${_escapeMetadataValue(metadata.seriesPosition)}']);
+    }
+    
+    // Output file
+    args.addAll(['-y', outputPath]);  // -y to overwrite output file
+    
+    return args;
+  }
+
+  // Verify FFmpeg output and replace original file
+  Future<bool> _verifyAndReplaceFile(String originalPath, String tempOutputPath, String? coverImagePath, String backupPath, String method) async {
+    try {
+      // Verify the output file was created
+      if (!await File(tempOutputPath).exists()) {
+        Logger.error('$method output file was not created');
+        await _restoreFromBackup(originalPath, backupPath);
+        return false;
+      }
+      
+      final outputSize = await File(tempOutputPath).length();
+      final originalSize = await File(originalPath).length();
+      
+      Logger.log('$method verification - Original: $originalSize bytes, Output: $outputSize bytes');
+      
+      // Basic size sanity check (output should be similar size or larger due to metadata)
+      if (outputSize < (originalSize * 0.7)) {
+        Logger.error('Output file suspiciously small, aborting');
+        await _cleanupFiles([tempOutputPath]);
+        await _restoreFromBackup(originalPath, backupPath);
+        return false;
+      }
+      
+      // If cover was provided, verify it was embedded
+      if (coverImagePath != null) {
+        final verification = await diagnoseCoverEmbedding(tempOutputPath);
+        final actualCoverSize = verification['picture_data_size'] ?? 0;
+        
+        if (actualCoverSize == 0) {
+          Logger.error('$method failed to embed cover properly');
+          await _cleanupFiles([tempOutputPath]);
+          await _restoreFromBackup(originalPath, backupPath);
+          return false;
+        }
+        
+        Logger.log('Cover embedded successfully: $actualCoverSize bytes');
+      }
+      
+      // Replace original file with FFmpeg output
+      await File(tempOutputPath).copy(originalPath);
+      await _cleanupFiles([tempOutputPath, backupPath]);
+      
+      // Clear cache
+      _metadataCache.remove(originalPath);
+      
+      Logger.log('✅ Successfully wrote M4B metadata and cover using $method');
+      return true;
+      
+    } catch (e) {
+      Logger.error('Error verifying and replacing file: $e');
+      await _cleanupFiles([tempOutputPath]);
+      await _restoreFromBackup(originalPath, backupPath);
+      return false;
+    }
+  }
+
+  // Enhanced metadata_god strategies when FFmpeg is not available
+  Future<bool> _tryEnhancedMetadataGodStrategies(String filePath, AudiobookMetadata metadata, String? coverImagePath) async {
+    Logger.log('Trying enhanced metadata_god strategies (no FFmpeg)');
+    
+    // Strategy 1: Complete file replacement (most reliable for M4B)
+    Logger.log('Strategy 1: Complete file replacement');
+    try {
+      final success = await _writeM4BWithCompleteReplacement(filePath, metadata, coverImagePath);
+      if (success) {
+        Logger.log('✅ Strategy 1 SUCCESS: Complete file replacement');
+        return true;
+      }
+    } catch (e) {
+      Logger.error('Strategy 1 failed: $e');
+    }
+    
+    // Strategy 2: Two-stage write (remove existing cover first)
+    if (coverImagePath != null) {
+      Logger.log('Strategy 2: Two-stage cover replacement');
+      try {
+        final success = await _writeM4BWithTwoStageReplacement(filePath, metadata, coverImagePath);
+        if (success) {
+          Logger.log('✅ Strategy 2 SUCCESS: Two-stage replacement');
+          return true;
+        }
+      } catch (e) {
+        Logger.error('Strategy 2 failed: $e');
+      }
+    }
+    
+    // Strategy 3: Standard metadata_god approach (last resort)
+    Logger.log('Strategy 3: Standard metadata_god (last resort)');
+    try {
+      final success = await _writeStandardMetadata(filePath, metadata, coverImagePath);
+      if (success) {
+        Logger.log('✅ Strategy 3 SUCCESS: Standard approach worked');
+        return true;
+      }
+    } catch (e) {
+      Logger.error('Strategy 3 failed: $e');
+    }
+    
+    Logger.error('❌ All enhanced metadata_god strategies failed');
+    return false;
+  }
+
+  // Complete file replacement strategy (existing method)
+  Future<bool> _writeM4BWithCompleteReplacement(String filePath, AudiobookMetadata metadata, String? coverImagePath) async {
+    String? backupPath;
+    String? tempFilePath;
+    
+    try {
+      // Create backup
+      backupPath = '$filePath.backup';
+      await File(filePath).copy(backupPath);
+      Logger.log('Created backup for complete replacement');
+      
+      // Create temporary working copy
+      final tempDir = Directory.systemTemp;
+      tempFilePath = path_util.join(tempDir.path, 'temp_replacement_${DateTime.now().millisecondsSinceEpoch}_${path_util.basename(filePath)}');
+      await File(filePath).copy(tempFilePath);
+      
+      // Read original metadata to preserve audio stream info
+      final originalMetadata = await MetadataGod.readMetadata(file: tempFilePath);
+      
+      // Prepare new picture
+      Picture? picture;
+      if (coverImagePath != null && await File(coverImagePath).exists()) {
+        final imageBytes = await File(coverImagePath).readAsBytes();
+        final mimeType = lookupMimeType(coverImagePath) ?? 'image/jpeg';
+        
+        picture = Picture(
+          data: imageBytes,
+          mimeType: mimeType,
+        );
+        Logger.log('Prepared replacement cover: ${imageBytes.length} bytes');
+      }
+      
+      // Create completely fresh metadata
+      final freshMetadata = Metadata(
+        title: metadata.title,
+        artist: metadata.authors.isNotEmpty ? metadata.authors.first : null,
+        album: metadata.series.isNotEmpty ? metadata.series : metadata.title,
+        albumArtist: metadata.authors.isNotEmpty ? metadata.authors.join(', ') : null,
+        genre: metadata.categories.isNotEmpty ? metadata.categories.first : 'Audiobook',
+        year: metadata.publishedDate.isNotEmpty ? int.tryParse(metadata.publishedDate) : null,
+        trackNumber: metadata.seriesPosition.isNotEmpty ? int.tryParse(metadata.seriesPosition) : null,
+        trackTotal: null,
+        discNumber: null,
+        discTotal: null,
+        durationMs: originalMetadata.durationMs, // Preserve original duration
+        picture: picture,
+        fileSize: null,
+      );
+      
+      // Write to temp file
+      await MetadataGod.writeMetadata(
+        file: tempFilePath,
+        metadata: freshMetadata,
+      );
+      
+      // Verify temp file
+      final verification = await diagnoseCoverEmbedding(tempFilePath);
+      final expectedCoverSize = coverImagePath != null ? (await analyzeCoverFile(coverImagePath))['size'] ?? 0 : 0;
+      final actualCoverSize = verification['picture_data_size'] ?? 0;
+      
+      Logger.log('Replacement verification - Expected: $expectedCoverSize, Actual: $actualCoverSize');
+      
+      // Check if cover was properly embedded (if cover was provided)
+      if (coverImagePath != null && expectedCoverSize > 0) {
+        if (actualCoverSize == 0) {
+          Logger.error('Cover not embedded in replacement file');
+          await _cleanupFiles([tempFilePath]);
+          await _restoreFromBackup(filePath, backupPath);
+          return false;
+        }
+        
+        // Allow reasonable size difference due to compression
+        final sizeDifference = (actualCoverSize - expectedCoverSize).abs();
+        final tolerance = (expectedCoverSize * 0.3).round(); // 30% tolerance
+        
+        if (sizeDifference > tolerance) {
+          Logger.warning('Cover size differs significantly but proceeding - Expected: $expectedCoverSize, Got: $actualCoverSize');
+        }
+      }
+      
+      // Replace original with temp file
+      await File(tempFilePath).copy(filePath);
+      await _cleanupFiles([tempFilePath, backupPath]);
+      
+      // Clear cache
+      _metadataCache.remove(filePath);
+      
+      Logger.log('Complete replacement successful');
+      return true;
+      
+    } catch (e) {
+      Logger.error('Error in complete replacement strategy: $e');
+      
+      // Cleanup and restore
+      if (tempFilePath != null) {
+        await _cleanupFiles([tempFilePath]);
+      }
+      if (backupPath != null) {
+        await _restoreFromBackup(filePath, backupPath);
+      }
+      
+      return false;
+    }
+  }
+
+  // Two-stage cover replacement (existing method)
+  Future<bool> _writeM4BWithTwoStageReplacement(String filePath, AudiobookMetadata metadata, String coverImagePath) async {
+    try {
+      Logger.log('Starting two-stage M4B cover replacement');
+      
+      // Stage 1: Remove existing cover
+      final currentMetadata = await MetadataGod.readMetadata(file: filePath);
+      final metadataWithoutCover = Metadata(
+        title: currentMetadata.title,
+        artist: currentMetadata.artist,
+        album: currentMetadata.album,
+        albumArtist: currentMetadata.albumArtist,
+        genre: currentMetadata.genre,
+        year: currentMetadata.year,
+        trackNumber: currentMetadata.trackNumber,
+        trackTotal: currentMetadata.trackTotal,
+        discNumber: currentMetadata.discNumber,
+        discTotal: currentMetadata.discTotal,
+        durationMs: currentMetadata.durationMs,
+        picture: null, // Remove existing cover
+        fileSize: currentMetadata.fileSize,
+      );
+      
+      await MetadataGod.writeMetadata(file: filePath, metadata: metadataWithoutCover);
+      Logger.log('Stage 1: Removed existing cover');
+      
+      // Small delay to ensure file system operations complete
+      await Future.delayed(const Duration(milliseconds: 100));
+      
+      // Stage 2: Write new metadata with cover
+      final success = await _writeStandardMetadata(filePath, metadata, coverImagePath);
+      if (success) {
+        Logger.log('Stage 2: Added new cover and metadata');
+        return true;
+      } else {
+        Logger.error('Stage 2 failed to add new cover');
+        return false;
+      }
+      
+    } catch (e) {
+      Logger.error('Error in two-stage replacement: $e');
+      return false;
+    }
+  }
+  
+  // Standard metadata writing for all file types
+  Future<bool> _writeStandardMetadata(String filePath, AudiobookMetadata metadata, String? coverImagePath) async {
+    try {
+      // Prepare picture data
+      Picture? picture;
+      if (coverImagePath != null && coverImagePath.isNotEmpty && !coverImagePath.startsWith('http')) {
+        final coverFile = File(coverImagePath);
+        if (await coverFile.exists()) {
+          final imageBytes = await coverFile.readAsBytes();
+          final mimeType = lookupMimeType(coverImagePath) ?? 'image/jpeg';
+          
+          picture = Picture(
+            data: imageBytes,
+            mimeType: mimeType,
+          );
+          
+          Logger.log('Prepared standard picture: ${imageBytes.length} bytes, type: $mimeType');
+        }
+      }
+      
+      // Create standard metadata
+      final newMetadata = Metadata(
+        title: metadata.title,
+        artist: metadata.authors.isNotEmpty ? metadata.authors.first : null,
+        album: metadata.series.isNotEmpty ? metadata.series : metadata.title,
+        albumArtist: metadata.authors.isNotEmpty ? metadata.authors.join(', ') : null,
+        genre: metadata.categories.isNotEmpty ? metadata.categories.first : null,
+        year: metadata.publishedDate.isNotEmpty ? int.tryParse(metadata.publishedDate) : null,
+        trackNumber: metadata.seriesPosition.isNotEmpty ? int.tryParse(metadata.seriesPosition) : null,
+        trackTotal: null,
+        discNumber: null,
+        discTotal: null,
+        durationMs: metadata.audioDuration?.inMilliseconds.toDouble(),
+        picture: picture,
+        fileSize: null,
+      );
+      
+      await MetadataGod.writeMetadata(
+        file: filePath,
+        metadata: newMetadata,
+      );
+      
+      _metadataCache.remove(filePath);
+      Logger.log('Standard metadata write completed');
+      return true;
+    } catch (e) {
+      Logger.error('Error in _writeStandardMetadata', e);
+      return false;
+    }
+  }
+
+  // Helper method to cleanup temporary files
+  Future<void> _cleanupFiles(List<String> filePaths) async {
+    for (final filePath in filePaths) {
+      try {
+        final file = File(filePath);
+        if (await file.exists()) {
+          await file.delete();
+          Logger.debug('Cleaned up: ${path_util.basename(filePath)}');
+        }
+      } catch (e) {
+        Logger.debug('Failed to cleanup $filePath: $e');
+      }
+    }
+  }
+
+  // Helper method to restore from backup
+  Future<void> _restoreFromBackup(String originalPath, String backupPath) async {
+    try {
+      if (await File(backupPath).exists()) {
+        await File(backupPath).copy(originalPath);
+        await File(backupPath).delete();
+        Logger.log('Restored from backup: ${path_util.basename(originalPath)}');
+      }
+    } catch (e) {
+      Logger.error('Failed to restore from backup: $e');
+    }
+  }
+
+  // Helper method to escape metadata values for FFmpeg
+  String _escapeMetadataValue(String value) {
+    // Escape special characters that might cause issues in FFmpeg
+    return value
+        .replaceAll('\'', '\\\'')
+        .replaceAll('"', '\\"')
+        .replaceAll('\\', '\\\\');
+  }
+  
+  // Comprehensive cover embedding diagnostics (existing method)
+  Future<Map<String, dynamic>> diagnoseCoverEmbedding(String filePath) async {
+    try {
+      Logger.debug('Running cover embedding diagnostics for: ${path_util.basename(filePath)}');
+      
+      final file = File(filePath);
+      if (!await file.exists()) {
+        return {
+          'error': 'File does not exist',
+          'file_path': filePath,
+        };
+      }
+      
+      // Read metadata using metadata_god
+      final metadata = await MetadataGod.readMetadata(file: filePath);
+      
+      final diagnostics = <String, dynamic>{
+        'file_path': filePath,
+        'file_name': path_util.basename(filePath),
+        'file_extension': path_util.extension(filePath).toLowerCase(),
+        'file_exists': true,
+        'file_size': await file.length(),
+        'metadata_title': metadata.title ?? 'null',
+        'metadata_artist': metadata.artist ?? 'null',
+        'has_picture_data': metadata.picture != null,
+        'picture_data_size': metadata.picture?.data.length ?? 0,
+        'picture_mime_type': metadata.picture?.mimeType ?? 'null',
+      };
+      
+      // Analyze picture data if present
+      if (metadata.picture != null && metadata.picture!.data.isNotEmpty) {
+        final pictureData = metadata.picture!.data;
+        
+        // Detect image format by magic bytes
+        String imageFormat = 'unknown';
+        if (pictureData.length >= 4) {
+          final header = pictureData.take(4).toList();
+          if (header[0] == 0xFF && header[1] == 0xD8) {
+            imageFormat = 'JPEG';
+          } else if (header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47) {
+            imageFormat = 'PNG';
+          } else if (header.join(',') == '71,73,70,56') {
+            imageFormat = 'GIF';
+          } else if (header.join(',') == '82,73,70,70') {
+            imageFormat = 'WEBP';
+          }
+        }
+        
+        diagnostics.addAll({
+          'picture_format_detected': imageFormat,
+          'picture_is_valid': imageFormat != 'unknown',
+          'picture_first_4_bytes': pictureData.take(4).toList(),
+        });
+        
+        // Try to extract the cover to a temp file for verification
+        try {
+          final tempDir = Directory.systemTemp;
+          final extension = imageFormat.toLowerCase() == 'jpeg' ? 'jpg' : imageFormat.toLowerCase();
+          final tempFile = File('${tempDir.path}/diagnostic_cover_${DateTime.now().millisecondsSinceEpoch}.$extension');
+          await tempFile.writeAsBytes(pictureData);
+          
+          diagnostics.addAll({
+            'extracted_cover_path': tempFile.path,
+            'extracted_cover_size': await tempFile.length(),
+            'extraction_successful': true,
+          });
+          
+          Logger.debug('Cover extracted to temp file: ${tempFile.path}');
+        } catch (e) {
+          diagnostics.addAll({
+            'extraction_error': e.toString(),
+            'extraction_successful': false,
+          });
+        }
+      } else {
+        diagnostics.addAll({
+          'picture_format_detected': 'none',
+          'picture_is_valid': false,
+          'extraction_successful': false,
+        });
+      }
+      
+      return diagnostics;
+    } catch (e) {
+      Logger.error('Error in diagnoseCoverEmbedding', e);
+      return {
+        'error': e.toString(),
+        'file_path': filePath,
+      };
+    }
+  }
+  
+  // Analyze cover file before embedding (existing method)
+  Future<Map<String, dynamic>> analyzeCoverFile(String coverPath) async {
+    try {
+      final file = File(coverPath);
+      if (!await file.exists()) {
+        return {
+          'error': 'Cover file does not exist',
+          'path': coverPath,
+          'exists': false,
+        };
+      }
+      
+      final bytes = await file.readAsBytes();
+      final mimeType = lookupMimeType(coverPath);
+      
+      // Detect image format by magic bytes
+      String detectedFormat = 'unknown';
+      if (bytes.length >= 4) {
+        final header = bytes.take(4).toList();
+        if (header[0] == 0xFF && header[1] == 0xD8) {
+          detectedFormat = 'JPEG';
+        } else if (header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47) {
+          detectedFormat = 'PNG';
+        } else if (header.join(',') == '71,73,70,56') {
+          detectedFormat = 'GIF';
+        } else if (header.join(',') == '82,73,70,70') {
+          detectedFormat = 'WEBP';
+        }
+      }
+      
+      return {
+        'path': coverPath,
+        'name': path_util.basename(coverPath),
+        'exists': true,
+        'size': bytes.length,
+        'mime_type': mimeType ?? 'unknown',
+        'detected_format': detectedFormat,
+        'first_4_bytes': bytes.take(4).toList(),
+        'is_valid_image': detectedFormat != 'unknown',
+        'suitable_for_embedding': detectedFormat == 'JPEG' || detectedFormat == 'PNG',
+      };
+    } catch (e) {
+      return {
+        'error': e.toString(),
+        'path': coverPath,
+        'exists': false,
+      };
+    }
+  }
+  
+  // Legacy method maintained for backward compatibility
+  Future<bool> writeMetadata(String filePath, AudiobookMetadata metadata, {String? coverImagePath}) async {
+    return writeMetadataWithDiagnostics(filePath, metadata, coverImagePath: coverImagePath);
+  }
+  
+  // Extract detailed audio information for debugging (existing method)
   Future<Map<String, dynamic>> extractDetailedAudioInfo(String filePath) async {
     try {
       final metadata = await MetadataGod.readMetadata(file: filePath);
       
       final info = {
-        // All actual MetadataGod fields
         'title': metadata.title,
         'artist': metadata.artist,
         'album': metadata.album,
@@ -167,99 +1071,7 @@ class MetadataService {
     }
   }
   
-  // Write metadata back to the file using only MetadataGod supported fields
-  Future<bool> writeMetadata(String filePath, AudiobookMetadata metadata, {String? coverImagePath}) async {
-    try {
-      // Ensure we're initialized
-      if (!_isInitialized) {
-        final success = await initialize();
-        if (!success) {
-          Logger.error('MetadataService not initialized before write attempt');
-          return false;
-        }
-      }
-      
-      Logger.log('Writing metadata to file: $filePath');
-      
-      // Prepare the picture data if a cover image path is provided
-      Picture? picture;
-      if (coverImagePath != null && coverImagePath.isNotEmpty && !coverImagePath.startsWith('http')) {
-        final coverFile = File(coverImagePath);
-        if (await coverFile.exists()) {
-          try {
-            final imageBytes = await coverFile.readAsBytes();
-            final mimeType = lookupMimeType(coverImagePath) ?? 'image/jpeg';
-            
-            picture = Picture(
-              data: imageBytes,
-              mimeType: mimeType,
-            );
-            
-            Logger.log('Prepared cover image for embedding: ${path_util.basename(coverImagePath)}');
-          } catch (e) {
-            Logger.error('Error reading cover image file: $coverImagePath', e);
-          }
-        }
-      } else if (metadata.thumbnailUrl.isNotEmpty && !metadata.thumbnailUrl.startsWith('http')) {
-        // If no explicit cover path provided, try to use the thumbnail URL if it's a local path
-        final coverFile = File(metadata.thumbnailUrl);
-        if (await coverFile.exists()) {
-          try {
-            final imageBytes = await coverFile.readAsBytes();
-            final mimeType = lookupMimeType(metadata.thumbnailUrl) ?? 'image/jpeg';
-            
-            picture = Picture(
-              data: imageBytes,
-              mimeType: mimeType,
-            );
-            
-            Logger.log('Using existing cover from metadata for embedding');
-          } catch (e) {
-            Logger.error('Error reading cover image from metadata: ${metadata.thumbnailUrl}', e);
-          }
-        }
-      }
-      
-      // Create metadata_god Metadata object using ONLY the fields that exist in the API
-      final newMetadata = Metadata(
-        title: metadata.title,
-        artist: metadata.authors.isNotEmpty ? metadata.authors.first : null,
-        album: metadata.series,
-        albumArtist: metadata.authors.length > 1 ? metadata.authors[1] : metadata.authors.isNotEmpty ? metadata.authors.first : null,
-        genre: metadata.categories.isNotEmpty ? metadata.categories.first : null,
-        year: metadata.publishedDate.isNotEmpty ? int.tryParse(metadata.publishedDate) : null,
-        trackNumber: metadata.seriesPosition.isNotEmpty ? int.tryParse(metadata.seriesPosition) : null,
-        trackTotal: null, // We don't have this info in AudiobookMetadata
-        discNumber: null, // We don't have this info in AudiobookMetadata
-        discTotal: null, // We don't have this info in AudiobookMetadata
-        durationMs: metadata.audioDuration?.inMilliseconds.toDouble(),
-        picture: picture,
-        fileSize: null, // Will be calculated by metadata_god
-      );
-      
-      // Write the metadata to the file
-      await MetadataGod.writeMetadata(
-        file: filePath,
-        metadata: newMetadata,
-      );
-      
-      // Clear from cache to force refresh on next read
-      _metadataCache.remove(filePath);
-      
-      Logger.log('Successfully wrote metadata to file: $filePath${picture != null ? ' (including cover)' : ''}');
-      return true;
-    } catch (e) {
-      Logger.error('Error writing metadata to file: $filePath', e);
-      return false;
-    }
-  }
-  
-  // Overload for backward compatibility
-  Future<bool> writeMetadataWithCover(String filePath, AudiobookMetadata metadata, String coverImagePath) async {
-    return writeMetadata(filePath, metadata, coverImagePath: coverImagePath);
-  }
-  
-  // Extract just the cover art from a file
+  // Extract just the cover art from a file (existing method)
   Future<Picture?> extractCoverArt(String filePath) async {
     try {
       final metadata = await MetadataGod.readMetadata(file: filePath);
@@ -270,7 +1082,7 @@ class MetadataService {
     }
   }
   
-  // Write only the cover art to a file (preserves other metadata)
+  // Write only the cover art to a file (preserves other metadata) (existing method)
   Future<bool> writeCoverArt(String filePath, String coverImagePath) async {
     try {
       // First, read existing metadata
@@ -327,6 +1139,10 @@ class MetadataService {
     return {
       'cached_files': _metadataCache.length,
       'initialized': _isInitialized,
+      'ffmpeg_available': _ffmpegAvailable,
+      'ffmpeg_kit_available': _ffmpegKitAvailable,
+      'system_ffmpeg_available': _systemFFmpegAvailable,
+      'system_ffmpeg_path': _systemFFmpegPath,
     };
   }
   

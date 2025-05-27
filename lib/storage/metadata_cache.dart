@@ -1,4 +1,4 @@
-// lib/storage/metadata_cache.dart - SIMPLIFIED
+// lib/storage/metadata_cache.dart
 import 'dart:convert';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';

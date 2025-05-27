@@ -386,7 +386,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
               if (!_showCollections)
                 Text(
-                  '${_calculateTotalDuration()}',
+                  _calculateTotalDuration(),
                   style: TextStyle(
                     color: Colors.grey[600],
                     fontSize: 11,

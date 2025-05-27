@@ -313,7 +313,7 @@ class AudiobookMetadata {
   // String representation
   @override
   String toString() {
-    return 'AudiobookMetadata: $title by $authorsFormatted (Series: $series #$seriesPosition)${audioDuration != null ? " - ${durationFormatted}" : ""}';
+    return 'AudiobookMetadata: $title by $authorsFormatted (Series: $series #$seriesPosition)${audioDuration != null ? " - $durationFormatted" : ""}';
   }
   
   // Merge with another metadata object (useful for combining online and local data)

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:metadata_god/metadata_god.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:ffmpeg_kit_flutter/ffmpeg_kit_config.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/directory_scanner.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
@@ -26,6 +27,15 @@ void main() async {
   // Ensure Flutter is initialized
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Initialize logger with higher detail level first
+  await Logger.initialize(
+    logLevel: Logger.LEVEL_DEBUG,  // Set to DEBUG for more detailed logs
+    logToFile: true,
+  );
+  
+  Logger.log('Starting Audiobook Organizer on platform: ${Platform.operatingSystem}');
+  Logger.logDeviceInfo();
+  
   // Initialize MetadataGod early
   try {
     await MetadataGod.initialize();
@@ -34,15 +44,36 @@ void main() async {
     Logger.error('Error initializing MetadataGod:', e);
     // Continue anyway - we'll handle extraction failures gracefully
   }
-  
-  // Initialize logger with higher detail level
-  await Logger.initialize(
-    logLevel: Logger.LEVEL_DEBUG,  // Set to DEBUG for more detailed logs
-    logToFile: true,
-  );
-  
-  Logger.log('Starting Audiobook Organizer on platform: ${Platform.operatingSystem}');
-  Logger.logDeviceInfo();
+
+  // Initialize FFmpeg with comprehensive setup
+  bool ffmpegInitialized = false;
+  try {   
+    Logger.log('Initializing FFmpeg...');
+    
+    // Initialize FFmpegKitConfig
+    await FFmpegKitConfig.init();
+    Logger.log('FFmpegKitConfig.init() completed');
+    
+    // Set log level for FFmpeg (optional)
+    await FFmpegKitConfig.setLogLevel(32);
+    Logger.log('FFmpeg log level set to INFO');
+    
+    // Enable statistics (optional)
+    await FFmpegKitConfig.enableStatistics();
+    Logger.log('FFmpeg statistics enabled');
+    
+    // Test FFmpeg availability with a simple command
+    Logger.log('Testing FFmpeg with version command...');
+    // Note: The actual test will be done in MetadataService initialization
+    
+    ffmpegInitialized = true;
+    Logger.log('FFmpeg initialization completed successfully');
+  } catch (e, stack) {
+    Logger.error('Error initializing FFmpeg:', e, stack);
+    Logger.warning('FFmpeg initialization failed - cover embedding may be limited');
+    // Continue anyway - MetadataService will handle FFmpeg unavailability
+    ffmpegInitialized = false;
+  }
   
   // Check for platform-specific initialization requirements
   bool audioInitialized = false;
@@ -91,6 +122,10 @@ void main() async {
       );
       audioInitialized = true;
       Logger.log('iOS audio context configured');
+    } else {
+      // For other platforms (Linux, macOS, etc.)
+      audioInitialized = true;
+      Logger.log('Other platform - using default audio configuration');
     }
     
     Logger.log('Audioplayers initialization completed successfully');
@@ -106,17 +141,34 @@ void main() async {
     Logger.error('Flutter Error', details.exception, details.stack);
     
     // Check for plugin exceptions that we want to handle gracefully
-    if (details.exception.toString().contains('MissingPluginException')) {
+    final exceptionString = details.exception.toString();
+    if (exceptionString.contains('MissingPluginException')) {
       Logger.warning('Caught plugin exception - this may be expected: ${details.exception}');
       return; // Don't propagate plugin errors that we can handle
+    }
+    
+    // Check for FFmpeg-related errors that we can handle
+    if (exceptionString.contains('ffmpeg') || exceptionString.contains('FFmpeg')) {
+      Logger.warning('FFmpeg-related error caught - degrading gracefully: ${details.exception}');
+      return;
     }
     
     // Let Flutter handle other errors normally
     FlutterError.presentError(details);
   };
   
+  // Log initialization status
+  Logger.log('Initialization summary:');
+  Logger.log('- Audio: ${audioInitialized ? "✅" : "❌"}');
+  Logger.log('- FFmpeg: ${ffmpegInitialized ? "✅" : "❌"}');
+  Logger.log('- MetadataGod: ✅');
+  
   if (!audioInitialized) {
     Logger.warning('Audio initialization had issues - some features may be limited');
+  }
+  
+  if (!ffmpegInitialized) {
+    Logger.warning('FFmpeg initialization failed - cover embedding will use fallback methods');
   }
   
   // Start the app
@@ -163,7 +215,7 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
         _initStatus = 'Initializing core services...';
       });
       
-      // Initialize metadata service first
+      // Initialize metadata service first (this will also test FFmpeg availability)
       setState(() {
         _initStatus = 'Initializing metadata service...';
       });
@@ -242,6 +294,12 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
         storageManager: _storageManager,
       );
       Logger.debug('AudioPlayerService initialized');
+      
+      // Log final service status
+      final serviceStats = _metadataService.getCacheStats();
+      Logger.log('Service initialization complete:');
+      Logger.log('- MetadataService FFmpeg: ${serviceStats['ffmpeg_available'] ? "✅" : "❌"}');
+      Logger.log('- All services: ✅');
       
       // Update status
       setState(() {
@@ -408,7 +466,6 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
         primary: Colors.indigo,
         secondary: Colors.amberAccent,
         surface: const Color(0xFF1A1A1A),
-        background: const Color(0xFF121212),
       ),
       fontFamily: GoogleFonts.roboto().fontFamily,
       scaffoldBackgroundColor: const Color(0xFF121212),

@@ -1,4 +1,4 @@
-// lib/services/metadata_matcher.dart - UPDATED with three distinct operations
+// lib/services/metadata_matcher.dart
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
@@ -141,8 +141,7 @@ class MetadataMatcher {
         }
         return null;
       }
-      
-      // Enhance existing metadata - only fills empty fields (does NOT update cover automatically)
+
       AudiobookMetadata enhancedMetadata = file.metadata!.enhance(enhancement);
       
       // Save the enhanced metadata
@@ -150,9 +149,6 @@ class MetadataMatcher {
       if (success) {
         file.metadata = enhancedMetadata;
         Logger.log('Enhanced metadata for: ${file.filename}');
-        
-        // CRITICAL: Save the entire library to ensure persistence
-        await storageManager.saveLibrary([file]); // This might need to be called differently based on your LibraryManager structure
         
         return enhancedMetadata;
       }
@@ -208,9 +204,6 @@ class MetadataMatcher {
         file.metadata = updatedMetadata;
         Logger.log('Updated to new version for: ${file.filename}');
         
-        // CRITICAL: Force save the changes
-        await storageManager.saveLibrary([file]);
-        
         return updatedMetadata;
       }
       
@@ -262,9 +255,6 @@ class MetadataMatcher {
       if (success) {
         file.metadata = replacedMetadata;
         Logger.log('Successfully replaced with different book for: ${file.filename}');
-        
-        // CRITICAL: Force save the changes
-        await storageManager.saveLibrary([file]);
         
         return replacedMetadata;
       }

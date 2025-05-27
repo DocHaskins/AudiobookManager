@@ -35,7 +35,7 @@ class AudiobookListItem extends StatelessWidget {
               // Cover Image
               Container(
                 width: 60,
-                height: 60,
+                height: 90,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(4),
                   color: Colors.grey[900],
@@ -79,15 +79,9 @@ class AudiobookListItem extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                  ],
-                ),
-              ),
-              
-              // Additional Info and Play Button
-              Row(
-                children: [
-                  if (metadata != null) ...[
-                    if (metadata.series.isNotEmpty)
+                    // Series info moved here - under the author
+                    if (metadata != null && metadata.series.isNotEmpty) ...[
+                      const SizedBox(height: 4),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
@@ -102,7 +96,15 @@ class AudiobookListItem extends StatelessWidget {
                           ),
                         ),
                       ),
-                    const SizedBox(width: 16),
+                    ],
+                  ],
+                ),
+              ),
+              
+              // Additional Info and Play Button
+              Row(
+                children: [
+                  if (metadata != null) ...[
                     Text(
                       metadata.durationFormatted,
                       style: TextStyle(

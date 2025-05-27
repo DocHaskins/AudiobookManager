@@ -250,7 +250,7 @@ class AudiobookFile {
   
   @override
   String toString() {
-    return 'AudiobookFile(${displayTitle} by ${displayAuthors}${hasDuration ? " - ${metadata!.durationFormatted}" : ""})';
+    return 'AudiobookFile($displayTitle by $displayAuthors${hasDuration ? " - ${metadata!.durationFormatted}" : ""})';
   }
   
   @override

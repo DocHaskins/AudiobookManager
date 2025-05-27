@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:audiobook_organizer/models/collection.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
-import 'package:audiobook_organizer/services/library_manager.dart';
 
 class CollectionCard extends StatelessWidget {
   final Collection collection;

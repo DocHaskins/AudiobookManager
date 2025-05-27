@@ -254,7 +254,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                     color: hasActiveAudio ? Colors.grey[400] : Colors.grey[600],
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
-                    fontFeatures: [const FontFeature.tabularFigures()],
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                   textAlign: TextAlign.left,
                 ),
@@ -268,7 +268,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                   onTapDown: hasActiveAudio ? (details) {
                     final RenderBox box = context.findRenderObject() as RenderBox;
                     final localPosition = box.globalToLocal(details.globalPosition);
-                    final progressStart = 70.0; // Updated for larger time width
+                    const progressStart = 70.0; // Updated for larger time width
                     final progressWidth = box.size.width - 140; // Updated for larger time widths
                     final tapPosition = (localPosition.dx - progressStart) / progressWidth;
                     
@@ -282,7 +282,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                   onPanUpdate: hasActiveAudio ? (details) {
                     final RenderBox box = context.findRenderObject() as RenderBox;
                     final localPosition = box.globalToLocal(details.globalPosition);
-                    final progressStart = 70.0; // Updated for larger time width
+                    const progressStart = 70.0; // Updated for larger time width
                     final progressWidth = box.size.width - 140; // Updated for larger time widths
                     final panPosition = (localPosition.dx - progressStart) / progressWidth;
                     
@@ -364,7 +364,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                     color: hasActiveAudio ? Colors.grey[400] : Colors.grey[600],
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
-                    fontFeatures: [const FontFeature.tabularFigures()],
+                    fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                   textAlign: TextAlign.right,
                 ),

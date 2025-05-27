@@ -6,7 +6,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path_util;
 import 'package:audiobook_organizer/models/collection.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
-import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 

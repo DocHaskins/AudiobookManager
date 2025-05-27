@@ -41,7 +41,7 @@ class CollectionDetailScreen extends StatelessWidget {
                 flexibleSpace: FlexibleSpaceBar(
                   title: Text(
                     collection.name,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
                       shadows: [
@@ -71,7 +71,7 @@ class CollectionDetailScreen extends StatelessWidget {
                         ),
                       // Gradient overlay
                       Container(
-                        decoration: BoxDecoration(
+                        decoration: const BoxDecoration(
                           gradient: LinearGradient(
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
@@ -119,7 +119,7 @@ class CollectionDetailScreen extends StatelessWidget {
                   // Edit collection
                   if (collection.type == CollectionType.custom)
                     IconButton(
-                      icon: Icon(Icons.edit),
+                      icon: const Icon(Icons.edit),
                       onPressed: () => _editCollection(context),
                     ),
                   // More options
@@ -127,7 +127,7 @@ class CollectionDetailScreen extends StatelessWidget {
                     onSelected: (value) => _handleMenuAction(context, value),
                     itemBuilder: (context) => [
                       if (collection.type == CollectionType.custom)
-                        PopupMenuItem(
+                        const PopupMenuItem(
                           value: 'delete',
                           child: Row(
                             children: [
@@ -137,7 +137,7 @@ class CollectionDetailScreen extends StatelessWidget {
                             ],
                           ),
                         ),
-                      PopupMenuItem(
+                      const PopupMenuItem(
                         value: 'export',
                         child: Row(
                           children: [
@@ -194,8 +194,8 @@ class CollectionDetailScreen extends StatelessWidget {
                                 const SizedBox(height: 16),
                                 ElevatedButton.icon(
                                   onPressed: () => _addBooksToCollection(context),
-                                  icon: Icon(Icons.add),
-                                  label: Text('Add Books'),
+                                  icon: const Icon(Icons.add),
+                                  label: const Text('Add Books'),
                                 ),
                               ],
                             ],
@@ -236,7 +236,7 @@ class CollectionDetailScreen extends StatelessWidget {
                                       ),
                                       child: Text(
                                         '#$position',
-                                        style: TextStyle(
+                                        style: const TextStyle(
                                           color: Colors.white,
                                           fontSize: 12,
                                           fontWeight: FontWeight.bold,
@@ -256,8 +256,8 @@ class CollectionDetailScreen extends StatelessWidget {
           floatingActionButton: collection.type == CollectionType.custom
               ? FloatingActionButton(
                   onPressed: () => _addBooksToCollection(context),
-                  child: Icon(Icons.add),
                   tooltip: 'Add Books',
+                  child: Icon(Icons.add),
                 )
               : null,
         );
@@ -279,7 +279,7 @@ class CollectionDetailScreen extends StatelessWidget {
           const SizedBox(width: 4),
           Text(
             label,
-            style: TextStyle(
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 12,
               fontWeight: FontWeight.bold,
@@ -313,14 +313,14 @@ class CollectionDetailScreen extends StatelessWidget {
   void _editCollection(BuildContext context) {
     // TODO: Navigate to edit collection screen
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Edit collection functionality coming soon')),
+      const SnackBar(content: Text('Edit collection functionality coming soon')),
     );
   }
   
   void _addBooksToCollection(BuildContext context) {
     // TODO: Show book selection dialog
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Add books functionality coming soon')),
+      const SnackBar(content: Text('Add books functionality coming soon')),
     );
   }
   
@@ -339,12 +339,12 @@ class CollectionDetailScreen extends StatelessWidget {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Delete Collection'),
+        title: const Text('Delete Collection'),
         content: Text('Are you sure you want to delete "${collection.name}"? The books will not be deleted.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text('Cancel'),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () async {
@@ -353,11 +353,11 @@ class CollectionDetailScreen extends StatelessWidget {
               if (success) {
                 Navigator.of(context).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Collection deleted')),
+                  const SnackBar(content: Text('Collection deleted')),
                 );
               }
             },
-            child: Text('Delete', style: TextStyle(color: Colors.red)),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -367,7 +367,7 @@ class CollectionDetailScreen extends StatelessWidget {
   void _exportCollection(BuildContext context) {
     // TODO: Implement export functionality
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Export functionality coming soon')),
+      const SnackBar(content: Text('Export functionality coming soon')),
     );
   }
 }

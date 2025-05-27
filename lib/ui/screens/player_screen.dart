@@ -433,7 +433,7 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
                 style: TextStyle(
                   color: Colors.grey[400],
                   fontSize: 12,
-                  fontFeatures: [const FontFeature.tabularFigures()],
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
               Text(
@@ -441,7 +441,7 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
                 style: TextStyle(
                   color: Colors.grey[400],
                   fontSize: 12,
-                  fontFeatures: [const FontFeature.tabularFigures()],
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],
@@ -830,10 +830,10 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
                                       minimumSize: const Size(0, 0),
                                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                     ),
-                                    child: Text(
+                                    child: const Text(
                                       'GO TO',
                                       style: TextStyle(
-                                        color: const Color(0xFF1DB954),
+                                        color: Color(0xFF1DB954),
                                         fontSize: 10,
                                         fontWeight: FontWeight.w600,
                                       ),

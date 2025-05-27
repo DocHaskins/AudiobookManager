@@ -1,4 +1,4 @@
-// lib/services/library_manager.dart
+// lib/services/library_manager.dart - ENHANCED with proper cache clearing
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
@@ -13,7 +13,6 @@ import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
-import 'package:audiobook_organizer/utils/filename_parser.dart';
 import 'package:audiobook_organizer/utils/file_utils.dart';
 import 'package:audiobook_organizer/services/cover_art_manager.dart';
 
@@ -52,7 +51,6 @@ class LibraryManager {
     _collectionManager = manager;
   }
 
-  // Add this getter (THIS IS WHAT'S MISSING)
   CollectionManager? get collectionManager => _collectionManager;
 
   // Initialize the library
@@ -192,17 +190,81 @@ class LibraryManager {
       await _coverArtManager.removeCover(file.path);
     }
     
+    // IMPORTANT: Also clean up metadata for removed files
+    for (final file in removedFiles) {
+      await _storageManager.deleteMetadataForFile(file.path);
+      Logger.debug('Deleted metadata for removed file: ${file.path}');
+    }
+    
     // Update storage
     await _storageManager.saveLibrary(_files);
     
     // Notify listeners
     _libraryChangedController.add(_files);
     
-    Logger.log('Removed directory and cleaned up ${removedFiles.length} covers: $directoryPath');
+    Logger.log('Removed directory, cleaned up ${removedFiles.length} files and their metadata: $directoryPath');
+  }
+  
+  /// COMPREHENSIVE library clearing - clears ALL caches and data
+  Future<void> clearLibrary({bool keepWatchedDirectories = false}) async {
+    try {
+      Logger.log('Starting comprehensive library clear (keepWatchedDirectories: $keepWatchedDirectories)');
+      
+      // 1. Clean up all cover art
+      Logger.log('Clearing cover art cache...');
+      _coverArtManager.clearCache();
+      
+      // 2. Clear search cache
+      Logger.log('Clearing search cache...');
+      await _cache.clearCache();
+      
+      // 3. Clear metadata service cache
+      Logger.log('Clearing metadata service cache...');
+      final metadataService = MetadataService();
+      metadataService.clearCache();
+      
+      // 4. Delete all stored metadata files
+      Logger.log('Deleting all stored metadata...');
+      final currentFilePaths = _files.map((f) => f.path).toList();
+      for (final filePath in currentFilePaths) {
+        await _storageManager.deleteMetadataForFile(filePath);
+      }
+      
+      // 5. Clear the in-memory library
+      _files.clear();
+      
+      // 6. Optionally clear watched directories
+      if (!keepWatchedDirectories) {
+        Logger.log('Clearing watched directories...');
+        _watchedDirectories.clear();
+        await _saveWatchedDirectories();
+      }
+      
+      // 7. Save empty library state
+      await _storageManager.saveLibrary(_files);
+      
+      // 8. Notify listeners
+      _notifyLibraryChanged();
+      
+      Logger.log('Library cleared successfully. All caches and metadata have been removed.');
+    } catch (e) {
+      Logger.error('Error clearing library', e);
+      rethrow;
+    }
+  }
+  
+  /// Clear library but keep watched directories (UI convenience method)
+  Future<void> clearLibraryKeepingDirectories() async {
+    await clearLibrary(keepWatchedDirectories: true);
+  }
+  
+  /// Clear everything including watched directories (complete reset)
+  Future<void> clearLibraryCompletely() async {
+    await clearLibrary(keepWatchedDirectories: false);
   }
   
   // Scan a directory for audiobooks
-  Future<List<AudiobookFile>> scanDirectory(String directoryPath) async {
+  Future<List<AudiobookFile>> scanDirectory(String directoryPath, {bool forceReprocess = false}) async {
     if (_isLoading) {
       Logger.warning('Scan already in progress, please wait');
       return [];
@@ -211,14 +273,14 @@ class LibraryManager {
     _isLoading = true;
     
     try {
-      Logger.log('Scanning directory: $directoryPath');
+      Logger.log('Scanning directory: $directoryPath (forceReprocess: $forceReprocess)');
       
       // Scan for files
       final newFiles = await _scanner.scanDirectory(directoryPath);
       
-      // Filter out files we already have
+      // Filter out files we already have (unless forcing reprocess)
       final filesToAdd = newFiles.where((newFile) {
-        return !_files.any((existingFile) => existingFile.path == newFile.path);
+        return forceReprocess || !_files.any((existingFile) => existingFile.path == newFile.path);
       }).toList();
       
       if (filesToAdd.isEmpty) {
@@ -227,7 +289,17 @@ class LibraryManager {
         return [];
       }
       
-      Logger.log('Found ${filesToAdd.length} new files in directory: $directoryPath');
+      Logger.log('Found ${filesToAdd.length} ${forceReprocess ? "files to reprocess" : "new files"} in directory: $directoryPath');
+      
+      // If reprocessing, remove old entries first
+      if (forceReprocess) {
+        final oldFiles = _files.where((f) => f.path.startsWith(directoryPath)).toList();
+        for (final oldFile in oldFiles) {
+          await _storageManager.deleteMetadataForFile(oldFile.path);
+          await _coverArtManager.removeCover(oldFile.path);
+        }
+        _files.removeWhere((f) => f.path.startsWith(directoryPath));
+      }
       
       // Process files in batches to prevent UI freezes
       const int batchSize = 5;
@@ -236,7 +308,7 @@ class LibraryManager {
         final batch = filesToAdd.sublist(i, end);
         
         // Process batch
-        await _processBatch(batch);
+        await _processBatch(batch, forceReprocess: forceReprocess);
         
         // Add processed batch to library
         _files.addAll(batch);
@@ -258,28 +330,30 @@ class LibraryManager {
     }
   }
   
-  // Process a batch of files - CORRECTED FLOW
-  Future<void> _processBatch(List<AudiobookFile> batch) async {
+  // Process a batch of files - CORRECTED FLOW with force reprocess option
+  Future<void> _processBatch(List<AudiobookFile> batch, {bool forceReprocess = false}) async {
     final metadataService = MetadataService();
     await metadataService.initialize();
 
     for (final file in batch) {
       try {
-        Logger.debug('Processing file: ${file.path}');
+        Logger.debug('Processing file: ${file.path} (forceReprocess: $forceReprocess)');
         
-        // Try to load metadata from storage first
-        final storedMetadata = await _storageManager.getMetadataForFile(file.path);
-        if (storedMetadata != null) {
-          file.metadata = storedMetadata;
-          Logger.debug('Loaded stored metadata for: ${file.filename}');
-          continue;
+        // Try to load metadata from storage first (unless forcing reprocess)
+        if (!forceReprocess) {
+          final storedMetadata = await _storageManager.getMetadataForFile(file.path);
+          if (storedMetadata != null) {
+            file.metadata = storedMetadata;
+            Logger.debug('Loaded stored metadata for: ${file.filename}');
+            continue;
+          }
         }
         
         // Extract basic metadata (no cover)
-        final fileMetadata = await metadataService.extractMetadata(file.path);
+        final fileMetadata = await metadataService.extractMetadata(file.path, forceRefresh: forceReprocess);
         
         if (fileMetadata != null) {
-          Logger.debug('Extracted file metadata for: ${file.filename}');
+          Logger.debug('Extracted ${forceReprocess ? "fresh " : ""}file metadata for: ${file.filename}');
           
           // Use centralized cover handling
           final coverPath = await _coverArtManager.ensureCoverForFile(file.path, fileMetadata);
@@ -291,10 +365,10 @@ class LibraryManager {
           
           if (file.metadata?.series.isNotEmpty ?? false) {
             Logger.log('Book "${file.metadata!.title}" is part of series: ${file.metadata!.series}');
-            }
+          }
 
           // Store the metadata
-          await _storageManager.updateMetadataForFile(file.path, metadataWithCover);
+          await _storageManager.updateMetadataForFile(file.path, metadataWithCover, force: forceReprocess);
           file.metadata = metadataWithCover;
           
           // Try to enhance with online metadata (keeping embedded cover)
@@ -311,6 +385,31 @@ class LibraryManager {
       } catch (e) {
         Logger.error('Error processing file: ${file.path}', e);
       }
+    }
+  }
+
+  /// Re-scan all watched directories and force reprocess all files
+  Future<void> refreshLibraryCompletely() async {
+    try {
+      Logger.log('Starting complete library refresh...');
+      
+      // Clear all data first
+      await clearLibraryKeepingDirectories();
+      
+      // Re-scan all watched directories with force reprocess
+      for (final directory in _watchedDirectories) {
+        if (await Directory(directory).exists()) {
+          Logger.log('Re-scanning directory: $directory');
+          await scanDirectory(directory, forceReprocess: true);
+        } else {
+          Logger.warning('Watched directory no longer exists: $directory');
+        }
+      }
+      
+      Logger.log('Complete library refresh finished');
+    } catch (e) {
+      Logger.error('Error during complete library refresh', e);
+      rethrow;
     }
   }
 
@@ -380,7 +479,6 @@ class LibraryManager {
   
   // Get loading state
   bool get isLoading => _isLoading;
-  
   
   // Update cover image for a specific file
   Future<bool> updateCoverImage(AudiobookFile file, String coverSource) async {
@@ -519,24 +617,30 @@ class LibraryManager {
 
     try {
       Logger.log('Writing metadata to file: ${file.filename}');
-      
-      // Store the original metadata before writing
       final originalMetadata = file.metadata!;
-      
-      // Get the MetadataService instance
       final metadataService = MetadataService();
       await metadataService.initialize();
       
-      // Use MetadataService to write metadata directly to the file
-      final success = await metadataService.writeMetadataFromObject(
+      String? coverImagePath;
+      if (originalMetadata.thumbnailUrl.isNotEmpty && 
+          !originalMetadata.thumbnailUrl.startsWith('http')) {
+        final coverFile = File(originalMetadata.thumbnailUrl);
+        if (await coverFile.exists()) {
+          coverImagePath = originalMetadata.thumbnailUrl;
+          Logger.log('Using cover image for embedding: ${path_util.basename(coverImagePath)}');
+        } else {
+          Logger.warning('Cover file does not exist: ${originalMetadata.thumbnailUrl}');
+        }
+      }
+
+      final success = await metadataService.writeMetadata(
         file.path, 
-        originalMetadata
+        originalMetadata,
+        coverImagePath: coverImagePath,
       );
       
       if (success) {
-        Logger.log('Successfully wrote metadata to file: ${file.filename}');
-        
-        // Extract fresh metadata from the file to verify the write succeeded
+        Logger.log('Successfully wrote metadata to file: ${file.filename}${coverImagePath != null ? ' (including cover)' : ''}');
         final freshMetadata = await metadataService.extractMetadata(
           file.path, 
           forceRefresh: true
@@ -550,7 +654,6 @@ class LibraryManager {
           
           Logger.log('Metadata successfully written and enhanced for: ${file.filename}');
         } else {
-          // If we can't read back the metadata, keep the original
           Logger.warning('Could not verify written metadata, keeping original for: ${file.filename}');
         }
         

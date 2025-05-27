@@ -179,13 +179,13 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
+              const Icon(
                 Icons.error_outline,
                 size: 64,
                 color: Colors.red,
               ),
               const SizedBox(height: 24),
-              Text(
+              const Text(
                 'FILE NOT FOUND',
                 style: TextStyle(
                   color: Colors.red,
@@ -224,7 +224,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
                     const SizedBox(height: 4),
                     SelectableText(
                       _book.path,
-                      style: TextStyle(
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14,
                         fontFamily: 'monospace',
@@ -519,7 +519,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
   Widget _buildCoverImage(AudiobookMetadata? metadata) {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 300),
-      child: Container(
+      child: SizedBox(
         key: ValueKey(metadata?.thumbnailUrl ?? 'no-cover'),
         width: double.infinity,
         height: double.infinity,
@@ -853,7 +853,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
+                        const Icon(
                           Icons.folder_special,
                           color: Colors.blue,
                           size: 16,
@@ -1462,7 +1462,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
         'authors': _book.metadata!.authors,
         'series': _book.metadata!.series,
         'duration': _book.metadata!.audioDuration?.inSeconds,
-        'completeness': _book.metadata!.completionPercentage.toStringAsFixed(1) + '%',
+        'completeness': '${_book.metadata!.completionPercentage.toStringAsFixed(1)}%',
       };
       Logger.debug('Metadata to save: $metadataInfo');
       

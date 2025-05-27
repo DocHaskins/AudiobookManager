@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
-import 'dart:io';
 
 // Enums and Result Classes
 enum MetadataUpdateType {

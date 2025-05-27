@@ -37,6 +37,7 @@ dependencies:
   flutter_media_metadata: ^1.0.0 
   id3: ^1.0.2
   metadata_god: ^1.0.0
+  ffmpeg_kit_flutter: ^5.1.0
   permission_handler: ^10.3.0
   
   # Utilities
