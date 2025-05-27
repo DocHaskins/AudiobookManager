@@ -36,11 +36,14 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
 
   TextEditingController? _titleController;
   TextEditingController? _authorController;
+  TextEditingController? _genresController;
   TextEditingController? _seriesController;
   TextEditingController? _seriesPositionController;
   TextEditingController? _descriptionController;
   TextEditingController? _categoriesController;
   TextEditingController? _userTagsController;
+  TextEditingController? _publisherController;
+  TextEditingController? _publishedDateController;
   late StreamSubscription<List<AudiobookFile>> _librarySubscription;
 
   @override
@@ -95,6 +98,11 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
     _userTagsController = TextEditingController(
       text: metadata?.userTags.isEmpty ?? true ? '' : metadata!.userTags.join(', ')
     );
+    _genresController = TextEditingController(
+      text: metadata?.categories.isEmpty ?? true ? '' : metadata!.categories.join(', ')
+    );
+    _publisherController = TextEditingController(text: metadata?.publisher ?? '');
+    _publishedDateController = TextEditingController(text: metadata?.publishedDate ?? '');
   }
 
   void _disposeControllers() {
@@ -106,6 +114,9 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
       _descriptionController?.dispose();
       _categoriesController?.dispose();
       _userTagsController?.dispose();
+      _genresController?.dispose();
+      _publisherController?.dispose();
+      _publishedDateController?.dispose();
     } catch (e) {
       Logger.debug('Error disposing controllers (expected during init): $e');
     }
@@ -383,6 +394,15 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
 
                         const SizedBox(height: 16),
 
+                        _buildGenresSection(metadata),
+
+                        const SizedBox(height: 16),
+
+                        // Publisher and publication information section
+                        _buildPublisherSection(metadata),
+
+                        const SizedBox(height: 16),
+
                         _buildDescriptionSection(metadata),
 
                         const SizedBox(height: 24),
@@ -593,6 +613,235 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
               ),
             ),
           );
+  }
+
+  Widget _buildGenresSection(AudiobookMetadata? metadata) {
+    final genres = metadata?.categories ?? [];
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'GENRES',
+          style: TextStyle(
+            color: Colors.grey[600],
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_isEditingMetadata && _genresController != null)
+          TextField(
+            controller: _genresController!,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Enter genres separated by commas (e.g., Fiction, Mystery, Thriller)',
+              hintStyle: TextStyle(color: Colors.grey[500]),
+              filled: true,
+              fillColor: const Color(0xFF2A2A2A),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            ),
+            maxLines: 2,
+          )
+        else if (genres.isNotEmpty)
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: genres.map((genre) => Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Theme.of(context).secondaryHeaderColor.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Theme.of(context).secondaryHeaderColor.withOpacity(0.5),
+                ),
+              ),
+              child: Text(
+                genre,
+                style: TextStyle(
+                  color: Theme.of(context).secondaryHeaderColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            )).toList(),
+          )
+        else
+          Text(
+            'No genres specified',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 14,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildPublisherSection(AudiobookMetadata? metadata) {
+    final publisher = metadata?.publisher ?? '';
+    final publishedDate = metadata?.publishedDate ?? '';
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'PUBLICATION INFORMATION',
+          style: TextStyle(
+            color: Colors.grey[600],
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (_isEditingMetadata && _publisherController != null && _publishedDateController != null)
+          Column(
+            children: [
+              // Publisher field
+              TextField(
+                controller: _publisherController!,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+                decoration: InputDecoration(
+                  labelText: 'Publisher',
+                  hintText: 'Enter publisher name',
+                  hintStyle: TextStyle(color: Colors.grey[500]),
+                  labelStyle: TextStyle(color: Colors.grey[500]),
+                  filled: true,
+                  fillColor: const Color(0xFF2A2A2A),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Published date field
+              TextField(
+                controller: _publishedDateController!,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                ),
+                decoration: InputDecoration(
+                  labelText: 'Published Date',
+                  hintText: 'Enter publication date (e.g., 2023, 2023-05, 2023-05-15)',
+                  hintStyle: TextStyle(color: Colors.grey[500]),
+                  labelStyle: TextStyle(color: Colors.grey[500]),
+                  filled: true,
+                  fillColor: const Color(0xFF2A2A2A),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                ),
+              ),
+            ],
+          )
+        else if (publisher.isNotEmpty || publishedDate.isNotEmpty)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (publisher.isNotEmpty)
+                _buildInfoDisplayRow('Publisher', publisher),
+              if (publishedDate.isNotEmpty)
+                _buildInfoDisplayRow('Published', _formatPublishedDate(publishedDate)),
+            ],
+          )
+        else
+          Text(
+            'No publication information available',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: 14,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+      ],
+    );
+  }
+
+  // Helper method to build info display rows
+  Widget _buildInfoDisplayRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(
+              '$label:',
+              style: TextStyle(
+                color: Colors.grey[500],
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Helper method to format published date
+  String _formatPublishedDate(String date) {
+    if (date.isEmpty) return '';
+    
+    try {
+      // Handle different date formats from Google Books
+      if (date.length == 4) {
+        // Just year
+        return date;
+      } else if (date.length == 7) {
+        // Year-Month
+        final parts = date.split('-');
+        if (parts.length == 2) {
+          final year = parts[0];
+          final month = int.tryParse(parts[1]);
+          if (month != null && month >= 1 && month <= 12) {
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+            return '${months[month - 1]} $year';
+          }
+        }
+      } else if (date.length == 10) {
+        // Full date
+        final parsedDate = DateTime.tryParse(date);
+        if (parsedDate != null) {
+          const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+          return '${months[parsedDate.month - 1]} ${parsedDate.day}, ${parsedDate.year}';
+        }
+      }
+    } catch (e) {
+      // Return original if parsing fails
+    }
+    
+    return date;
   }
 
   Widget _buildRating(AudiobookMetadata? metadata) {
@@ -1177,7 +1426,6 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
 
   Future<void> _saveMetadata() async {
     try {
-      // Ensure controllers are initialized
       if (_titleController == null) return;
       
       final metadata = _book.metadata ?? AudiobookMetadata(
@@ -1188,6 +1436,7 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
 
       final categories = _parseCommaSeparatedValues(_categoriesController!.text);
       final userTags = _parseCommaSeparatedValues(_userTagsController!.text);
+      final genres = _parseCommaSeparatedValues(_genresController!.text);
       
       final updatedMetadata = metadata.copyWith(
         title: _titleController!.text,
@@ -1195,8 +1444,10 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView> {
         series: _seriesController!.text,
         seriesPosition: _seriesPositionController!.text,
         description: _descriptionController!.text,
-        categories: categories,
+        categories: genres.isNotEmpty ? genres : categories,
         userTags: userTags,
+        publisher: _publisherController?.text ?? metadata.publisher,
+        publishedDate: _publishedDateController?.text ?? metadata.publishedDate,
       );
       
       final success = await widget.libraryManager.updateMetadata(_book, updatedMetadata);
