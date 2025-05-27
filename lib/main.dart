@@ -1,4 +1,4 @@
-// lib/main.dart
+// lib/main.dart - Updated main app structure
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -18,7 +18,7 @@ import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
 import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
-import 'package:audiobook_organizer/ui/screens/library_screen.dart';
+import 'package:audiobook_organizer/ui/widgets/main_container.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 import 'package:audiobook_organizer/ui/widgets/mini_player.dart';
 
@@ -29,7 +29,7 @@ void main() async {
   
   // Initialize logger with higher detail level first
   await Logger.initialize(
-    logLevel: Logger.LEVEL_DEBUG,  // Set to DEBUG for more detailed logs
+    logLevel: Logger.LEVEL_DEBUG,
     logToFile: true,
   );
   
@@ -42,36 +42,23 @@ void main() async {
     Logger.log('MetadataGod initialized successfully');
   } catch (e) {
     Logger.error('Error initializing MetadataGod:', e);
-    // Continue anyway - we'll handle extraction failures gracefully
   }
 
   // Initialize FFmpeg with comprehensive setup
   bool ffmpegInitialized = false;
   try {   
     Logger.log('Initializing FFmpeg...');
-    
-    // Initialize FFmpegKitConfig
     await FFmpegKitConfig.init();
     Logger.log('FFmpegKitConfig.init() completed');
-    
-    // Set log level for FFmpeg (optional)
     await FFmpegKitConfig.setLogLevel(32);
     Logger.log('FFmpeg log level set to INFO');
-    
-    // Enable statistics (optional)
     await FFmpegKitConfig.enableStatistics();
     Logger.log('FFmpeg statistics enabled');
-    
-    // Test FFmpeg availability with a simple command
-    Logger.log('Testing FFmpeg with version command...');
-    // Note: The actual test will be done in MetadataService initialization
-    
     ffmpegInitialized = true;
     Logger.log('FFmpeg initialization completed successfully');
   } catch (e, stack) {
     Logger.error('Error initializing FFmpeg:', e, stack);
     Logger.warning('FFmpeg initialization failed - cover embedding may be limited');
-    // Continue anyway - MetadataService will handle FFmpeg unavailability
     ffmpegInitialized = false;
   }
   
@@ -81,17 +68,12 @@ void main() async {
   try {
     Logger.log('Initializing audioplayers for platform: ${Platform.operatingSystem}');
     
-    // For Windows, we need to be more careful with initialization
     if (Platform.isWindows) {
       Logger.log('Windows platform detected - initializing with minimal configuration');
-      
-      // On Windows, don't try to set global audio context immediately
-      // Let individual AudioPlayer instances handle their own initialization
       audioInitialized = true;
       Logger.log('Windows audioplayers setup completed');
       
     } else if (Platform.isAndroid) {
-      // For Android, configure audio focus and session
       AudioPlayer.global.setAudioContext(
         AudioContext(
           android: const AudioContextAndroid(
@@ -108,7 +90,6 @@ void main() async {
       Logger.log('Android audio context configured');
       
     } else if (Platform.isIOS) {
-      // For iOS, configure audio session
       AudioPlayer.global.setAudioContext(
         AudioContext(
           iOS: AudioContextIOS(
@@ -123,7 +104,6 @@ void main() async {
       audioInitialized = true;
       Logger.log('iOS audio context configured');
     } else {
-      // For other platforms (Linux, macOS, etc.)
       audioInitialized = true;
       Logger.log('Other platform - using default audio configuration');
     }
@@ -131,7 +111,6 @@ void main() async {
     Logger.log('Audioplayers initialization completed successfully');
   } catch (e, stack) {
     Logger.error('Error initializing audio services', e, stack);
-    // Continue anyway - individual players will try to initialize themselves
     audioInitialized = true;
     Logger.warning('Audio initialization had issues but continuing');
   }
@@ -140,20 +119,17 @@ void main() async {
   FlutterError.onError = (FlutterErrorDetails details) {
     Logger.error('Flutter Error', details.exception, details.stack);
     
-    // Check for plugin exceptions that we want to handle gracefully
     final exceptionString = details.exception.toString();
     if (exceptionString.contains('MissingPluginException')) {
       Logger.warning('Caught plugin exception - this may be expected: ${details.exception}');
-      return; // Don't propagate plugin errors that we can handle
+      return;
     }
     
-    // Check for FFmpeg-related errors that we can handle
     if (exceptionString.contains('ffmpeg') || exceptionString.contains('FFmpeg')) {
       Logger.warning('FFmpeg-related error caught - degrading gracefully: ${details.exception}');
       return;
     }
     
-    // Let Flutter handle other errors normally
     FlutterError.presentError(details);
   };
   
@@ -210,12 +186,11 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
     try {
       Logger.log('Starting application services initialization');
       
-      // Update status
       setState(() {
         _initStatus = 'Initializing core services...';
       });
       
-      // Initialize metadata service first (this will also test FFmpeg availability)
+      // Initialize metadata service first
       setState(() {
         _initStatus = 'Initializing metadata service...';
       });
@@ -248,7 +223,7 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
         _initStatus = 'Setting up metadata providers...';
       });
       _metadataProviders = [
-        GoogleBooksProvider(apiKey: ''), // Add your API key here if available
+        GoogleBooksProvider(apiKey: ''),
         OpenLibraryProvider(),
       ];
       Logger.debug('Metadata providers created');
@@ -313,7 +288,6 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
       setState(() {
         _initStatus = 'Initialization failed';
         _initError = e.toString();
-        // Still mark as initialized so we can show the error
         _initialized = true;
       });
     }
@@ -427,7 +401,6 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
         Provider<CollectionManager>.value(value: _collectionManager),
         Provider<AudioPlayerService>.value(value: _playerService),
         Provider<MetadataService>.value(value: _metadataService),
-
         StreamProvider<List<AudiobookFile>>(
           create: (_) => _libraryManager.libraryChanged,
           initialData: _libraryManager.files,
@@ -440,11 +413,13 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
           backgroundColor: const Color(0xFF121212),
           body: Column(
             children: [
-              // Main content area
+              // Main content area with unified sidebar
               Expanded(
-                child: LibraryScreen(
+                child: MainContainer(
                   libraryManager: _libraryManager,
                   collectionManager: _collectionManager,
+                  playerService: _playerService,
+                  metadataService: _metadataService,
                 ),
               ),
               
@@ -472,14 +447,12 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
       cardColor: const Color(0xFF1E1E1E),
       visualDensity: VisualDensity.adaptivePlatformDensity,
       
-      // Custom theme elements for the Spotify-like interface
       appBarTheme: const AppBarTheme(
         backgroundColor: Color(0xFF000000),
         foregroundColor: Colors.white,
         elevation: 0,
       ),
       
-      // Input decoration theme for search bars
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: const Color(0xFF2A2A2A),
@@ -490,7 +463,6 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
         hintStyle: TextStyle(color: Colors.grey[600]),
       ),
       
-      // Elevated button theme
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.indigo,
@@ -501,7 +473,6 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
         ),
       ),
       
-      // Outlined button theme
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: Colors.white,
@@ -512,7 +483,6 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
         ),
       ),
       
-      // Divider theme
       dividerTheme: const DividerThemeData(
         color: Color(0xFF2A2A2A),
         thickness: 1,
@@ -522,7 +492,6 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
   
   @override
   void dispose() {
-    // Dispose services
     Logger.log('Disposing application services');
     
     try {

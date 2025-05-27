@@ -1270,6 +1270,7 @@ class MetadataService {
         '-avoid_negative_ts', 'make_zero', // Handle timestamp issues
         '-progress', 'pipe:2',       // Send progress to stderr
         '-y',                        // Overwrite output file if exists
+        '-threads', '0',             // Use all available CPU cores
         outputPath,                  // Output M4B file
       ];
       
