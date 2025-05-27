@@ -4,8 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'dart:io';
+import 'dart:ui';
 
-class AudiobookGridItem extends StatelessWidget {
+class AudiobookGridItem extends StatefulWidget {
   final AudiobookFile book;
   final VoidCallback onTap;
   final VoidCallback? onPlayTap;
@@ -20,246 +21,350 @@ class AudiobookGridItem extends StatelessWidget {
   }) : super(key: key);
 
   @override
+  State<AudiobookGridItem> createState() => _AudiobookGridItemState();
+}
+
+class _AudiobookGridItemState extends State<AudiobookGridItem>
+    with SingleTickerProviderStateMixin {
+  bool _isHovered = false;
+  late AnimationController _animationController;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _elevationAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 200),
+      vsync: this,
+    );
+    _scaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.03,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    ));
+    _elevationAnimation = Tween<double>(
+      begin: 2.0,
+      end: 12.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeOut,
+    ));
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
+  }
+
+  void _onHoverChange(bool isHovered) {
+    setState(() {
+      _isHovered = isHovered;
+    });
+    if (isHovered) {
+      _animationController.forward();
+    } else {
+      _animationController.reverse();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final metadata = book.metadata;
+    final metadata = widget.book.metadata;
     
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Cover Image with Rating - Flexible to fill remaining space
-          Expanded(
+    return AnimatedBuilder(
+      animation: _animationController,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: _scaleAnimation.value,
+          child: MouseRegion(
+            onEnter: (_) => _onHoverChange(true),
+            onExit: (_) => _onHoverChange(false),
             child: GestureDetector(
-              onTap: onTap,
-              child: Stack(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    height: double.infinity,
-                    decoration: BoxDecoration(
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                      color: Colors.grey[900],
+              onTap: widget.onTap,
+              child: Container(
+                height: 360,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A1A),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.5),
+                      blurRadius: _elevationAnimation.value,
+                      offset: Offset(0, _elevationAnimation.value / 2),
                     ),
-                    child: ClipRRect(
-                      borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                      child: metadata?.thumbnailUrl != null && metadata!.thumbnailUrl.isNotEmpty
-                          ? Image.file(
-                              File(metadata.thumbnailUrl),
-                              fit: BoxFit.cover,
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Large Cover Section
+                    Container(
+                      height: 260,
+                      width: double.infinity,
+                      decoration: const BoxDecoration(
+                        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+                      ),
+                      child: Stack(
+                        children: [
+                          // Cover Image
+                          ClipRRect(
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                            child: Container(
                               width: double.infinity,
                               height: double.infinity,
-                              errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
-                            )
-                          : _buildPlaceholder(),
-                    ),
-                  ),
-                  
-                  // Rating in upper right
-                  if (metadata?.averageRating != null && metadata!.averageRating > 0)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.7),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.star,
-                              color: Colors.amber,
-                              size: 12,
+                              color: Colors.grey[900],
+                              child: metadata?.thumbnailUrl != null && metadata!.thumbnailUrl.isNotEmpty
+                                  ? Image.file(
+                                      File(metadata.thumbnailUrl),
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      height: double.infinity,
+                                      errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+                                    )
+                                  : _buildPlaceholder(),
                             ),
-                            const SizedBox(width: 2),
-                            Text(
-                              metadata.averageRating.toStringAsFixed(1),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
+                          ),
+                          
+                          // Rating Badge
+                          if (metadata?.averageRating != null && metadata!.averageRating > 0)
+                            Positioned(
+                              top: 12,
+                              right: 12,
+                              child: ClipRect(
+                                child: BackdropFilter(
+                                  filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withOpacity(0.8),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Icon(
+                                          Icons.star,
+                                          color: Color(0xFFFBBF24),
+                                          size: 12,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          metadata.averageRating.toStringAsFixed(1),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-                          ],
-                        ),
+                          
+                          // Hover Controls
+                          AnimatedOpacity(
+                            opacity: _isHovered ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 200),
+                            child: Container(
+                              width: double.infinity,
+                              height: double.infinity,
+                              decoration: BoxDecoration(
+                                color: Colors.black.withOpacity(0.3),
+                                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                              ),
+                              child: Center(
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // Favorite Button
+                                    _buildHoverButton(
+                                      icon: metadata?.isFavorite == true 
+                                          ? Icons.favorite 
+                                          : Icons.favorite_border,
+                                      color: metadata?.isFavorite == true 
+                                          ? Colors.red 
+                                          : Colors.white,
+                                      backgroundColor: Colors.black.withOpacity(0.7),
+                                      onPressed: () => _handleFavoritePress(context),
+                                    ),
+                                    
+                                    const SizedBox(width: 12),
+                                    
+                                    // Play Button
+                                    Consumer<AudioPlayerService>(
+                                      builder: (context, playerService, child) {
+                                        final isCurrentBook = playerService.currentFile?.path == widget.book.path;
+                                        final isPlaying = playerService.isPlaying && isCurrentBook;
+                                        
+                                        return _buildHoverButton(
+                                          icon: isPlaying ? Icons.pause : Icons.play_arrow,
+                                          color: Colors.white,
+                                          backgroundColor: const Color(0xFF3B82F6),
+                                          size: 50,
+                                          iconSize: 24,
+                                          onPressed: () => _handlePlayPress(context, playerService),
+                                        );
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                ],
-              ),
-            ),
-          ),
-          
-          Container(
-            height: 130, // Increased height to accommodate genre
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
-            ),
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Left panel - Book info
-                Expanded(
-                  child: GestureDetector(
-                    onTap: onTap,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.start,
-                      children: [
-                        const SizedBox(height: 8),
-                        // Title - Fixed height
-                        SizedBox(
-                          height: 32, // Fixed height for 2 lines
-                          child: Text(
-                            metadata?.title ?? book.filename,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                              height: 1.2,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        
-                        const SizedBox(height: 8),
-                        
-                        // Author - Fixed height
-                        SizedBox(
-                          height: 16, // Fixed height for 1 line
-                          child: Text(
-                            metadata?.authorsFormatted ?? 'Unknown Author',
-                            style: TextStyle(
-                              color: Colors.grey[400],
-                              fontSize: 11,
-                              height: 1.2,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        
-                        const SizedBox(height: 6),
-                        
-                        // Genre - New addition
-                        SizedBox(
-                          height: 14,
-                          child: Text(
-                            _getGenreText(metadata),
-                            style: TextStyle(
-                              color: Theme.of(context).primaryColor.withOpacity(0.7),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w400,
-                              height: 1.1,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        
-                        const SizedBox(height: 4),
-                        
-                        // Series info if available
-                        if (metadata?.series.isNotEmpty == true)
+                    
+                    // Info Section - Fixed Height
+                    Container(
+                      height: 140,
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Title - Reduced space
                           SizedBox(
-                            height: 14, // Fixed height for series
+                            height: 36, // Reduced from 44 to 36
                             child: Text(
-                              '${metadata!.series}${metadata.seriesPosition.isNotEmpty ? " #${metadata.seriesPosition}" : ""}',
+                              metadata?.title ?? widget.book.filename,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15, // Reduced from 16 to 15
+                                fontWeight: FontWeight.w700,
+                                height: 1.2, // Reduced line height
+                              ),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          
+                          const SizedBox(height: 6), // Reduced from 8
+                          
+                          // Author - Fixed space
+                          SizedBox(
+                            height: 15, // Reduced from 16
+                            child: Text(
+                              metadata?.authorsFormatted ?? 'Unknown Author',
                               style: TextStyle(
-                                color: Colors.grey[500],
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
-                                height: 1.1,
+                                color: Colors.grey[400],
+                                fontSize: 12, // Reduced from 13
+                                height: 1.2,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                      ],
-                    ),
-                  ),
-                ),
-                
-                const SizedBox(width: 8),
-                
-                // Right panel - Controls with fixed width
-                SizedBox(
-                  width: 48, // Fixed width for controls
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    children: [
-                      // Favorite button
-                      Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: Colors.grey[800],
-                          shape: BoxShape.circle,
-                        ),
-                        child: IconButton(
-                          padding: EdgeInsets.zero,
-                          iconSize: 16,
-                          icon: Icon(
-                            metadata?.isFavorite == true 
-                                ? Icons.favorite 
-                                : Icons.favorite_border,
-                            color: metadata?.isFavorite == true 
-                                ? Colors.red 
-                                : Colors.grey[400],
-                          ),
-                          onPressed: onFavoriteTap ?? () => _handleFavoritePress(context),
-                        ),
-                      ),
-                      
-                      const SizedBox(height: 8),
-                      
-                      // Play button
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).primaryColor,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.2),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
+                          
+                          const SizedBox(height: 6), // Reduced from 12
+                          
+                          // Series and Duration Row
+                          SizedBox(
+                            height: 14, // Fixed height for this row
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                // Series Info
+                                Expanded(
+                                  child: Text(
+                                    metadata?.series.isNotEmpty == true
+                                        ? '${metadata!.series}${metadata.seriesPosition.isNotEmpty ? " #${metadata.seriesPosition}" : ""}'
+                                        : 'Standalone',
+                                    style: const TextStyle(
+                                      color: Color(0xFF6366F1),
+                                      fontSize: 10, // Reduced from 11
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                
+                                // Duration
+                                if (metadata?.audioDuration != null)
+                                  Text(
+                                    metadata!.durationFormatted,
+                                    style: TextStyle(
+                                      color: Colors.grey[400],
+                                      fontSize: 10, // Reduced from 11
+                                    ),
+                                  ),
+                              ],
                             ),
-                          ],
-                        ),
-                        child: Consumer<AudioPlayerService>(
-                          builder: (context, playerService, child) {
-                            final isCurrentBook = playerService.currentFile?.path == book.path;
-                            final isPlaying = playerService.isPlaying && isCurrentBook;
-                            
-                            return IconButton(
-                              padding: EdgeInsets.zero,
-                              iconSize: 20,
-                              icon: Icon(
-                                isPlaying ? Icons.pause : Icons.play_arrow,
-                                color: Colors.white,
+                          ),
+                          
+                          const SizedBox(height: 8), // Fixed spacing instead of Spacer
+                          
+                          // Genre Tag at Bottom
+                          if (_getGenreText(metadata).isNotEmpty)
+                            Container(
+                              height: 20, // Fixed height for genre tag
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF6366F1).withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(10),
                               ),
-                              onPressed: onPlayTap ?? () => _handlePlayPress(context, playerService),
-                            );
-                          },
-                        ),
+                              child: Center(
+                                child: Text(
+                                  _getGenreText(metadata),
+                                  style: const TextStyle(
+                                    color: Color(0xFFA5B4FC),
+                                    fontSize: 9, // Reduced from 10
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-        ],
+        );
+      },
+    );
+  }
+
+  Widget _buildHoverButton({
+    required IconData icon,
+    required Color color,
+    required Color backgroundColor,
+    required VoidCallback onPressed,
+    double size = 44,
+    double iconSize = 18,
+  }) {
+    return GestureDetector(
+      onTap: onPressed,
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Icon(
+          icon,
+          color: color,
+          size: iconSize,
+        ),
       ),
     );
   }
@@ -321,7 +426,7 @@ class AudiobookGridItem extends StatelessWidget {
       child: Center(
         child: Icon(
           Icons.headphones,
-          size: 48,
+          size: 64,
           color: Colors.grey[600],
         ),
       ),
@@ -330,7 +435,7 @@ class AudiobookGridItem extends StatelessWidget {
 
   Future<void> _handlePlayPress(BuildContext context, AudioPlayerService playerService) async {
     try {
-      final isCurrentBook = playerService.currentFile?.path == book.path;
+      final isCurrentBook = playerService.currentFile?.path == widget.book.path;
       
       if (isCurrentBook) {
         // If this is the current book, toggle play/pause
@@ -341,7 +446,7 @@ class AudiobookGridItem extends StatelessWidget {
         }
       } else {
         // If this is a different book, start playing it
-        final success = await playerService.play(book);
+        final success = await playerService.play(widget.book);
         if (!success) {
           // Show error if play failed
           if (context.mounted) {
@@ -368,16 +473,17 @@ class AudiobookGridItem extends StatelessWidget {
   }
 
   Future<void> _handleFavoritePress(BuildContext context) async {
-    // This is a default implementation - you might want to pass a callback
-    // or use Provider to access the LibraryManager
+    if (widget.onFavoriteTap != null) {
+      widget.onFavoriteTap!();
+      return;
+    }
+    
+    // Default implementation
     try {
-      // You would typically call something like:
-      // await libraryManager.updateUserData(book, isFavorite: !book.metadata!.isFavorite);
-      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            book.metadata?.isFavorite == true 
+            widget.book.metadata?.isFavorite == true 
                 ? 'Removed from favorites' 
                 : 'Added to favorites'
           ),

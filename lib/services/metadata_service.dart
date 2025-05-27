@@ -221,40 +221,50 @@ class MetadataService {
         }
       }
       
-      Logger.log('Extracting metadata from file: $filePath');
+      Logger.log('Extracting enhanced metadata from file: $filePath');
       
       // Use metadata_god to get metadata
       final metadata = await MetadataGod.readMetadata(file: filePath);
       
-      // Extract the critical information
+      // Enhanced title parsing
       final rawTitle = metadata.title ?? path_util.basenameWithoutExtension(filePath);
-      final title = FileUtils.cleanAudiobookTitle(rawTitle);
+      final cleanTitle = FileUtils.cleanAudiobookTitle(rawTitle);
       
-      // Use utility to parse authors
+      // Parse title and subtitle
+      String title = cleanTitle;
+      String subtitle = '';
+      
+      // Check for subtitle patterns (Title: Subtitle)
+      if (cleanTitle.contains(': ')) {
+        final parts = cleanTitle.split(': ');
+        if (parts.length >= 2) {
+          title = parts[0].trim();
+          subtitle = parts.sublist(1).join(': ').trim();
+        }
+      }
+      
+      // Enhanced author parsing
       final List<String> authors = [];
       if (metadata.albumArtist != null && metadata.albumArtist!.isNotEmpty) {
-        // Use album artist as the book author
         authors.addAll(FileUtils.parseAuthors(metadata.albumArtist!));
       } else if (metadata.artist != null && metadata.artist!.isNotEmpty) {
-        // Fall back to artist if album artist isn't available
         authors.addAll(FileUtils.parseAuthors(metadata.artist!));
       }
       
       // Get series from album field
       final series = metadata.album ?? '';
       
-      // Use utility to extract series position
+      // Enhanced series position extraction
       String seriesPosition = '';
       if (metadata.trackNumber != null) {
         seriesPosition = metadata.trackNumber.toString();
       } else {
-        // Try to extract from title or filename
         seriesPosition = FileUtils.extractSeriesPosition(title) ?? 
                         FileUtils.extractSeriesPosition(path_util.basenameWithoutExtension(filePath)) ?? 
                         '';
       }
       
-      // Extract duration with proper logging
+      // Enhanced duration extraction
       Duration? audioDuration;
       if (metadata.durationMs != null && metadata.durationMs! > 0) {
         audioDuration = Duration(milliseconds: metadata.durationMs!.toInt());
@@ -263,15 +273,24 @@ class MetadataService {
         Logger.warning('No duration found in metadata for: $title (durationMs: ${metadata.durationMs})');
       }
       
-      // Create AudiobookMetadata object with all available MetadataGod fields
+      // Enhanced categories/genre handling
+      final List<String> categories = [];
+      if (metadata.genre != null && metadata.genre!.isNotEmpty) {
+        categories.add(metadata.genre!);
+      }
+      
+      // Create comprehensive AudiobookMetadata object
       final audiobookMetadata = AudiobookMetadata(
         id: path_util.basename(filePath),
         title: title,
+        subtitle: subtitle,
         authors: authors,
-        description: '', // MetadataGod doesn't have a comment/description field
-        publisher: '',
+        narrator: '', // metadata_god doesn't have narrator field, but we preserve it
+        description: '', // metadata_god doesn't have description, but we preserve it
+        publisher: '', // metadata_god doesn't have publisher, but we preserve it
         publishedDate: metadata.year?.toString() ?? '',
-        categories: metadata.genre != null ? [metadata.genre!] : [],
+        categories: categories,
+        mainCategory: categories.isNotEmpty ? categories.first : '',
         thumbnailUrl: '', // Cover handling done by CoverArtManager
         language: '',
         series: series,
@@ -279,6 +298,18 @@ class MetadataService {
         audioDuration: audioDuration,
         fileFormat: path_util.extension(filePath).toLowerCase().replaceFirst('.', '').toUpperCase(),
         provider: 'metadata_god',
+        
+        // Extended metadata - preserve these from existing data if available
+        identifiers: const [],
+        pageCount: 0,
+        printType: 'BOOK',
+        maturityRating: '',
+        contentVersion: '',
+        readingModes: const {},
+        previewLink: '',
+        infoLink: '',
+        physicalDimensions: const {},
+        
         // Default values for other fields
         averageRating: 0.0,
         ratingsCount: 0,
@@ -292,10 +323,15 @@ class MetadataService {
       // Cache the result
       _metadataCache[filePath] = audiobookMetadata;
       
-      Logger.log('Successfully extracted metadata for: ${audiobookMetadata.title}${audioDuration != null ? " (Duration: ${_formatDuration(audioDuration)})" : " (No duration)"}');
+      Logger.log('Successfully extracted enhanced metadata for: ${audiobookMetadata.fullTitle}${audioDuration != null ? " (Duration: ${_formatDuration(audioDuration)})" : " (No duration)"}');
+      Logger.log('- Subtitle: ${subtitle.isNotEmpty ? subtitle : 'None'}');
+      Logger.log('- Authors: ${authors.join(', ')}');
+      Logger.log('- Series: ${series.isNotEmpty ? '$series #$seriesPosition' : 'None'}');
+      Logger.log('- Categories: ${categories.join(', ')}');
+      
       return audiobookMetadata;
     } catch (e) {
-      Logger.error('Error extracting metadata from file: $filePath', e);
+      Logger.error('Error extracting enhanced metadata from file: $filePath', e);
       return null;
     }
   }
@@ -511,11 +547,18 @@ class MetadataService {
       ]);
     }
     
-    // Add metadata tags
+    // Core metadata tags
     if (metadata.title.isNotEmpty) {
       args.addAll(['-metadata', 'title=${_escapeMetadataValue(metadata.title)}']);
     }
     
+    // Handle subtitle by combining with title if present
+    if (metadata.subtitle.isNotEmpty) {
+      final fullTitle = '${metadata.title}: ${metadata.subtitle}';
+      args.addAll(['-metadata', 'title=${_escapeMetadataValue(fullTitle)}']);
+    }
+    
+    // Author handling - prefer authors over narrator for artist field
     if (metadata.authors.isNotEmpty) {
       args.addAll(['-metadata', 'artist=${_escapeMetadataValue(metadata.authors.first)}']);
       if (metadata.authors.length > 1) {
@@ -525,24 +568,65 @@ class MetadataService {
       }
     }
     
+    // Narrator as composer field (common audiobook practice)
+    if (metadata.narrator.isNotEmpty) {
+      args.addAll(['-metadata', 'composer=${_escapeMetadataValue(metadata.narrator)}']);
+    }
+    
+    // Album field - prefer series, fallback to title
     if (metadata.series.isNotEmpty) {
       args.addAll(['-metadata', 'album=${_escapeMetadataValue(metadata.series)}']);
     } else if (metadata.title.isNotEmpty) {
       args.addAll(['-metadata', 'album=${_escapeMetadataValue(metadata.title)}']);
     }
     
+    // Publisher as record label
+    if (metadata.publisher.isNotEmpty) {
+      args.addAll(['-metadata', 'publisher=${_escapeMetadataValue(metadata.publisher)}']);
+      // Also use TPUB for ID3v2 tags
+      args.addAll(['-metadata', 'TPUB=${_escapeMetadataValue(metadata.publisher)}']);
+    }
+    
+    // Publishing date
+    if (metadata.publishedDate.isNotEmpty) {
+      args.addAll(['-metadata', 'date=${_escapeMetadataValue(metadata.publishedDate)}']);
+      args.addAll(['-metadata', 'year=${_escapeMetadataValue(metadata.publishedDate)}']);
+    }
+    
+    // Genre/Categories
     if (metadata.categories.isNotEmpty) {
       args.addAll(['-metadata', 'genre=${_escapeMetadataValue(metadata.categories.first)}']);
+    } else if (metadata.mainCategory.isNotEmpty) {
+      args.addAll(['-metadata', 'genre=${_escapeMetadataValue(metadata.mainCategory)}']);
     } else {
       args.addAll(['-metadata', 'genre=Audiobook']);
     }
     
-    if (metadata.publishedDate.isNotEmpty) {
-      args.addAll(['-metadata', 'date=${_escapeMetadataValue(metadata.publishedDate)}']);
+    // Description/Comment
+    if (metadata.description.isNotEmpty) {
+      args.addAll(['-metadata', 'comment=${_escapeMetadataValue(metadata.description)}']);
+      args.addAll(['-metadata', 'description=${_escapeMetadataValue(metadata.description)}']);
     }
     
+    // Series position
     if (metadata.seriesPosition.isNotEmpty) {
       args.addAll(['-metadata', 'track=${_escapeMetadataValue(metadata.seriesPosition)}']);
+    }
+    
+    // Language
+    if (metadata.language.isNotEmpty) {
+      args.addAll(['-metadata', 'language=${_escapeMetadataValue(metadata.language)}']);
+    }
+    
+    // ISBN if available
+    final isbn = metadata.isbn;
+    if (isbn.isNotEmpty) {
+      args.addAll(['-metadata', 'ISBN=${_escapeMetadataValue(isbn)}']);
+    }
+    
+    // User tags as keywords
+    if (metadata.userTags.isNotEmpty) {
+      args.addAll(['-metadata', 'keywords=${_escapeMetadataValue(metadata.userTags.join(', '))}']);
     }
     
     // Output file
@@ -662,11 +746,11 @@ class MetadataService {
       // Create backup
       backupPath = '$filePath.backup';
       await File(filePath).copy(backupPath);
-      Logger.log('Created backup for complete replacement');
+      Logger.log('Created backup for enhanced complete replacement');
       
       // Create temporary working copy
       final tempDir = Directory.systemTemp;
-      tempFilePath = path_util.join(tempDir.path, 'temp_replacement_${DateTime.now().millisecondsSinceEpoch}_${path_util.basename(filePath)}');
+      tempFilePath = path_util.join(tempDir.path, 'temp_enhanced_replacement_${DateTime.now().millisecondsSinceEpoch}_${path_util.basename(filePath)}');
       await File(filePath).copy(tempFilePath);
       
       // Read original metadata to preserve audio stream info
@@ -682,22 +766,43 @@ class MetadataService {
           data: imageBytes,
           mimeType: mimeType,
         );
-        Logger.log('Prepared replacement cover: ${imageBytes.length} bytes');
+        Logger.log('Prepared enhanced replacement cover: ${imageBytes.length} bytes');
       }
       
-      // Create completely fresh metadata
+      // Create comprehensive fresh metadata with all new fields
       final freshMetadata = Metadata(
-        title: metadata.title,
+        // Enhanced title handling
+        title: metadata.subtitle.isNotEmpty 
+            ? '${metadata.title}: ${metadata.subtitle}' 
+            : metadata.title,
+        
+        // Author information
         artist: metadata.authors.isNotEmpty ? metadata.authors.first : null,
-        album: metadata.series.isNotEmpty ? metadata.series : metadata.title,
         albumArtist: metadata.authors.isNotEmpty ? metadata.authors.join(', ') : null,
-        genre: metadata.categories.isNotEmpty ? metadata.categories.first : 'Audiobook',
+        
+        // Album/Series information
+        album: metadata.series.isNotEmpty ? metadata.series : metadata.title,
+        
+        // Enhanced genre handling
+        genre: metadata.mainCategory.isNotEmpty 
+            ? metadata.mainCategory
+            : (metadata.categories.isNotEmpty 
+                ? metadata.categories.first 
+                : 'Audiobook'),
+        
+        // Publishing information
         year: metadata.publishedDate.isNotEmpty ? int.tryParse(metadata.publishedDate) : null,
+        
+        // Series position
         trackNumber: metadata.seriesPosition.isNotEmpty ? int.tryParse(metadata.seriesPosition) : null,
         trackTotal: null,
         discNumber: null,
         discTotal: null,
-        durationMs: originalMetadata.durationMs, // Preserve original duration
+        
+        // Preserve original duration
+        durationMs: originalMetadata.durationMs,
+        
+        // New cover
         picture: picture,
         fileSize: null,
       );
@@ -708,43 +813,42 @@ class MetadataService {
         metadata: freshMetadata,
       );
       
-      // Verify temp file
+      // Verification
       final verification = await diagnoseCoverEmbedding(tempFilePath);
       final expectedCoverSize = coverImagePath != null ? (await analyzeCoverFile(coverImagePath))['size'] ?? 0 : 0;
       final actualCoverSize = verification['picture_data_size'] ?? 0;
       
-      Logger.log('Replacement verification - Expected: $expectedCoverSize, Actual: $actualCoverSize');
+      Logger.log('Enhanced replacement verification:');
+      Logger.log('- Title: ${metadata.fullTitle}');
+      Logger.log('- Authors: ${metadata.authorsFormatted}');
+      Logger.log('- Publisher: ${metadata.publisher}');
+      Logger.log('- Narrator: ${metadata.narrator}');
+      Logger.log('- Series: ${metadata.series} #${metadata.seriesPosition}');
+      Logger.log('- Categories: ${metadata.categories.join(', ')}');
+      Logger.log('- Expected cover: $expectedCoverSize, Actual: $actualCoverSize');
       
       // Check if cover was properly embedded (if cover was provided)
       if (coverImagePath != null && expectedCoverSize > 0) {
         if (actualCoverSize == 0) {
-          Logger.error('Cover not embedded in replacement file');
+          Logger.error('Cover not embedded in enhanced replacement file');
           await _cleanupFiles([tempFilePath]);
           await _restoreFromBackup(filePath, backupPath);
           return false;
         }
-        
-        // Allow reasonable size difference due to compression
-        final sizeDifference = (actualCoverSize - expectedCoverSize).abs();
-        final tolerance = (expectedCoverSize * 0.3).round(); // 30% tolerance
-        
-        if (sizeDifference > tolerance) {
-          Logger.warning('Cover size differs significantly but proceeding - Expected: $expectedCoverSize, Got: $actualCoverSize');
-        }
       }
       
-      // Replace original with temp file
+      // Replace original with enhanced temp file
       await File(tempFilePath).copy(filePath);
       await _cleanupFiles([tempFilePath, backupPath]);
       
       // Clear cache
       _metadataCache.remove(filePath);
       
-      Logger.log('Complete replacement successful');
+      Logger.log('Enhanced complete replacement successful with all new metadata fields');
       return true;
       
     } catch (e) {
-      Logger.error('Error in complete replacement strategy: $e');
+      Logger.error('Error in enhanced complete replacement strategy: $e');
       
       // Cleanup and restore
       if (tempFilePath != null) {
@@ -823,19 +927,36 @@ class MetadataService {
         }
       }
       
-      // Create standard metadata
+      // Create enhanced metadata with all available fields
       final newMetadata = Metadata(
-        title: metadata.title,
+        // Core metadata
+        title: metadata.subtitle.isNotEmpty 
+            ? '${metadata.title}: ${metadata.subtitle}' 
+            : metadata.title,
         artist: metadata.authors.isNotEmpty ? metadata.authors.first : null,
         album: metadata.series.isNotEmpty ? metadata.series : metadata.title,
         albumArtist: metadata.authors.isNotEmpty ? metadata.authors.join(', ') : null,
-        genre: metadata.categories.isNotEmpty ? metadata.categories.first : null,
+        
+        // Genre - prioritize mainCategory, then categories, then default
+        genre: metadata.mainCategory.isNotEmpty 
+            ? metadata.mainCategory
+            : (metadata.categories.isNotEmpty 
+                ? metadata.categories.first 
+                : 'Audiobook'),
+        
+        // Publishing information
         year: metadata.publishedDate.isNotEmpty ? int.tryParse(metadata.publishedDate) : null,
+        
+        // Series information
         trackNumber: metadata.seriesPosition.isNotEmpty ? int.tryParse(metadata.seriesPosition) : null,
-        trackTotal: null,
+        trackTotal: null, // Could be enhanced if we track total books in series
         discNumber: null,
         discTotal: null,
+        
+        // Duration
         durationMs: metadata.audioDuration?.inMilliseconds.toDouble(),
+        
+        // Cover art
         picture: picture,
         fileSize: null,
       );
@@ -846,10 +967,16 @@ class MetadataService {
       );
       
       _metadataCache.remove(filePath);
-      Logger.log('Standard metadata write completed');
+      Logger.log('Enhanced standard metadata write completed for: ${metadata.title}');
+      Logger.log('- Publisher: ${metadata.publisher}');
+      Logger.log('- Narrator: ${metadata.narrator}');
+      Logger.log('- Description length: ${metadata.description.length} chars');
+      Logger.log('- Categories: ${metadata.categories.join(', ')}');
+      Logger.log('- User tags: ${metadata.userTags.join(', ')}');
+      
       return true;
     } catch (e) {
-      Logger.error('Error in _writeStandardMetadata', e);
+      Logger.error('Error in enhanced _writeStandardMetadata', e);
       return false;
     }
   }

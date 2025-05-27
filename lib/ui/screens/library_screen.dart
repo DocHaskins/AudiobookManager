@@ -1,6 +1,7 @@
-// lib/ui/screens/library_screen.dart - Updated with Settings toggle
+// lib/ui/screens/library_screen.dart - Updated with proper responsive grid for new cards
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/collection.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
@@ -733,33 +734,55 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget _buildGridView() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        const double itemWidth = 200;
-        const double spacing = 20;
+        // TRULY FIXED: Static card dimensions - absolutely no resizing!
+        const double cardWidth = 200.0;   // LOCKED width
+        const double cardHeight = 400.0;  // LOCKED height  
+        const double spacing = 24.0;      // LOCKED spacing
         
-        final int crossAxisCount = ((constraints.maxWidth + spacing) / (itemWidth + spacing)).floor().clamp(1, 20);
+        // Calculate how many FIXED-SIZE cards fit across the available width
+        final availableWidth = constraints.maxWidth - (spacing * 2); // Account for padding
+        final int crossAxisCount = (availableWidth / (cardWidth + spacing))
+            .floor()
+            .clamp(1, 10);
         
-        return GridView.builder(
-          padding: const EdgeInsets.all(24),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            childAspectRatio: 0.67,
-            crossAxisSpacing: spacing,
-            mainAxisSpacing: spacing,
-          ),
-          itemCount: _filteredBooks.length,
-          itemBuilder: (context, index) {
-            final book = _filteredBooks[index];
-            return AudiobookGridItem(
-              book: book,
-              onTap: () => _navigateToDetail(
-                AudiobookDetailView(
-                  book: book,
-                  libraryManager: widget.libraryManager,
+        // Calculate the actual width used by the grid
+        final double gridWidth = (crossAxisCount * cardWidth) + ((crossAxisCount - 1) * spacing);
+        
+        return Center(
+          child: Container(
+            width: gridWidth + (spacing * 2), // Add padding
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: GridView.builder(
+                // FIXED: Custom delegate with absolutely fixed dimensions
+                gridDelegate: _FixedSizeGridDelegate(
+                  crossAxisCount: crossAxisCount,
+                  itemWidth: cardWidth,
+                  itemHeight: cardHeight,
+                  crossAxisSpacing: spacing,
+                  mainAxisSpacing: spacing,
                 ),
+                itemCount: _filteredBooks.length,
+                itemBuilder: (context, index) {
+                  final book = _filteredBooks[index];
+                  return SizedBox(
+                    width: cardWidth,  // Force exact width
+                    height: cardHeight, // Force exact height
+                    child: AudiobookGridItem(
+                      book: book,
+                      onTap: () => _navigateToDetail(
+                        AudiobookDetailView(
+                          book: book,
+                          libraryManager: widget.libraryManager,
+                        ),
+                      ),
+                      onFavoriteTap: () => _toggleFavorite(book),
+                    ),
+                  );
+                },
               ),
-              onFavoriteTap: () => _toggleFavorite(book),
-            );
-          },
+            ),
+          ),
         );
       },
     );
@@ -885,5 +908,44 @@ class _LibraryScreenState extends State<LibraryScreen> {
     } else {
       return '$minutes minutes';
     }
+  }
+}
+
+// Custom grid delegate that enforces absolutely fixed item sizes
+class _FixedSizeGridDelegate extends SliverGridDelegate {
+  final int crossAxisCount;
+  final double itemWidth;
+  final double itemHeight;
+  final double crossAxisSpacing;
+  final double mainAxisSpacing;
+
+  const _FixedSizeGridDelegate({
+    required this.crossAxisCount,
+    required this.itemWidth,
+    required this.itemHeight,
+    required this.crossAxisSpacing,
+    required this.mainAxisSpacing,
+  });
+
+  @override
+  SliverGridLayout getLayout(SliverConstraints constraints) {
+    return SliverGridRegularTileLayout(
+      crossAxisCount: crossAxisCount,
+      mainAxisStride: itemHeight + mainAxisSpacing,
+      crossAxisStride: itemWidth + crossAxisSpacing,
+      childMainAxisExtent: itemHeight,
+      childCrossAxisExtent: itemWidth,
+      reverseCrossAxis: false,
+    );
+  }
+
+  @override
+  bool shouldRelayout(covariant SliverGridDelegate oldDelegate) {
+    if (oldDelegate is! _FixedSizeGridDelegate) return true;
+    return crossAxisCount != oldDelegate.crossAxisCount ||
+           itemWidth != oldDelegate.itemWidth ||
+           itemHeight != oldDelegate.itemHeight ||
+           crossAxisSpacing != oldDelegate.crossAxisSpacing ||
+           mainAxisSpacing != oldDelegate.mainAxisSpacing;
   }
 }
