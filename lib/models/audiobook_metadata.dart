@@ -97,9 +97,7 @@ class AudiobookMetadata {
   final String series;
   final String seriesPosition;
   final Duration? audioDuration;
-  final int? bitrate;
-  final int? channels;
-  final int? sampleRate;
+  // Note: bitrate, channels, sampleRate removed as MetadataGod doesn't provide these
   final String fileFormat;
   final String provider;
   
@@ -127,9 +125,6 @@ class AudiobookMetadata {
     this.series = '',
     this.seriesPosition = '',
     this.audioDuration,
-    this.bitrate,
-    this.channels,
-    this.sampleRate,
     this.fileFormat = '',
     this.provider = '',
     this.userRating = 0,
@@ -157,6 +152,32 @@ class AudiobookMetadata {
         : '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
   
+  // Check if this metadata has essential information
+  bool get hasEssentialInfo {
+    return title.isNotEmpty && 
+           authors.isNotEmpty && 
+           audioDuration != null;
+  }
+  
+  // Check if this is from file extraction vs online source
+  bool get isFromFile => provider == 'metadata_god';
+  
+  // Get completion percentage for metadata
+  double get completionPercentage {
+    int totalFields = 7; // title, authors, duration, series, description, categories, year
+    int completedFields = 0;
+    
+    if (title.isNotEmpty) completedFields++;
+    if (authors.isNotEmpty) completedFields++;
+    if (audioDuration != null) completedFields++;
+    if (series.isNotEmpty) completedFields++;
+    if (description.isNotEmpty) completedFields++;
+    if (categories.isNotEmpty) completedFields++;
+    if (publishedDate.isNotEmpty) completedFields++;
+    
+    return (completedFields / totalFields) * 100;
+  }
+  
   // Create a copy with updated fields
   AudiobookMetadata copyWith({
     String? id,
@@ -173,9 +194,6 @@ class AudiobookMetadata {
     String? series,
     String? seriesPosition,
     Duration? audioDuration,
-    int? bitrate,
-    int? channels,
-    int? sampleRate,
     String? fileFormat,
     String? provider,
     int? userRating,
@@ -201,9 +219,6 @@ class AudiobookMetadata {
       series: series ?? this.series,
       seriesPosition: seriesPosition ?? this.seriesPosition,
       audioDuration: audioDuration ?? this.audioDuration,
-      bitrate: bitrate ?? this.bitrate,
-      channels: channels ?? this.channels,
-      sampleRate: sampleRate ?? this.sampleRate,
       fileFormat: fileFormat ?? this.fileFormat,
       provider: provider ?? this.provider,
       userRating: userRating ?? this.userRating,
@@ -233,9 +248,6 @@ class AudiobookMetadata {
       'series': series,
       'seriesPosition': seriesPosition,
       'audioDuration': audioDuration?.inSeconds,
-      'bitrate': bitrate,
-      'channels': channels,
-      'sampleRate': sampleRate,
       'fileFormat': fileFormat,
       'provider': provider,
       'userRating': userRating,
@@ -248,7 +260,7 @@ class AudiobookMetadata {
     };
   }
   
-  // Create from JSON
+  // Create from JSON (backward compatible with old format that included bitrate/channels/sampleRate)
   factory AudiobookMetadata.fromJson(Map<String, dynamic> json) {
     List<AudiobookBookmark> bookmarks = [];
     if (json['bookmarks'] != null) {
@@ -281,9 +293,6 @@ class AudiobookMetadata {
       audioDuration: json['audioDuration'] != null 
           ? Duration(seconds: json['audioDuration']) 
           : null,
-      bitrate: json['bitrate'],
-      channels: json['channels'],
-      sampleRate: json['sampleRate'],
       fileFormat: json['fileFormat'] ?? '',
       provider: json['provider'] ?? '',
       userRating: json['userRating'] ?? 0,
@@ -298,12 +307,13 @@ class AudiobookMetadata {
       bookmarks: bookmarks,
       notes: notes,
     );
+    // Note: bitrate, channels, sampleRate are ignored if present in old JSON
   }
   
   // String representation
   @override
   String toString() {
-    return 'AudiobookMetadata: $title by $authorsFormatted (Series: $series #$seriesPosition)';
+    return 'AudiobookMetadata: $title by $authorsFormatted (Series: $series #$seriesPosition)${audioDuration != null ? " - ${durationFormatted}" : ""}';
   }
   
   // Merge with another metadata object (useful for combining online and local data)
@@ -323,9 +333,6 @@ class AudiobookMetadata {
       series: series.isNotEmpty ? series : enhancement.series,
       seriesPosition: seriesPosition.isNotEmpty ? seriesPosition : enhancement.seriesPosition,
       audioDuration: audioDuration ?? enhancement.audioDuration,
-      bitrate: bitrate ?? enhancement.bitrate,
-      channels: channels ?? enhancement.channels,
-      sampleRate: sampleRate ?? enhancement.sampleRate,
       fileFormat: fileFormat.isNotEmpty ? fileFormat : enhancement.fileFormat,
       provider: provider.isNotEmpty ? provider : enhancement.provider,
       // Preserve ALL user data
@@ -357,9 +364,6 @@ class AudiobookMetadata {
       series: newVersion.series,
       seriesPosition: newVersion.seriesPosition,
       audioDuration: newVersion.audioDuration,
-      bitrate: newVersion.bitrate,
-      channels: newVersion.channels,
-      sampleRate: newVersion.sampleRate,
       fileFormat: newVersion.fileFormat,
       provider: newVersion.provider,
       // PRESERVE user data - same book, just better metadata
@@ -391,9 +395,6 @@ class AudiobookMetadata {
       series: newBook.series,
       seriesPosition: newBook.seriesPosition,
       audioDuration: newBook.audioDuration,
-      bitrate: newBook.bitrate,
-      channels: newBook.channels,
-      sampleRate: newBook.sampleRate,
       fileFormat: newBook.fileFormat,
       provider: newBook.provider,
       // RESET user data - this is a different book entirely

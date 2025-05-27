@@ -510,6 +510,115 @@ class LibraryManager {
     
     Logger.log('Library structure analysis complete');
   }
+
+  Future<bool> writeMetadataToFile(AudiobookFile file) async {
+    if (file.metadata == null) {
+      Logger.warning('No metadata to write for file: ${file.filename}');
+      return false;
+    }
+
+    try {
+      Logger.log('Writing metadata to file: ${file.filename}');
+      
+      // Store the original metadata before writing
+      final originalMetadata = file.metadata!;
+      
+      // Get the MetadataService instance
+      final metadataService = MetadataService();
+      await metadataService.initialize();
+      
+      // Use MetadataService to write metadata directly to the file
+      final success = await metadataService.writeMetadataFromObject(
+        file.path, 
+        originalMetadata
+      );
+      
+      if (success) {
+        Logger.log('Successfully wrote metadata to file: ${file.filename}');
+        
+        // Extract fresh metadata from the file to verify the write succeeded
+        final freshMetadata = await metadataService.extractMetadata(
+          file.path, 
+          forceRefresh: true
+        );
+        
+        if (freshMetadata != null) {
+          final enhancedMetadata = freshMetadata.enhance(originalMetadata);
+          file.metadata = enhancedMetadata;
+          await _storageManager.enhanceMetadataForFile(file.path, enhancedMetadata);
+          _notifyLibraryChanged();
+          
+          Logger.log('Metadata successfully written and enhanced for: ${file.filename}');
+        } else {
+          // If we can't read back the metadata, keep the original
+          Logger.warning('Could not verify written metadata, keeping original for: ${file.filename}');
+        }
+        
+        return true;
+      } else {
+        Logger.error('Failed to write metadata to file: ${file.filename}');
+        return false;
+      }
+    } catch (e) {
+      Logger.error('Error writing metadata to file: ${file.filename}', e);
+      return false;
+    }
+  }
+
+  /// Get detailed metadata statistics for debugging
+  Future<Map<String, dynamic>> getMetadataStatistics() async {
+    int totalFiles = _files.length;
+    int filesWithDuration = 0;
+    int filesWithMetadata = 0;
+    int filesWithCovers = 0;
+    Duration totalDuration = Duration.zero;
+    List<String> filesWithoutDuration = [];
+    
+    for (final file in _files) {
+      if (file.metadata != null) {
+        filesWithMetadata++;
+        
+        if (file.metadata!.audioDuration != null) {
+          filesWithDuration++;
+          totalDuration += file.metadata!.audioDuration!;
+        } else {
+          filesWithoutDuration.add(file.filename);
+        }
+        
+        if (file.metadata!.thumbnailUrl.isNotEmpty) {
+          filesWithCovers++;
+        }
+      }
+    }
+    
+    final stats = {
+      'total_files': totalFiles,
+      'files_with_metadata': filesWithMetadata,
+      'files_with_duration': filesWithDuration,
+      'files_with_covers': filesWithCovers,
+      'total_duration_hours': totalDuration.inHours,
+      'total_duration_formatted': _formatDuration(totalDuration),
+      'files_without_duration': filesWithoutDuration,
+      'duration_coverage_percent': totalFiles > 0 ? (filesWithDuration / totalFiles * 100).toStringAsFixed(1) : '0',
+      'metadata_coverage_percent': totalFiles > 0 ? (filesWithMetadata / totalFiles * 100).toStringAsFixed(1) : '0',
+      'cover_coverage_percent': totalFiles > 0 ? (filesWithCovers / totalFiles * 100).toStringAsFixed(1) : '0',
+    };
+    
+    Logger.log('Metadata Statistics: $stats');
+    return stats;
+  }
+
+  /// Helper method to format duration
+  String _formatDuration(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
   
   // Add a bookmark
   Future<bool> addBookmark(AudiobookFile file, AudiobookBookmark bookmark) async {

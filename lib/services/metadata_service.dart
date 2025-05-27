@@ -31,11 +31,12 @@ class MetadataService {
     }
   }
   
-  // Primary method to extract metadata
+  // Primary method to extract metadata with all available MetadataGod fields
   Future<AudiobookMetadata?> extractMetadata(String filePath, {bool forceRefresh = false}) async {
     try {
       // Check cache first
       if (!forceRefresh && _metadataCache.containsKey(filePath)) {
+        Logger.debug('Retrieved metadata from cache for: $filePath');
         return _metadataCache[filePath];
       }
       
@@ -81,12 +82,21 @@ class MetadataService {
                         '';
       }
       
-      // Create AudiobookMetadata object
+      // Extract duration with proper logging
+      Duration? audioDuration;
+      if (metadata.durationMs != null && metadata.durationMs! > 0) {
+        audioDuration = Duration(milliseconds: metadata.durationMs!.toInt());
+        Logger.debug('Duration extracted for $title: ${audioDuration.inSeconds}s (${_formatDuration(audioDuration)})');
+      } else {
+        Logger.warning('No duration found in metadata for: $title (durationMs: ${metadata.durationMs})');
+      }
+      
+      // Create AudiobookMetadata object with all available MetadataGod fields
       final audiobookMetadata = AudiobookMetadata(
         id: path_util.basename(filePath),
         title: title,
         authors: authors,
-        description: '', // No comment field available
+        description: '', // MetadataGod doesn't have a comment/description field
         publisher: '',
         publishedDate: metadata.year?.toString() ?? '',
         categories: metadata.genre != null ? [metadata.genre!] : [],
@@ -94,8 +104,7 @@ class MetadataService {
         language: '',
         series: series,
         seriesPosition: seriesPosition,
-        audioDuration: metadata.durationMs != null ? Duration(milliseconds: metadata.durationMs!.toInt()) : null,
-        bitrate: null,
+        audioDuration: audioDuration,
         fileFormat: path_util.extension(filePath).toLowerCase().replaceFirst('.', '').toUpperCase(),
         provider: 'metadata_god',
         // Default values for other fields
@@ -111,7 +120,7 @@ class MetadataService {
       // Cache the result
       _metadataCache[filePath] = audiobookMetadata;
       
-      Logger.log('Successfully extracted metadata for: ${audiobookMetadata.title}');
+      Logger.log('Successfully extracted metadata for: ${audiobookMetadata.title}${audioDuration != null ? " (Duration: ${_formatDuration(audioDuration)})" : " (No duration)"}');
       return audiobookMetadata;
     } catch (e) {
       Logger.error('Error extracting metadata from file: $filePath', e);
@@ -119,7 +128,46 @@ class MetadataService {
     }
   }
   
-  // Write metadata back to the file
+  // Method to write metadata from AudiobookMetadata object
+  Future<bool> writeMetadataFromObject(String filePath, AudiobookMetadata metadata) async {
+    return writeMetadata(filePath, metadata, coverImagePath: metadata.thumbnailUrl);
+  }
+  
+  // Extract detailed audio information for debugging - only what MetadataGod actually provides
+  Future<Map<String, dynamic>> extractDetailedAudioInfo(String filePath) async {
+    try {
+      final metadata = await MetadataGod.readMetadata(file: filePath);
+      
+      final info = {
+        // All actual MetadataGod fields
+        'title': metadata.title,
+        'artist': metadata.artist,
+        'album': metadata.album,
+        'albumArtist': metadata.albumArtist,
+        'genre': metadata.genre,
+        'year': metadata.year,
+        'trackNumber': metadata.trackNumber,
+        'trackTotal': metadata.trackTotal,
+        'discNumber': metadata.discNumber,
+        'discTotal': metadata.discTotal,
+        'durationMs': metadata.durationMs,
+        'durationSeconds': metadata.durationMs != null ? (metadata.durationMs! / 1000).round() : null,
+        'durationFormatted': metadata.durationMs != null ? _formatDuration(Duration(milliseconds: metadata.durationMs!.toInt())) : null,
+        'fileSize': metadata.fileSize?.toString(),
+        'hasPicture': metadata.picture != null,
+        'pictureMimeType': metadata.picture?.mimeType,
+        'pictureDataSize': metadata.picture?.data.length,
+      };
+      
+      Logger.debug('Detailed audio info for ${path_util.basename(filePath)}: $info');
+      return info;
+    } catch (e) {
+      Logger.error('Error extracting detailed audio info: $e');
+      return {};
+    }
+  }
+  
+  // Write metadata back to the file using only MetadataGod supported fields
   Future<bool> writeMetadata(String filePath, AudiobookMetadata metadata, {String? coverImagePath}) async {
     try {
       // Ensure we're initialized
@@ -171,20 +219,22 @@ class MetadataService {
           }
         }
       }
-            
-      // Create metadata_god Metadata object
+      
+      // Create metadata_god Metadata object using ONLY the fields that exist in the API
       final newMetadata = Metadata(
         title: metadata.title,
         artist: metadata.authors.isNotEmpty ? metadata.authors.first : null,
         album: metadata.series,
+        albumArtist: metadata.authors.length > 1 ? metadata.authors[1] : metadata.authors.isNotEmpty ? metadata.authors.first : null,
         genre: metadata.categories.isNotEmpty ? metadata.categories.first : null,
         year: metadata.publishedDate.isNotEmpty ? int.tryParse(metadata.publishedDate) : null,
         trackNumber: metadata.seriesPosition.isNotEmpty ? int.tryParse(metadata.seriesPosition) : null,
-        // Other fields that metadata_god supports
-        albumArtist: metadata.authors.length > 1 ? metadata.authors[1] : metadata.authors.isNotEmpty ? metadata.authors.first : null,
+        trackTotal: null, // We don't have this info in AudiobookMetadata
+        discNumber: null, // We don't have this info in AudiobookMetadata
+        discTotal: null, // We don't have this info in AudiobookMetadata
         durationMs: metadata.audioDuration?.inMilliseconds.toDouble(),
-        picture: picture, // Now includes the cover image if available
-        fileSize: null, // Optional
+        picture: picture,
+        fileSize: null, // Will be calculated by metadata_god
       );
       
       // Write the metadata to the file
@@ -193,7 +243,7 @@ class MetadataService {
         metadata: newMetadata,
       );
       
-      // Update the cache
+      // Clear from cache to force refresh on next read
       _metadataCache.remove(filePath);
       
       Logger.log('Successfully wrote metadata to file: $filePath${picture != null ? ' (including cover)' : ''}');
@@ -241,21 +291,21 @@ class MetadataService {
         mimeType: mimeType,
       );
       
-      // Create new metadata with updated picture
+      // Create new metadata with updated picture using all existing MetadataGod fields
       final newMetadata = Metadata(
         title: existingMetadata.title,
         artist: existingMetadata.artist,
         album: existingMetadata.album,
+        albumArtist: existingMetadata.albumArtist,
         genre: existingMetadata.genre,
         year: existingMetadata.year,
         trackNumber: existingMetadata.trackNumber,
-        albumArtist: existingMetadata.albumArtist,
-        durationMs: existingMetadata.durationMs,
-        picture: picture,
-        fileSize: existingMetadata.fileSize,
         trackTotal: existingMetadata.trackTotal,
         discNumber: existingMetadata.discNumber,
         discTotal: existingMetadata.discTotal,
+        durationMs: existingMetadata.durationMs,
+        picture: picture,
+        fileSize: existingMetadata.fileSize,
       );
       
       // Write the metadata back to the file
@@ -272,8 +322,29 @@ class MetadataService {
     }
   }
   
+  // Get cache statistics for debugging
+  Map<String, dynamic> getCacheStats() {
+    return {
+      'cached_files': _metadataCache.length,
+      'initialized': _isInitialized,
+    };
+  }
+  
+  // Helper method to format duration
+  String _formatDuration(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
+  }
+  
   // Clear cache
   void clearCache() {
     _metadataCache.clear();
+    Logger.debug('Metadata cache cleared');
   }
 }

@@ -1252,21 +1252,12 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
         ],
         
         // Audio Details Section (if available)
-        if (metadata.audioDuration != null || metadata.bitrate != null || metadata.fileFormat.isNotEmpty) ...[
+        if (metadata.audioDuration != null || metadata.fileFormat.isNotEmpty) ...[
           _buildSectionHeader('Audio Information', Icons.headphones),
           const SizedBox(height: 8),
           
           if (metadata.audioDuration != null)
             _buildDetailRow('Duration', metadata.durationFormatted, isCompact),
-          
-          if (metadata.bitrate != null)
-            _buildDetailRow('Bitrate', '${metadata.bitrate} kbps', isCompact),
-          
-          if (metadata.channels != null)
-            _buildDetailRow('Channels', metadata.channels == 1 ? 'Mono' : metadata.channels == 2 ? 'Stereo' : '${metadata.channels} channels', isCompact),
-          
-          if (metadata.sampleRate != null)
-            _buildDetailRow('Sample Rate', '${metadata.sampleRate} Hz', isCompact),
           
           if (metadata.fileFormat.isNotEmpty)
             _buildDetailRow('Format', metadata.fileFormat.toUpperCase(), isCompact),
@@ -1350,7 +1341,6 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
     if (metadata.ratingsCount > 0) filledFields++;
     if (metadata.thumbnailUrl.isNotEmpty) filledFields++;
     if (metadata.audioDuration != null) filledFields++;
-    if (metadata.bitrate != null) filledFields++;
     if (metadata.provider.isNotEmpty) filledFields++;
     
     double completeness = filledFields / totalFields;
