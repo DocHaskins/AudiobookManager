@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
-import 'package:audiobook_organizer/ui/widgets/audiobook_grid_item.dart';
-import 'package:audiobook_organizer/ui/widgets/audiobook_list_item.dart';
-import 'package:audiobook_organizer/ui/widgets/audiobook_detail_view.dart';
+import 'package:audiobook_organizer/ui/widgets/audiobook/audiobook_grid_item.dart';
+import 'package:audiobook_organizer/ui/widgets/audiobook/audiobook_list_item.dart';
+import 'package:audiobook_organizer/ui/widgets/audiobook/audiobook_detail_view.dart';
 
 class LibraryBooksView extends StatelessWidget {
   final List<AudiobookFile> books;

@@ -894,6 +894,69 @@ class LibraryManager {
       return false;
     }
   }
+
+  Future<bool> addSingleFile(AudiobookFile file) async {
+    try {
+      Logger.log('Adding single file to library: ${file.filename}');
+      
+      // Check if file already exists in library
+      final existingIndex = _files.indexWhere((f) => f.path == file.path);
+      if (existingIndex != -1) {
+        Logger.log('File already exists in library, updating: ${file.filename}');
+        _files[existingIndex] = file;
+      } else {
+        Logger.log('Adding new file to library: ${file.filename}');
+        _files.add(file);
+      }
+      
+      // Ensure the file has metadata
+      if (file.metadata != null) {
+        // Store metadata using storage manager
+        final metadataSuccess = await _storageManager.updateMetadataForFile(
+          file.path, 
+          file.metadata!, 
+          force: true,
+          operation: MetadataUpdateOperation.directSave,
+        );
+        
+        if (!metadataSuccess) {
+          Logger.error('Failed to store metadata for new file: ${file.filename}');
+          return false;
+        }
+        
+        // Handle cover art if present
+        if (file.metadata!.thumbnailUrl.isNotEmpty && 
+            !file.metadata!.thumbnailUrl.startsWith('http')) {
+          final coverPath = await _coverArtManager.ensureCoverForFile(file.path, file.metadata!);
+          if (coverPath != null && coverPath != file.metadata!.thumbnailUrl) {
+            // Update metadata with the proper cover path
+            file.metadata = file.metadata!.copyWith(thumbnailUrl: coverPath);
+            await _storageManager.updateMetadataForFile(
+              file.path, 
+              file.metadata!, 
+              force: true,
+              operation: MetadataUpdateOperation.directSave,
+            );
+          }
+        }
+      } else {
+        Logger.warning('Adding file without metadata: ${file.filename}');
+      }
+      
+      // Save the updated library
+      await _storageManager.saveLibrary(_files);
+      
+      // Notify listeners about the change
+      _notifyLibraryChanged();
+      
+      Logger.log('Successfully added single file to library: ${file.filename}');
+      return true;
+      
+    } catch (e) {
+      Logger.error('Error adding single file to library: ${file.filename}', e);
+      return false;
+    }
+  }
   
   // Get file by path
   AudiobookFile? getFileByPath(String path) {

@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
-import 'package:audiobook_organizer/ui/widgets/add_to_collection_dialog.dart';
+import 'package:audiobook_organizer/ui/widgets/collections/add_to_collection_dialog.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
 class CollectionsSection extends StatefulWidget {

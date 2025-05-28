@@ -2,7 +2,7 @@
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/collection_manager.dart';
-import 'package:audiobook_organizer/ui/widgets/main_container.dart';
+import 'package:audiobook_organizer/ui/screens/main_container.dart';
 import 'package:audiobook_organizer/utils/library_filter_utils.dart';
 import 'package:audiobook_organizer/utils/genre_icon_utils.dart';
 import 'package:audiobook_organizer/utils/duration_utils.dart';

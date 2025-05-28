@@ -18,9 +18,9 @@ import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
 import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
-import 'package:audiobook_organizer/ui/widgets/main_container.dart';
+import 'package:audiobook_organizer/ui/screens/main_container.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
-import 'package:audiobook_organizer/ui/widgets/mini_player.dart';
+import 'package:audiobook_organizer/ui/screens/mini_player.dart';
 
 // Entry point
 void main() async {
@@ -420,6 +420,7 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
                   collectionManager: _collectionManager,
                   playerService: _playerService,
                   metadataService: _metadataService,
+                  metadataProviders: _metadataProviders,
                 ),
               ),
               

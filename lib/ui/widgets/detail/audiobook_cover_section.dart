@@ -6,7 +6,7 @@ import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/services/cover_art_manager.dart';
-import 'package:audiobook_organizer/ui/widgets/cover_image_dialog.dart';
+import 'package:audiobook_organizer/ui/widgets/dialogs/cover_image_dialog.dart';
 import 'package:audiobook_organizer/ui/widgets/detail/audiobook_actions_section.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 

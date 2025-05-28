@@ -5,9 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/collection.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/collection_manager.dart';
-import 'package:audiobook_organizer/ui/widgets/collection_grid_item.dart';
-import 'package:audiobook_organizer/ui/widgets/collection_detail_view.dart';
-import 'package:audiobook_organizer/ui/widgets/audiobook_detail_view.dart';
+import 'package:audiobook_organizer/ui/widgets/collections/collection_grid_item.dart';
+import 'package:audiobook_organizer/ui/widgets/collections/collection_detail_view.dart';
+import 'package:audiobook_organizer/ui/widgets/audiobook/audiobook_detail_view.dart';
 
 class LibraryCollectionsView extends StatelessWidget {
   final List<Collection> collections;

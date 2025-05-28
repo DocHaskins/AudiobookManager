@@ -11,9 +11,10 @@ import 'package:metadata_god/metadata_god.dart';
 import 'package:path/path.dart' as path_util;
 import 'package:mime/mime.dart';
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
+import 'package:audiobook_organizer/models/chapter_info.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 import 'package:audiobook_organizer/utils/file_utils.dart';
-import 'package:audiobook_organizer/ui/widgets/conversion_progress_dialog.dart';
+import 'package:audiobook_organizer/ui/widgets/dialogs/conversion_progress_dialog.dart';
 
 class MetadataService {
   // Singleton pattern
@@ -1406,6 +1407,336 @@ class MetadataService {
       Logger.error('Error extracting detailed audio info: $e');
       return {};
     }
+  }
+
+  Future<bool> mergeMP3FilesToM4B(
+    List<ChapterInfo> chapters,
+    String outputPath,
+    AudiobookMetadata bookMetadata, {
+    Function(String step, double progress)? onProgress,
+  }) async {
+    if (!_systemFFmpegAvailable || _systemFFmpegPath == null) {
+      Logger.error('System FFmpeg not available for MP3 to M4B merging');
+      return false;
+    }
+
+    if (chapters.isEmpty) {
+      Logger.error('No chapters provided for merging');
+      return false;
+    }
+
+    String? tempConcatPath;
+    String? tempListPath;
+    List<String> tempFiles = [];
+
+    try {
+      Logger.log('Starting MP3 to M4B merge process with ${chapters.length} chapters');
+      onProgress?.call('Preparing merge process...', 0.0);
+
+      final tempDir = Directory.systemTemp;
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      
+      // Create temporary concat file path
+      tempConcatPath = path_util.join(tempDir.path, 'temp_concat_$timestamp.m4b');
+      
+      // Create FFmpeg concat file list
+      tempListPath = path_util.join(tempDir.path, 'concat_list_$timestamp.txt');
+      final concatListContent = chapters
+          .map((chapter) => "file '${chapter.filePath.replaceAll("'", "\\'")}'")
+          .join('\n');
+      
+      await File(tempListPath).writeAsString(concatListContent);
+      tempFiles.add(tempListPath);
+      
+      Logger.log('Created concat list with ${chapters.length} files');
+      onProgress?.call('Concatenating audio files...', 0.1);
+
+      // Step 1: Concatenate all MP3 files into a single M4B
+      final concatArgs = [
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', tempListPath,
+        '-c:a', 'aac',
+        '-b:a', '64k',
+        '-f', 'mp4',
+        '-movflags', '+faststart',
+        '-y',
+        tempConcatPath,
+      ];
+
+      Logger.log('FFmpeg concat command: $_systemFFmpegPath ${concatArgs.join(' ')}');
+      
+      final concatResult = await Process.run(_systemFFmpegPath!, concatArgs);
+      
+      if (concatResult.exitCode != 0) {
+        Logger.error('FFmpeg concat failed with exit code: ${concatResult.exitCode}');
+        Logger.error('FFmpeg concat stderr: ${concatResult.stderr}');
+        return false;
+      }
+
+      tempFiles.add(tempConcatPath);
+      Logger.log('Successfully concatenated MP3 files');
+      onProgress?.call('Adding chapter metadata...', 0.4);
+
+      // Step 2: Create chapter metadata file
+      final chapterMetadataPath = await _createChapterMetadataFile(chapters, timestamp);
+      if (chapterMetadataPath != null) {
+        tempFiles.add(chapterMetadataPath);
+      }
+
+      onProgress?.call('Embedding chapters and metadata...', 0.6);
+
+      // Step 3: Add chapters and metadata to the final M4B file
+      final finalArgs = await _buildFinalMergeArgs(
+        tempConcatPath,
+        outputPath,
+        bookMetadata,
+        chapterMetadataPath,
+      );
+
+      Logger.log('FFmpeg final command: $_systemFFmpegPath ${finalArgs.join(' ')}');
+      
+      final finalResult = await Process.run(_systemFFmpegPath!, finalArgs);
+      
+      if (finalResult.exitCode != 0) {
+        Logger.error('FFmpeg final merge failed with exit code: ${finalResult.exitCode}');
+        Logger.error('FFmpeg final stderr: ${finalResult.stderr}');
+        return false;
+      }
+
+      onProgress?.call('Verifying output...', 0.9);
+
+      // Step 4: Verify the output file
+      final outputFile = File(outputPath);
+      if (!await outputFile.exists()) {
+        Logger.error('Output file was not created');
+        return false;
+      }
+
+      final outputSize = await outputFile.length();
+      Logger.log('Created M4B file: ${path_util.basename(outputPath)} (${_formatFileSize(outputSize)})');
+
+      // Step 5: Verify chapters were embedded correctly
+      final chapterVerification = await _verifyChapters(outputPath, chapters.length);
+      if (!chapterVerification) {
+        Logger.warning('Chapter verification failed, but file was created');
+      }
+
+      onProgress?.call('Merge completed successfully!', 1.0);
+      Logger.log('Successfully merged ${chapters.length} MP3 files into M4B audiobook');
+      
+      return true;
+
+    } catch (e) {
+      Logger.error('Error in mergeMP3FilesToM4B: $e');
+      return false;
+    } finally {
+      // Cleanup temporary files
+      for (final tempFile in tempFiles) {
+        try {
+          final file = File(tempFile);
+          if (await file.exists()) {
+            await file.delete();
+            Logger.debug('Cleaned up: ${path_util.basename(tempFile)}');
+          }
+        } catch (e) {
+          Logger.debug('Failed to cleanup $tempFile: $e');
+        }
+      }
+    }
+  }
+
+  /// Create FFmpeg chapter metadata file
+  Future<String?> _createChapterMetadataFile(List<ChapterInfo> chapters, int timestamp) async {
+    try {
+      final tempDir = Directory.systemTemp;
+      final metadataPath = path_util.join(tempDir.path, 'chapters_$timestamp.txt');
+      
+      final buffer = StringBuffer();
+      buffer.writeln(';FFMETADATA1');
+      
+      for (int i = 0; i < chapters.length; i++) {
+        final chapter = chapters[i];
+        
+        // Convert to milliseconds for FFmpeg
+        final startMs = chapter.startTime.inMilliseconds;
+        final endMs = (chapter.startTime + chapter.duration).inMilliseconds;
+        
+        buffer.writeln();
+        buffer.writeln('[CHAPTER]');
+        buffer.writeln('TIMEBASE=1/1000');
+        buffer.writeln('START=$startMs');
+        buffer.writeln('END=$endMs');
+        buffer.writeln('title=${_escapeMetadataValue(chapter.title)}');
+      }
+      
+      await File(metadataPath).writeAsString(buffer.toString());
+      Logger.log('Created chapter metadata file with ${chapters.length} chapters');
+      
+      return metadataPath;
+    } catch (e) {
+      Logger.error('Error creating chapter metadata file: $e');
+      return null;
+    }
+  }
+
+  /// Build FFmpeg arguments for final merge with metadata and chapters
+  Future<List<String>> _buildFinalMergeArgs(
+    String inputPath,
+    String outputPath,
+    AudiobookMetadata bookMetadata,
+    String? chapterMetadataPath,
+  ) async {
+    final List<String> args = [
+      '-i', inputPath, // Input concatenated audio
+    ];
+
+    // Add chapter metadata file if available
+    if (chapterMetadataPath != null) {
+      args.addAll(['-i', chapterMetadataPath]);
+      args.addAll(['-map_metadata', '1']); // Map metadata from second input
+    }
+
+    // Add cover image if available
+    if (bookMetadata.thumbnailUrl.isNotEmpty && 
+        !bookMetadata.thumbnailUrl.startsWith('http')) {
+      final coverFile = File(bookMetadata.thumbnailUrl);
+      if (await coverFile.exists()) {
+        args.addAll(['-i', bookMetadata.thumbnailUrl]);
+        args.addAll([
+          '-map', '0:a',         // Map audio from first input
+          '-map', '2:v',         // Map video (cover) from third input
+          '-c:a', 'copy',        // Copy audio without re-encoding
+          '-c:v', 'copy',        // Copy video without re-encoding
+          '-disposition:v:0', 'attached_pic', // Mark video as attached picture
+        ]);
+        Logger.log('Adding cover image to M4B');
+      } else {
+        args.addAll(['-c:a', 'copy']); // Copy audio only
+      }
+    } else {
+      args.addAll(['-c:a', 'copy']); // Copy audio only
+    }
+
+    // Add comprehensive metadata
+    _addMetadataToArgs(args, bookMetadata);
+
+    // Output file with overwrite
+    args.addAll(['-y', outputPath]);
+
+    return args;
+  }
+
+  /// Add metadata arguments to FFmpeg command
+  void _addMetadataToArgs(List<String> args, AudiobookMetadata bookMetadata) {
+    // Core metadata
+    if (bookMetadata.title.isNotEmpty) {
+      args.addAll(['-metadata', 'title=${_escapeMetadataValue(bookMetadata.title)}']);
+    }
+
+    if (bookMetadata.subtitle.isNotEmpty) {
+      final fullTitle = '${bookMetadata.title}: ${bookMetadata.subtitle}';
+      args.addAll(['-metadata', 'title=${_escapeMetadataValue(fullTitle)}']);
+    }
+
+    // Author information
+    if (bookMetadata.authors.isNotEmpty) {
+      args.addAll(['-metadata', 'artist=${_escapeMetadataValue(bookMetadata.authors.first)}']);
+      args.addAll(['-metadata', 'albumartist=${_escapeMetadataValue(bookMetadata.authors.join(', '))}']);
+    }
+
+    // Album field - prefer series, fallback to title
+    if (bookMetadata.series.isNotEmpty) {
+      args.addAll(['-metadata', 'album=${_escapeMetadataValue(bookMetadata.series)}']);
+    } else if (bookMetadata.title.isNotEmpty) {
+      args.addAll(['-metadata', 'album=${_escapeMetadataValue(bookMetadata.title)}']);
+    }
+
+    // Publisher
+    if (bookMetadata.publisher.isNotEmpty) {
+      args.addAll(['-metadata', 'publisher=${_escapeMetadataValue(bookMetadata.publisher)}']);
+    }
+
+    // Publishing date
+    if (bookMetadata.publishedDate.isNotEmpty) {
+      args.addAll(['-metadata', 'date=${_escapeMetadataValue(bookMetadata.publishedDate)}']);
+      args.addAll(['-metadata', 'year=${_escapeMetadataValue(bookMetadata.publishedDate)}']);
+    }
+
+    // Genre
+    if (bookMetadata.categories.isNotEmpty) {
+      args.addAll(['-metadata', 'genre=${_escapeMetadataValue(bookMetadata.categories.first)}']);
+    } else if (bookMetadata.mainCategory.isNotEmpty) {
+      args.addAll(['-metadata', 'genre=${_escapeMetadataValue(bookMetadata.mainCategory)}']);
+    } else {
+      args.addAll(['-metadata', 'genre=Audiobook']);
+    }
+
+    // Description
+    if (bookMetadata.description.isNotEmpty) {
+      args.addAll(['-metadata', 'comment=${_escapeMetadataValue(bookMetadata.description)}']);
+      args.addAll(['-metadata', 'description=${_escapeMetadataValue(bookMetadata.description)}']);
+    }
+
+    // Series position
+    if (bookMetadata.seriesPosition.isNotEmpty) {
+      args.addAll(['-metadata', 'track=${_escapeMetadataValue(bookMetadata.seriesPosition)}']);
+    }
+
+    // Language
+    if (bookMetadata.language.isNotEmpty) {
+      args.addAll(['-metadata', 'language=${_escapeMetadataValue(bookMetadata.language)}']);
+    }
+
+    // ISBN if available
+    final isbn = bookMetadata.isbn;
+    if (isbn.isNotEmpty) {
+      args.addAll(['-metadata', 'ISBN=${_escapeMetadataValue(isbn)}']);
+    }
+
+    // Narrator (using composer field)
+    if (bookMetadata.narrator.isNotEmpty) {
+      args.addAll(['-metadata', 'composer=${_escapeMetadataValue(bookMetadata.narrator)}']);
+    }
+  }
+
+  /// Verify that chapters were embedded correctly
+  Future<bool> _verifyChapters(String outputPath, int expectedChapterCount) async {
+    try {
+      Logger.log('Verifying chapters in output file...');
+      
+      if (_systemFFmpegPath == null) return false;
+      
+      // Use FFprobe to check chapters
+      final result = await Process.run(_systemFFmpegPath!.replaceAll('ffmpeg', 'ffprobe'), [
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_chapters',
+        outputPath,
+      ]);
+      
+      if (result.exitCode == 0) {
+        final output = result.stdout.toString();
+        // Count chapter entries in JSON output
+        final chapterCount = RegExp(r'"title"').allMatches(output).length;
+        Logger.log('Found $chapterCount chapters in output file (expected: $expectedChapterCount)');
+        return chapterCount >= expectedChapterCount;
+      }
+      
+      Logger.warning('Could not verify chapters using FFprobe');
+      return false;
+    } catch (e) {
+      Logger.error('Error verifying chapters: $e');
+      return false;
+    }
+  }
+
+  /// Format file size for display
+  String _formatFileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
   }
   
   // Extract just the cover art from a file (existing method)

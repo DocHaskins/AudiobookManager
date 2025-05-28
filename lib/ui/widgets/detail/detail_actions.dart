@@ -10,8 +10,8 @@ import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/ui/widgets/detail/detail_controllers_mixin.dart';
-import 'package:audiobook_organizer/ui/widgets/metadata_search_dialog.dart';
-import 'package:audiobook_organizer/ui/widgets/conversion_progress_dialog.dart';
+import 'package:audiobook_organizer/ui/widgets/dialogs/metadata_search_dialog.dart';
+import 'package:audiobook_organizer/ui/widgets/dialogs/conversion_progress_dialog.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
 class DetailActions {

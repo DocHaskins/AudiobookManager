@@ -7,8 +7,8 @@ import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'package:audiobook_organizer/ui/widgets/library/library_books_view.dart';
 import 'package:audiobook_organizer/ui/widgets/library/library_collections_view.dart';
-import 'package:audiobook_organizer/ui/widgets/audiobook_detail_view.dart';
-import 'package:audiobook_organizer/ui/widgets/collection_detail_view.dart';
+import 'package:audiobook_organizer/ui/widgets/audiobook/audiobook_detail_view.dart';
+import 'package:audiobook_organizer/ui/widgets/collections/collection_detail_view.dart';
 import 'package:audiobook_organizer/utils/library_filter_utils.dart';
 
 class LibraryContentView extends StatefulWidget {

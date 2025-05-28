@@ -4,7 +4,7 @@ import 'package:audiobook_organizer/models/collection.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/collection_manager.dart';
-import '../widgets/audiobook_list_item.dart';
+import '../audiobook/audiobook_list_item.dart';
 import 'dart:io';
 
 class CollectionDetailView extends StatelessWidget {

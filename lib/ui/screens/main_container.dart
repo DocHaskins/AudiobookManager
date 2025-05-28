@@ -4,10 +4,11 @@ import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
-import 'package:audiobook_organizer/ui/widgets/sidebar.dart';
+import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
+import 'package:audiobook_organizer/ui/screens/sidebar.dart';
 import 'package:audiobook_organizer/ui/widgets/library/library_content_view.dart';
-import 'package:audiobook_organizer/ui/widgets/tools_content_view.dart';
-import 'package:audiobook_organizer/ui/widgets/settings_content_view.dart';
+import 'package:audiobook_organizer/ui/widgets/tools/tools_content_view.dart';
+import 'package:audiobook_organizer/ui/widgets/settings/settings_content_view.dart';
 import 'package:audiobook_organizer/utils/library_filter_utils.dart';
 
 enum MainSection {
@@ -21,6 +22,7 @@ class MainContainer extends StatefulWidget {
   final CollectionManager collectionManager;
   final AudioPlayerService playerService;
   final MetadataService metadataService;
+  final List<MetadataProvider> metadataProviders; // ADD THIS LINE
 
   const MainContainer({
     Key? key,
@@ -28,6 +30,7 @@ class MainContainer extends StatefulWidget {
     required this.collectionManager,
     required this.playerService,
     required this.metadataService,
+    required this.metadataProviders, // ADD THIS LINE
   }) : super(key: key);
 
   @override
@@ -133,6 +136,7 @@ class _MainContainerState extends State<MainContainer> {
           collectionManager: widget.collectionManager,
           metadataService: widget.metadataService,
           currentSubsection: _currentSubsection,
+          metadataProviders: widget.metadataProviders,
         );
       case MainSection.settings:
         return SettingsContentView(

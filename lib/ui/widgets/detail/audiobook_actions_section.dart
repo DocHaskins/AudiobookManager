@@ -6,7 +6,7 @@ import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'package:audiobook_organizer/ui/screens/player_screen.dart';
-import 'package:audiobook_organizer/ui/widgets/add_to_collection_dialog.dart';
+import 'package:audiobook_organizer/ui/widgets/collections/add_to_collection_dialog.dart';
 import 'package:audiobook_organizer/ui/widgets/detail/detail_actions.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
