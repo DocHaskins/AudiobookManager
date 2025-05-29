@@ -40,6 +40,7 @@ class Sidebar extends StatefulWidget {
 class _UnifiedSidebarState extends State<Sidebar> {
   String _searchQuery = '';
   bool _showCollections = false;
+  bool _showAuthors = false; // New state for Genre/Author toggle
   SortOption _selectedSortOption = SortOption.title;
   
   // Dynamic categories with counts for library section
@@ -279,9 +280,9 @@ class _UnifiedSidebarState extends State<Sidebar> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSearchBar(),
-          const SizedBox(height: 16),
           _buildViewToggle(context),
+          const SizedBox(height: 16),
+          _buildSearchBar(),
           const SizedBox(height: 16),
           if (!_showCollections) _buildSortDropdown(context),
           const SizedBox(height: 24),
@@ -341,6 +342,36 @@ class _UnifiedSidebarState extends State<Sidebar> {
               'Collections',
               _showCollections,
               () => setState(() => _showCollections = true),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // New method for Genre/Author toggle
+  Widget _buildGenreAuthorToggle(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A2A2A),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildToggleButton(
+              context,
+              'Genres',
+              !_showAuthors,
+              () => setState(() => _showAuthors = false),
+            ),
+          ),
+          Expanded(
+            child: _buildToggleButton(
+              context,
+              'Authors',
+              _showAuthors,
+              () => setState(() => _showAuthors = true),
             ),
           ),
         ],
@@ -455,35 +486,18 @@ class _UnifiedSidebarState extends State<Sidebar> {
           _buildCategoryItem(context, 'Favorites', Icons.favorite),
           _buildCategoryItem(context, 'Recently Added', Icons.new_releases),
           _buildCategoryItem(context, 'In Progress', Icons.play_circle_outline),
-          if (_availableGenres.isNotEmpty) ...[
+          // Add Genre/Artist toggle right before the genres/authors section
+          if (_availableGenres.isNotEmpty || _availableAuthors.isNotEmpty) ...[
             const Divider(color: Color(0xFF2A2A2A), height: 32),
-            _buildSectionTitle('GENRES'),
-            Container(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height * 0.25,
-              ),
-              child: ListView.builder(
-                shrinkWrap: true,
-                physics: const BouncingScrollPhysics(),
-                itemCount: _availableGenres.length,
-                itemBuilder: (context, index) {
-                  final entry = _availableGenres.entries.elementAt(index);
-                  return _buildCategoryItemWithCount(
-                    context,
-                    entry.key,
-                    GenreIconUtils.getGenreIcon(entry.key),
-                    entry.value,
-                  );
-                },
-              ),
-            ),
+            _buildGenreAuthorToggle(context),
+            const SizedBox(height: 16),
           ],
-          if (_availableAuthors.isNotEmpty) ...[
-            const Divider(color: Color(0xFF2A2A2A), height: 32),
+          // Modified section: Show either genres OR authors based on toggle
+          if (_showAuthors && _availableAuthors.isNotEmpty) ...[
             _buildSectionTitle('AUTHORS'),
             Container(
               constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(context).size.height * 0.25,
+                maxHeight: MediaQuery.of(context).size.height * 0.35,
               ),
               child: ListView.builder(
                 shrinkWrap: true,
@@ -495,6 +509,27 @@ class _UnifiedSidebarState extends State<Sidebar> {
                     context,
                     entry.key,
                     Icons.person,
+                    entry.value,
+                  );
+                },
+              ),
+            ),
+          ] else if (!_showAuthors && _availableGenres.isNotEmpty) ...[
+            _buildSectionTitle('GENRES'),
+            Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.35,
+              ),
+              child: ListView.builder(
+                shrinkWrap: true,
+                physics: const BouncingScrollPhysics(),
+                itemCount: _availableGenres.length,
+                itemBuilder: (context, index) {
+                  final entry = _availableGenres.entries.elementAt(index);
+                  return _buildCategoryItemWithCount(
+                    context,
+                    entry.key,
+                    GenreIconUtils.getGenreIcon(entry.key),
                     entry.value,
                   );
                 },

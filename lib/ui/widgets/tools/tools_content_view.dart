@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
+import 'package:audiobook_organizer/services/audio_conversion_service.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/ui/widgets/tools/mp3_merger_tool.dart';
 import 'package:audiobook_organizer/ui/widgets/tools/mp3_batch_converter_tool.dart';
@@ -12,6 +13,7 @@ class ToolsContentView extends StatefulWidget {
   final LibraryManager libraryManager;
   final CollectionManager collectionManager;
   final MetadataService metadataService;
+  final AudioConversionService audioConversionService;
   final String currentSubsection;
   final List<MetadataProvider>? metadataProviders;
 
@@ -20,6 +22,7 @@ class ToolsContentView extends StatefulWidget {
     required this.libraryManager,
     required this.collectionManager,
     required this.metadataService,
+    required this.audioConversionService,
     required this.currentSubsection,
     this.metadataProviders,
   }) : super(key: key);
@@ -62,6 +65,7 @@ class _ToolsContentViewState extends State<ToolsContentView> {
     
     return Mp3MergerTool(
       libraryManager: widget.libraryManager,
+      audioConversionService: widget.audioConversionService,
       metadataProviders: providers,
     );
   }
@@ -71,6 +75,7 @@ class _ToolsContentViewState extends State<ToolsContentView> {
     
     return Mp3BatchConverterTool(
       libraryManager: widget.libraryManager,
+      audioConversionService: widget.audioConversionService,
     );
   }
 
@@ -103,8 +108,100 @@ class _ToolsContentViewState extends State<ToolsContentView> {
                 fontSize: 14,
               ),
             ),
+            const SizedBox(height: 24),
+            
+            // Show available tools with descriptions
+            Container(
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A1A1A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey[800]!),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Available Tools',
+                    style: TextStyle(
+                      color: Colors.grey[300],
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  
+                  _buildToolCard(
+                    icon: Icons.merge_type_rounded,
+                    title: 'MP3 to M4B Merger',
+                    description: 'Combine multiple MP3 files into a single M4B audiobook with chapters',
+                    color: Colors.indigo,
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  _buildToolCard(
+                    icon: Icons.transform,
+                    title: 'MP3 to M4B Batch Converter',
+                    description: 'Convert multiple MP3 audiobooks to M4B format with parallel processing',
+                    color: const Color.fromARGB(255, 39, 176, 69),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildToolCard({
+    required IconData icon,
+    required String title,
+    required String description,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  style: TextStyle(
+                    color: Colors.grey[400],
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

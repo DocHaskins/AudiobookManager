@@ -9,19 +9,22 @@ import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/models/chapter_info.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
+import 'package:audiobook_organizer/services/audio_conversion_service.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/ui/widgets/dialogs/metadata_search_dialog.dart';
-import 'package:audiobook_organizer/ui/widgets/dialogs/conversion_progress_dialog.dart';
+import 'package:audiobook_organizer/utils/audio_processors/base_audio_processor.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 import 'package:audiobook_organizer/utils/file_utils.dart';
 
 class Mp3MergerTool extends StatefulWidget {
   final LibraryManager libraryManager;
+  final AudioConversionService audioConversionService;
   final List<MetadataProvider> metadataProviders;
 
   const Mp3MergerTool({
     Key? key,
     required this.libraryManager,
+    required this.audioConversionService,
     required this.metadataProviders,
   }) : super(key: key);
 
@@ -39,6 +42,10 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
   bool _isProcessing = false;
   String _statusMessage = '';
   
+  // Current processing state
+  ProcessingUpdate? _currentUpdate;
+  StreamSubscription<ProcessingUpdate>? _progressSubscription;
+  
   // Book-level metadata
   String _bookTitle = '';
   String _bookAuthor = '';
@@ -47,7 +54,7 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
   @override
   void initState() {
     super.initState();
-    _initializeService();
+    _initializeServices();
     
     // Debug logging for providers
     Logger.log('=== Mp3MergerTool: InitState ===');
@@ -57,24 +64,27 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
       final provider = widget.metadataProviders[i];
       Logger.log('Provider $i: ${provider.runtimeType}');
       
-      // Check Google Books provider specifically
       if (provider.runtimeType.toString().contains('GoogleBooksProvider')) {
         Logger.log('Found GoogleBooksProvider');
-        // Use reflection-safe approach since we can't cast directly
-        Logger.log('GoogleBooksProvider detected');
       }
     }
     
     if (widget.metadataProviders.isEmpty) {
       Logger.error('NO METADATA PROVIDERS RECEIVED IN MP3 MERGER TOOL!');
-      Logger.error('This means the providers are not being passed correctly from the parent widget');
     }
     
     Logger.log('=== End Mp3MergerTool InitState Debug ===');
   }
 
-  Future<void> _initializeService() async {
+  @override
+  void dispose() {
+    _progressSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initializeServices() async {
     await _metadataService.initialize();
+    await widget.audioConversionService.initialize();
   }
 
   @override
@@ -99,6 +109,11 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
             if (_statusMessage.isNotEmpty) ...[
               const SizedBox(height: 16),
               _buildStatusMessage(),
+            ],
+            // Show progress if processing
+            if (_isProcessing && _currentUpdate != null) ...[
+              const SizedBox(height: 16),
+              _buildProgressSection(),
             ],
             const SizedBox(height: 24),
           ],
@@ -717,6 +732,17 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
                 side: BorderSide(color: Colors.grey[600]!),
               ),
             ),
+            if (_isProcessing) ...[
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: _cancelMerge,
+                icon: const Icon(Icons.cancel, color: Colors.red),
+                label: const Text('Cancel', style: TextStyle(color: Colors.red)),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.red),
+                ),
+              ),
+            ],
           ],
         ),
         
@@ -783,6 +809,101 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
       ),
     );
   }
+
+  Widget _buildProgressSection() {
+    if (!_isProcessing || _currentUpdate == null) return const SizedBox();
+    
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey[800]!),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.merge_type, color: Colors.indigo, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                'Merge Progress',
+                style: TextStyle(
+                  color: Colors.grey[400],
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          // Progress bar
+          LinearProgressIndicator(
+            value: _currentUpdate!.progress,
+            backgroundColor: Colors.grey[700],
+            valueColor: const AlwaysStoppedAnimation<Color>(Colors.indigo),
+          ),
+          const SizedBox(height: 8),
+          
+          // Progress details
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '${(_currentUpdate!.progress * 100).toStringAsFixed(1)}%',
+                style: TextStyle(color: Colors.grey[300]),
+              ),
+              if (_chapters.isNotEmpty)
+                Text(
+                  '${_chapters.length} chapters',
+                  style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          
+          // Current stage
+          Text(
+            _currentUpdate!.stage,
+            style: const TextStyle(
+              color: Colors.indigo,
+              fontSize: 14,
+            ),
+          ),
+          
+          // Additional info
+          if (_currentUpdate!.elapsedTime != null || _currentUpdate!.estimatedTimeRemaining != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                if (_currentUpdate!.elapsedTime != null) ...[
+                  Icon(Icons.timer, color: Colors.grey[500], size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Elapsed: ${_formatDuration(_currentUpdate!.elapsedTime!)}',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                  ),
+                ],
+                if (_currentUpdate!.estimatedTimeRemaining != null) ...[
+                  const SizedBox(width: 16),
+                  Icon(Icons.schedule, color: Colors.grey[500], size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    'ETA: ${_formatDuration(_currentUpdate!.estimatedTimeRemaining!)}',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // FOLDER AND CHAPTER MANAGEMENT
 
   Future<void> _selectFolder() async {
     try {
@@ -861,7 +982,6 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
               _bookAuthor = metadata.authors.first;
             }
             if (_bookTitle.isEmpty) {
-              // Try to extract book title from filename or metadata
               _bookTitle = _extractBookTitle(folderPath, metadata);
             }
             if (_outputFileName.isEmpty) {
@@ -921,6 +1041,8 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
     });
   }
 
+  // METADATA MANAGEMENT
+
   Future<void> _searchOnlineMetadata() async {
     final searchQuery = _bookTitle.isNotEmpty && _bookAuthor.isNotEmpty
         ? '$_bookTitle $_bookAuthor'
@@ -943,7 +1065,6 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
       Logger.log('Search query: "$searchQuery"');
       Logger.log('Available providers: ${widget.metadataProviders.length}');
       
-      // Ensure context is mounted before showing dialog
       if (!mounted) {
         Logger.error('Widget not mounted, cannot search metadata');
         return;
@@ -990,6 +1111,8 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
     }
   }
 
+  // PROCESSING METHODS - Now delegate to AudioConversionService
+
   Future<void> _startMergeProcess() async {
     if (_chapters.isEmpty) return;
 
@@ -1003,44 +1126,92 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
 
     if (outputPath == null) return;
 
+    await _executeMerge(outputPath);
+  }
+
+  Future<void> _executeMerge(String outputPath) async {
     setState(() {
       _isProcessing = true;
       _statusMessage = 'Starting merge process...';
     });
 
     try {
-      // Show progress dialog
-      if (!mounted) return;
-      final progressResult = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => _MergeProgressDialog(
-          chapters: _chapters,
-          outputPath: outputPath,
-          bookMetadata: _bookMetadata ?? _createBasicMetadata(),
-          metadataService: _metadataService,
-        ),
+      // Create book metadata
+      final bookMetadata = _bookMetadata ?? _createBasicMetadata();
+
+      // Start merge operation and listen to progress
+      _progressSubscription = widget.audioConversionService.progressStream?.listen(
+        (update) {
+          if (mounted) {
+            setState(() {
+              _currentUpdate = update;
+              _statusMessage = update.stage;
+            });
+          }
+        },
+        onError: (error) {
+          Logger.error('Error in merge progress stream: $error');
+        },
       );
 
-      if (progressResult == true && mounted) {
+      final result = await widget.audioConversionService.startMergeOperation(
+        chapters: _chapters,
+        outputPath: outputPath,
+        bookMetadata: bookMetadata,
+      );
+
+      // Handle result
+      await _handleMergeResult(result, outputPath);
+
+    } catch (e) {
+      Logger.error('Error in merge process: $e');
+      if (mounted) {
         setState(() {
-          _statusMessage = 'Successfully created M4B file: ${path_util.basename(outputPath)}';
-          _isProcessing = false;
-        });
-        
-        // Offer to add to library
-        await _offerAddToLibrary(outputPath);
-      } else {
-        setState(() {
-          _statusMessage = 'Merge process cancelled or failed';
+          _statusMessage = 'Error during merge: $e';
           _isProcessing = false;
         });
       }
-    } catch (e) {
-      Logger.error('Error in merge process', e);
+    } finally {
+      _progressSubscription?.cancel();
+      _progressSubscription = null;
+    }
+  }
+
+  Future<void> _handleMergeResult(ProcessingResult result, String outputPath) async {
+    if (!mounted) return;
+    
+    setState(() {
+      _isProcessing = false;
+      _currentUpdate = null;
+    });
+
+    if (result.success) {
       setState(() {
-        _statusMessage = 'Error during merge: $e';
+        _statusMessage = 'Successfully created M4B file: ${path_util.basename(outputPath)}';
+      });
+      
+      // Offer to add to library
+      await _offerAddToLibrary(outputPath);
+    } else {
+      setState(() {
+        _statusMessage = 'Merge process failed';
+      });
+      
+      // Show error details
+      if (result.errors.isNotEmpty) {
+        final errorMessages = result.errors.map((e) => e.message).join('\n');
+        _showErrorSnackBar('Merge failed: $errorMessages');
+      }
+    }
+  }
+
+  Future<void> _cancelMerge() async {
+    await widget.audioConversionService.cancelCurrentOperation();
+    if (mounted) {
+      setState(() {
+        _statusMessage = 'Merge process cancelled';
         _isProcessing = false;
+        _currentUpdate = null;
       });
     }
   }
@@ -1122,6 +1293,8 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
     }
   }
 
+  // UTILITY METHODS
+
   void _clearFolder() {
     setState(() {
       _selectedFolder = null;
@@ -1154,7 +1327,6 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
     }
   }
 
-  // Helper methods
   String _getTotalDuration() {
     final total = _getTotalDurationObject();
     final hours = total.inHours;
@@ -1220,26 +1392,16 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
     return a.compareTo(b);
   }
 
-  void _showErrorSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        duration: const Duration(seconds: 4),
-      ),
-    );
-  }
-
-  void _showSuccessSnackBar(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 4),
-      ),
-    );
+  String _formatDuration(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    } else {
+      return '$minutes:${seconds.toString().padLeft(2, '0')}';
+    }
   }
 
   Future<void> _clearAllData() async {
@@ -1299,197 +1461,33 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
         _statusMessage = '';
         _isScanning = false;
         _isProcessing = false;
+        _currentUpdate = null;
       });
       
       _showSuccessSnackBar('All data cleared. Ready for a new merge project!');
       Logger.log('MP3 Merger: All data cleared by user');
     }
   }
-}
 
-// Progress Dialog for the merge process
-class _MergeProgressDialog extends StatefulWidget {
-  final List<ChapterInfo> chapters;
-  final String outputPath;
-  final AudiobookMetadata bookMetadata;
-  final MetadataService metadataService;
-
-  const _MergeProgressDialog({
-    required this.chapters,
-    required this.outputPath,
-    required this.bookMetadata,
-    required this.metadataService,
-  });
-
-  @override
-  State<_MergeProgressDialog> createState() => _MergeProgressDialogState();
-}
-
-class _MergeProgressDialogState extends State<_MergeProgressDialog> {
-  String _currentStage = 'Preparing merge process...';
-  double _progress = 0.0;
-  bool _isComplete = false;
-  String? _errorMessage;
-
-  @override
-  void initState() {
-    super.initState();
-    _startMergeProcess();
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
-  Future<void> _startMergeProcess() async {
-    try {
-      final success = await widget.metadataService.mergeMP3FilesToM4B(
-        widget.chapters,
-        widget.outputPath,
-        widget.bookMetadata,
-        onProgress: (stage, progress) {
-          if (mounted) {
-            setState(() {
-              _currentStage = stage;
-              _progress = progress;
-            });
-          }
-        },
-      );
-
-      if (mounted) {
-        setState(() {
-          _isComplete = true;
-          if (success) {
-            _currentStage = 'Merge completed successfully!';
-            _progress = 1.0;
-          } else {
-            _errorMessage = 'Merge process failed';
-          }
-        });
-
-        // Auto-close after success
-        if (success) {
-          await Future.delayed(const Duration(seconds: 2));
-          if (mounted) {
-            Navigator.of(context).pop(true);
-          }
-        }
-      }
-    } catch (e) {
-      Logger.error('Error in merge process', e);
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'Error: $e';
-          _isComplete = true;
-        });
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final outputFileName = path_util.basename(widget.outputPath);
-    
-    return AlertDialog(
-      backgroundColor: const Color(0xFF1A1A1A),
-      title: Row(
-        children: [
-          Icon(
-            _isComplete 
-                ? (_errorMessage == null ? Icons.check_circle : Icons.error)
-                : Icons.merge_type,
-            color: _isComplete 
-                ? (_errorMessage == null ? Colors.green : Colors.red)
-                : Colors.blue,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              _isComplete 
-                  ? (_errorMessage == null ? 'Merge Complete' : 'Merge Failed')
-                  : 'Merging MP3 Files',
-              style: const TextStyle(color: Colors.white, fontSize: 18),
-            ),
-          ),
-        ],
+  void _showSuccessSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 4),
       ),
-      content: SizedBox(
-        width: 400,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              outputFileName,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            
-            // Progress bar
-            LinearProgressIndicator(
-              value: _progress,
-              backgroundColor: Colors.grey[700],
-              valueColor: AlwaysStoppedAnimation<Color>(
-                _isComplete 
-                    ? (_errorMessage == null ? Colors.green : Colors.red)
-                    : Colors.blue,
-              ),
-            ),
-            const SizedBox(height: 8),
-            
-            // Progress percentage
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '${(_progress * 100).toStringAsFixed(1)}%',
-                  style: TextStyle(color: Colors.grey[300]),
-                ),
-                Text(
-                  '${widget.chapters.length} chapters',
-                  style: TextStyle(color: Colors.grey[400], fontSize: 12),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            
-            // Current stage
-            if (_errorMessage != null) ...[
-              Text(
-                _errorMessage!,
-                style: const TextStyle(color: Colors.red),
-              ),
-            ] else ...[
-              Text(
-                _currentStage,
-                style: TextStyle(
-                  color: _isComplete ? Colors.green : Colors.grey[300],
-                  fontSize: 14,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        if (_isComplete || _errorMessage != null) ...[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(_errorMessage == null),
-            style: TextButton.styleFrom(
-              foregroundColor: _errorMessage == null ? Colors.green : Colors.red,
-            ),
-            child: Text(_errorMessage != null ? 'Close' : 'Done'),
-          ),
-        ] else ...[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            style: TextButton.styleFrom(
-              foregroundColor: Colors.red,
-            ),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ],
     );
   }
 }

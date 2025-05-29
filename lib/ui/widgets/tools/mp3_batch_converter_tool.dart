@@ -1,104 +1,136 @@
 // lib/ui/widgets/tools/mp3_batch_converter_tool.dart
 import 'dart:io';
 import 'dart:async';
-import 'dart:collection';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path_util;
 import 'package:audiobook_organizer/models/audiobook_file.dart';
-import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
-import 'package:audiobook_organizer/services/metadata_service.dart';
-import 'package:audiobook_organizer/ui/widgets/dialogs/conversion_progress_dialog.dart';
+import 'package:audiobook_organizer/services/audio_conversion_service.dart';
+import 'package:audiobook_organizer/utils/audio_processors/base_audio_processor.dart';
+import 'package:audiobook_organizer/utils/system_optimization/hardware_detector.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
 class Mp3BatchConverterTool extends StatefulWidget {
   final LibraryManager libraryManager;
+  final AudioConversionService audioConversionService;
 
   const Mp3BatchConverterTool({
     Key? key,
     required this.libraryManager,
+    required this.audioConversionService,
   }) : super(key: key);
 
   @override
   State<Mp3BatchConverterTool> createState() => _Mp3BatchConverterToolState();
 }
 
-class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
-  final MetadataService _metadataService = MetadataService();
-  
+class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> with TickerProviderStateMixin {
   List<AudiobookFile> _mp3Files = [];
   Set<String> _selectedFiles = {};
   bool _isLoading = true;
   bool _isConverting = false;
-  bool _isCancelled = false;
   String _statusMessage = '';
-  
-  // Conversion progress tracking
-  int _totalToConvert = 0;
-  int _convertedCount = 0;
-  int _activeConversions = 0;
-  Map<String, double> _fileProgress = {}; // Track progress for each file
-  Map<String, String> _fileStatus = {}; // Track status for each file (converting, done, failed)
-  Map<String, String> _errorMessages = {}; // Track error messages for failed files
-  
-  // Parallel processing settings
-  int _parallelJobs = 1; // Default to 1 for compatibility, but will be updated
-  int _maxParallelJobs = 1;
-  static const int _maxSafeParallelJobs = 8; // Safety limit to prevent memory issues
-  
-  // Quality settings
-  String _selectedBitrate = '128k'; // Default to higher quality
-  final List<String> _bitrateOptions = ['64k', '96k', '128k', '160k', '192k', '256k'];
+
+  bool _isSettingsExpanded = false;
+  bool _showTips = false;
   bool _preserveOriginalBitrate = true;
   
-  // Performance tracking
+  // Enhanced progress tracking
+  ProcessingUpdate? _currentUpdate;
+  StreamSubscription<ProcessingUpdate>? _progressSubscription;
   DateTime? _conversionStartTime;
-  Duration _totalElapsedTime = Duration.zero;
-  Timer? _elapsedTimer;
+  Timer? _progressTimer;
+  
+  // Individual file progress tracking with enhanced data
+  Map<String, FileProgressInfo> _fileProgress = {};
+  List<String> _processingQueue = [];
+  int _completedCount = 0;
+  int _failedCount = 0;
+  
+  // Performance metrics
+  double _overallProgress = 0.0;
+  String _currentSpeed = '';
+  Duration _elapsedTime = Duration.zero;
+  Duration? _estimatedTimeRemaining;
+  
+  // Animation controllers for smooth progress
+  late AnimationController _progressAnimationController;
+  late Animation<double> _progressAnimation;
+  
+  // Quality settings
+  String _selectedBitrate = '128k';
+  final List<String> _bitrateOptions = ['64k', '96k', '128k', '160k', '192k', '256k'];
+  
+  // System capabilities and settings
+  int _parallelJobs = 1;
+  int _maxParallelJobs = 1;
+  static const int _maxSafeParallelJobs = 8;
   
   // Filter and sort options
-  String _sortBy = 'title'; // 'title', 'author', 'size', 'date'
+  String _sortBy = 'title';
   bool _sortAscending = true;
   String _filterText = '';
   
   @override
   void initState() {
     super.initState();
-    _initializeService();
-    _detectSystemCapabilities();
+    _progressAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _progressAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _progressAnimationController, curve: Curves.easeInOut),
+    );
+    _initializeServices();
   }
 
   @override
   void dispose() {
-    _elapsedTimer?.cancel();
+    _progressSubscription?.cancel();
+    _progressTimer?.cancel();
+    _progressAnimationController.dispose();
     super.dispose();
   }
 
-  Future<void> _initializeService() async {
-    await _metadataService.initialize();
+  Future<void> _initializeServices() async {
+    // First initialize the audio conversion service
+    await widget.audioConversionService.initialize();
+    
+    // Then detect system capabilities
+    _detectSystemCapabilities();
+    
+    // Finally load MP3 files
     await _loadMp3Files();
   }
 
-  Future<void> _detectSystemCapabilities() async {
-    // Detect number of CPU cores
-    final cpuCores = Platform.numberOfProcessors;
-    setState(() {
-      // Limit max parallel jobs to prevent memory issues
-      _maxParallelJobs = cpuCores.clamp(1, _maxSafeParallelJobs);
-      // Set default parallel jobs conservatively
-      // For 8+ cores: 3-4 jobs
-      // For 4-6 cores: 2 jobs  
-      // For 1-3 cores: 1 job
-      if (cpuCores >= 8) {
-        _parallelJobs = 3;
-      } else if (cpuCores >= 4) {
-        _parallelJobs = 2;
-      } else {
-        _parallelJobs = 1;
-      }
-    });
-    Logger.log('System has $cpuCores CPU cores. Max parallel: $_maxParallelJobs, Default: $_parallelJobs');
-    Logger.log('Memory safety limit enforced: Maximum $_maxSafeParallelJobs parallel conversions');
+  void _detectSystemCapabilities() {
+    final capabilities = widget.audioConversionService.systemCapabilities;
+    if (capabilities != null) {
+      setState(() {
+        // Ensure _maxParallelJobs is always at least 1
+        _maxParallelJobs = capabilities.cpuCores.clamp(1, _maxSafeParallelJobs);
+        
+        // Set default parallel jobs based on cores, ensuring it's within valid range
+        if (capabilities.cpuCores >= 8) {
+          _parallelJobs = 3;
+        } else if (capabilities.cpuCores >= 4) {
+          _parallelJobs = 2;
+        } else {
+          _parallelJobs = 1;
+        }
+        
+        // Ensure _parallelJobs doesn't exceed _maxParallelJobs
+        _parallelJobs = _parallelJobs.clamp(1, _maxParallelJobs);
+      });
+      Logger.log('System capabilities detected: ${capabilities.cpuCores} cores, parallel jobs: $_parallelJobs, max: $_maxParallelJobs');
+    } else {
+      // Fallback values if capabilities detection fails
+      setState(() {
+        _maxParallelJobs = 4; // Safe default
+        _parallelJobs = 1;    // Conservative default
+      });
+      Logger.warning('System capabilities not detected, using fallback values');
+    }
   }
 
   @override
@@ -110,15 +142,15 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
         children: [
           _buildHeader(),
           const SizedBox(height: 24),
-          _buildSettingsPanel(),
-          const SizedBox(height: 16),
-          _buildToolbar(),
-          const SizedBox(height: 16),
           _buildStats(),
           const SizedBox(height: 16),
-          Expanded(
-            child: _buildFilesList(),
-          ),
+          _buildSettingsPanel(),
+          const SizedBox(height: 16),
+          if (_isConverting) _buildProgressPanel(),
+          if (_isConverting) const SizedBox(height: 16),
+          _buildToolbar(),          
+          const SizedBox(height: 16),
+          Expanded(child: _buildFilesList()),
           _buildBottomActions(),
         ],
       ),
@@ -168,305 +200,497 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
     );
   }
 
+  Widget _buildProgressPanel() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color.fromARGB(255, 39, 176, 69).withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              const Icon(Icons.transform, color: Color.fromARGB(255, 39, 176, 69), size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'Conversion Progress',
+                style: TextStyle(
+                  color: Color.fromARGB(255, 39, 176, 69),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+              const Spacer(),
+              if (_currentSpeed.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    _currentSpeed,
+                    style: const TextStyle(color: Colors.blue, fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          // Overall progress bar
+          AnimatedBuilder(
+            animation: _progressAnimation,
+            builder: (context, child) {
+              return Column(
+                children: [
+                  LinearProgressIndicator(
+                    value: _overallProgress,
+                    backgroundColor: Colors.grey[800],
+                    valueColor: const AlwaysStoppedAnimation<Color>(Color.fromARGB(255, 39, 176, 69)),
+                    minHeight: 8,
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '${(_overallProgress * 100).toStringAsFixed(1)}%',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        '$_completedCount / ${_selectedFiles.length} files',
+                        style: TextStyle(color: Colors.grey[400]),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // Time information
+          Row(
+            children: [
+              // Elapsed time
+              Expanded(
+                child: _buildTimeCard(
+                  icon: Icons.timer,
+                  label: 'Elapsed',
+                  value: _formatDuration(_elapsedTime),
+                  color: Colors.blue,
+                ),
+              ),
+              const SizedBox(width: 12),
+              
+              // Estimated time remaining
+              Expanded(
+                child: _buildTimeCard(
+                  icon: Icons.schedule,
+                  label: 'ETA',
+                  value: _estimatedTimeRemaining != null 
+                      ? _formatDuration(_estimatedTimeRemaining!)
+                      : '--:--',
+                  color: Colors.orange,
+                ),
+              ),
+              const SizedBox(width: 12),
+              
+              // Status
+              Expanded(
+                child: _buildTimeCard(
+                  icon: Icons.info,
+                  label: 'Status',
+                  value: _getShortStatus(),
+                  color: const Color.fromARGB(255, 39, 176, 69),
+                ),
+              ),
+            ],
+          ),
+          
+          const SizedBox(height: 16),
+          
+          // Current status message
+          if (_statusMessage.isNotEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.withOpacity(0.3)),
+              ),
+              child: Text(
+                _statusMessage,
+                style: TextStyle(color: Colors.blue[300], fontSize: 14),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeCard({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              color: color.withOpacity(0.8),
+              fontSize: 11,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getShortStatus() {
+    if (_currentUpdate?.stage.isNotEmpty == true) {
+      final stage = _currentUpdate!.stage;
+      if (stage.contains('Converting')) return 'Converting';
+      if (stage.contains('Processing')) return 'Processing';
+      if (stage.contains('Finalizing')) return 'Finalizing';
+      return 'Working';
+    }
+    return 'Starting';
+  }
+
   Widget _buildSettingsPanel() {
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey[800]!),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.settings, color: Colors.grey[400], size: 20),
-              const SizedBox(width: 8),
-              Text(
-                'Conversion Settings',
-                style: TextStyle(
-                  color: Colors.grey[400],
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
+          // Header - always visible and clickable
+          InkWell(
+            onTap: () {
+              setState(() {
+                _isSettingsExpanded = !_isSettingsExpanded;
+              });
+            },
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(Icons.settings, color: Colors.grey[400], size: 20),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Conversion Settings',
+                    style: TextStyle(
+                      color: Colors.grey[400],
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    onPressed: _showHardwareOptimizationInfo,
+                    icon: const Icon(Icons.memory, size: 20),
+                    color: Colors.blue,
+                    tooltip: 'Hardware Optimization Info',
+                  ),
+                  Icon(
+                    _isSettingsExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey[400],
+                    size: 20,
+                  ),
+                ],
               ),
-              const Spacer(),
-              // Hardware info button
-              IconButton(
-                onPressed: _showHardwareOptimizationInfo,
-                icon: const Icon(Icons.memory, size: 20),
-                color: Colors.blue,
-                tooltip: 'Hardware Optimization Info',
-              ),
-            ],
+            ),
           ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              // Parallel jobs setting
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.speed, color: Colors.blue[400], size: 16),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Parallel Conversions',
-                          style: TextStyle(color: Colors.grey[300], fontSize: 14),
-                        ),
-                        const SizedBox(width: 8),
-                        Tooltip(
-                          message: 'Number of files to convert simultaneously.\n'
-                                  'Higher values use more CPU and memory.\n'
-                                  'Recommended: 1-4 for most systems.\n'
-                                  'Each process uses ~200-500MB RAM.',
-                          child: Icon(Icons.info_outline, color: Colors.grey[600], size: 16),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Text(
-                          '1',
-                          style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            value: _parallelJobs.toDouble(),
-                            min: 1,
-                            max: _maxParallelJobs.toDouble(),
-                            divisions: _maxParallelJobs - 1,
-                            label: _parallelJobs.toString(),
-                            activeColor: _parallelJobs <= 4 ? Colors.blue : 
-                                       (_parallelJobs <= 6 ? Colors.orange : Colors.red),
-                            onChanged: _isConverting ? null : (value) {
-                              setState(() {
-                                _parallelJobs = value.round();
-                              });
-                            },
-                          ),
-                        ),
-                        Text(
-                          _maxParallelJobs.toString(),
-                          style: TextStyle(color: Colors.grey[500], fontSize: 12),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _parallelJobs <= 4 ? Colors.blue.withOpacity(0.2) :
-                                   (_parallelJobs <= 6 ? Colors.orange.withOpacity(0.2) : 
-                                    Colors.red.withOpacity(0.2)),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            _parallelJobs.toString(),
-                            style: TextStyle(
-                              color: _parallelJobs <= 4 ? Colors.blue :
-                                     (_parallelJobs <= 6 ? Colors.orange : Colors.red),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_parallelJobs > 4) ...[
-                      const SizedBox(height: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _parallelJobs > 6 ? Colors.red.withOpacity(0.1) : 
-                                 Colors.orange.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Row(
+          // Collapsible content
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 300),
+            crossFadeState: _isSettingsExpanded 
+                ? CrossFadeState.showSecond 
+                : CrossFadeState.showFirst,
+            firstChild: const SizedBox(),
+            secondChild: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Divider(color: Colors.grey),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      // Parallel jobs setting
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(
-                              Icons.warning, 
-                              color: _parallelJobs > 6 ? Colors.red : Colors.orange,
-                              size: 12,
+                            Row(
+                              children: [
+                                Icon(Icons.speed, color: Colors.blue[400], size: 16),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Parallel Conversions',
+                                  style: TextStyle(color: Colors.grey[300], fontSize: 14),
+                                ),
+                                const SizedBox(width: 8),
+                                Tooltip(
+                                  message: 'Number of files to convert simultaneously.\n'
+                                          'Higher values use more CPU and memory.\n'
+                                          'Recommended: 1-4 for most systems.\n'
+                                          'Each process uses ~200-500MB RAM.',
+                                  child: Icon(Icons.info_outline, color: Colors.grey[600], size: 16),
+                                ),
+                              ],
                             ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _parallelJobs > 6 
-                                  ? 'High memory usage! May cause crashes.'
-                                  : 'Moderate memory usage. Monitor system.',
-                              style: TextStyle(
-                                color: _parallelJobs > 6 ? Colors.red : Colors.orange,
-                                fontSize: 11,
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Text('1', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                                Expanded(
+                                  child: Slider(
+                                    value: _parallelJobs.toDouble(),
+                                    min: 1,
+                                    max: _maxParallelJobs.toDouble(),
+                                    divisions: _maxParallelJobs > 1 ? _maxParallelJobs - 1 : null,
+                                    label: _parallelJobs.toString(),
+                                    activeColor: _parallelJobs <= 4 ? Colors.blue : 
+                                              (_parallelJobs <= 6 ? Colors.orange : Colors.red),
+                                    onChanged: _isConverting ? null : (value) {
+                                      setState(() {
+                                        _parallelJobs = value.round();
+                                      });
+                                    },
+                                  ),
+                                ),
+                                Text(_maxParallelJobs.toString(), style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: _parallelJobs <= 4 ? Colors.blue.withOpacity(0.2) :
+                                          (_parallelJobs <= 6 ? Colors.orange.withOpacity(0.2) : 
+                                            Colors.red.withOpacity(0.2)),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    _parallelJobs.toString(),
+                                    style: TextStyle(
+                                      color: _parallelJobs <= 4 ? Colors.blue :
+                                            (_parallelJobs <= 6 ? Colors.orange : Colors.red),
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (_parallelJobs > 4) ...[
+                              const SizedBox(height: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: _parallelJobs > 6 ? Colors.red.withOpacity(0.1) : 
+                                        Colors.orange.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.warning, 
+                                      color: _parallelJobs > 6 ? Colors.red : Colors.orange,
+                                      size: 12,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      _parallelJobs > 6 
+                                          ? 'High memory usage! May cause crashes.'
+                                          : 'Moderate memory usage. Monitor system.',
+                                      style: TextStyle(
+                                        color: _parallelJobs > 6 ? Colors.red : Colors.orange,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 32),
+                      // Audio quality setting
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.high_quality, color: Colors.green[400], size: 16),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Audio Quality',
+                                  style: TextStyle(color: Colors.grey[300], fontSize: 14),
+                                ),
+                              ],
                             ),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Checkbox(
+                                  value: _preserveOriginalBitrate,
+                                  onChanged: _isConverting ? null : (value) {
+                                    setState(() {
+                                      _preserveOriginalBitrate = value ?? true;
+                                    });
+                                  },
+                                  activeColor: Colors.green,
+                                ),
+                                Text(
+                                  'Preserve Original',
+                                  style: TextStyle(color: Colors.grey[300], fontSize: 12),
+                                ),
+                              ],
+                            ),
+                            // Only show dropdown when preserve original is false
+                            if (!_preserveOriginalBitrate) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF2A2A2A),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: DropdownButton<String>(
+                                  value: _selectedBitrate,
+                                  isExpanded: true,
+                                  underline: const SizedBox(),
+                                  dropdownColor: const Color(0xFF2A2A2A),
+                                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                                  items: _bitrateOptions.map((bitrate) {
+                                    String label = bitrate;
+                                    if (bitrate == '64k') label += ' (Smallest)';
+                                    if (bitrate == '128k') label += ' (Recommended)';
+                                    if (bitrate == '256k') label += ' (Highest)';
+                                    return DropdownMenuItem(
+                                      value: bitrate,
+                                      child: Text(label),
+                                    );
+                                  }).toList(),
+                                  onChanged: _isConverting ? null : (value) {
+                                    if (value != null) {
+                                      setState(() {
+                                        _selectedBitrate = value;
+                                      });
+                                    }
+                                  },
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
                     ],
-                  ],
-                ),
-              ),
-              const SizedBox(width: 32),
-              // Bitrate setting
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.high_quality, color: Colors.green[400], size: 16),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Audio Quality',
-                          style: TextStyle(color: Colors.grey[300], fontSize: 14),
-                        ),
-                      ],
+                  ),
+                  const SizedBox(height: 16),
+                  // Performance tips - collapsible
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.withOpacity(0.3)),
                     ),
-                    const SizedBox(height: 8),
-                    Row(
+                    child: Column(
                       children: [
-                        Expanded(
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF2A2A2A),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: DropdownButton<String>(
-                              value: _selectedBitrate,
-                              isExpanded: true,
-                              underline: const SizedBox(),
-                              dropdownColor: const Color(0xFF2A2A2A),
-                              style: const TextStyle(color: Colors.white, fontSize: 14),
-                              items: _bitrateOptions.map((bitrate) {
-                                String label = bitrate;
-                                if (bitrate == '64k') label += ' (Smallest)';
-                                if (bitrate == '128k') label += ' (Recommended)';
-                                if (bitrate == '256k') label += ' (Highest)';
-                                return DropdownMenuItem(
-                                  value: bitrate,
-                                  child: Text(label),
-                                );
-                              }).toList(),
-                              onChanged: _isConverting ? null : (value) {
-                                if (value != null) {
-                                  setState(() {
-                                    _selectedBitrate = value;
-                                    _preserveOriginalBitrate = false;
-                                  });
-                                }
-                              },
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              _showTips = !_showTips;
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(8),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                Icon(Icons.tips_and_updates, color: Colors.blue[400], size: 16),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Performance Tips',
+                                  style: TextStyle(
+                                    color: Colors.blue[400],
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const Spacer(),
+                                Icon(
+                                  _showTips ? Icons.expand_less : Icons.expand_more,
+                                  color: Colors.blue[400],
+                                  size: 16,
+                                ),
+                              ],
                             ),
                           ),
                         ),
-                        const SizedBox(width: 16),
-                        Row(
-                          children: [
-                            Checkbox(
-                              value: _preserveOriginalBitrate,
-                              onChanged: _isConverting ? null : (value) {
-                                setState(() {
-                                  _preserveOriginalBitrate = value ?? false;
-                                });
-                              },
-                              activeColor: Colors.green,
+                        AnimatedCrossFade(
+                          duration: const Duration(milliseconds: 200),
+                          crossFadeState: _showTips 
+                              ? CrossFadeState.showSecond 
+                              : CrossFadeState.showFirst,
+                          firstChild: const SizedBox(),
+                          secondChild: Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Divider(color: Colors.blue),
+                                const SizedBox(height: 8),
+                                Text('• Use SSD storage for 2-3x faster conversion', 
+                                    style: TextStyle(color: Colors.blue[300], fontSize: 12)),
+                                Text('• Close other applications to free up memory', 
+                                    style: TextStyle(color: Colors.blue[300], fontSize: 12)),
+                                Text('• Disable antivirus scanning on working directories', 
+                                    style: TextStyle(color: Colors.blue[300], fontSize: 12)),
+                                Text('• For 400+ files: Use 3-4 parallel conversions maximum', 
+                                    style: TextStyle(color: Colors.blue[300], fontSize: 12)),
+                              ],
                             ),
-                            Text(
-                              'Preserve Original',
-                              style: TextStyle(color: Colors.grey[300], fontSize: 12),
-                            ),
-                          ],
+                          ),
                         ),
                       ],
                     ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Performance optimization tips
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.blue.withOpacity(0.3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.tips_and_updates, color: Colors.blue[400], size: 16),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Performance Tips',
-                      style: TextStyle(
-                        color: Colors.blue[400],
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '• Use SSD storage for 2-3x faster conversion',
-                  style: TextStyle(color: Colors.blue[300], fontSize: 12),
-                ),
-                Text(
-                  '• Close other applications to free up memory',
-                  style: TextStyle(color: Colors.blue[300], fontSize: 12),
-                ),
-                Text(
-                  '• Disable antivirus scanning on working directories',
-                  style: TextStyle(color: Colors.blue[300], fontSize: 12),
-                ),
-                Text(
-                  '• For 400+ files: Use 3-4 parallel conversions maximum',
-                  style: TextStyle(color: Colors.blue[300], fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-          if (_isConverting) ...[
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Color.fromARGB(255, 39, 176, 69).withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.speed, color: Color.fromARGB(255, 39, 176, 69), size: 16),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Active conversions: $_activeConversions / $_parallelJobs',
-                    style: const TextStyle(color: Color.fromARGB(255, 39, 176, 69), fontSize: 12),
                   ),
-                  const SizedBox(width: 16),
-                  const Icon(Icons.timer, color: Color.fromARGB(255, 39, 176, 69), size: 16),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Elapsed: ${_formatDuration(_totalElapsedTime)}',
-                    style: const TextStyle(color: Color.fromARGB(255, 39, 176, 69), fontSize: 12),
-                  ),
-                  if (_convertedCount > 0 && _totalToConvert > _convertedCount) ...[
-                    const SizedBox(width: 16),
-                    const Icon(Icons.schedule, color: Color.fromARGB(255, 39, 176, 69), size: 16),
-                    const SizedBox(width: 8),
-                    Text(
-                      'ETA: ${_calculateETA()}',
-                      style: const TextStyle(color: Color.fromARGB(255, 39, 176, 69), fontSize: 12),
-                    ),
-                  ],
                 ],
               ),
             ),
-          ],
+          ),
         ],
       ),
     );
@@ -571,9 +795,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
 
   Widget _buildStats() {
     final filteredFiles = _getFilteredFiles();
-    final totalSize = filteredFiles.fold<int>(
-      0, (sum, file) => sum + file.fileSize
-    );
+    final totalSize = filteredFiles.fold<int>(0, (sum, file) => sum + file.fileSize);
     
     return Container(
       padding: const EdgeInsets.all(16),
@@ -605,17 +827,18 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
           ),
           if (_isConverting) ...[
             _buildStatItem(
-              icon: Icons.published_with_changes,
-              label: 'Progress',
-              value: '$_convertedCount / $_totalToConvert',
+              icon: Icons.check_circle,
+              label: 'Completed',
+              value: _completedCount.toString(),
               color: const Color.fromARGB(255, 39, 176, 69),
             ),
-            _buildStatItem(
-              icon: Icons.speed,
-              label: 'Speed',
-              value: _calculateSpeed(),
-              color: Colors.cyan,
-            ),
+            if (_failedCount > 0)
+              _buildStatItem(
+                icon: Icons.error,
+                label: 'Failed',
+                value: _failedCount.toString(),
+                color: Colors.red,
+              ),
           ],
         ],
       ),
@@ -654,9 +877,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
 
   Widget _buildFilesList() {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     final filteredFiles = _getFilteredFiles();
@@ -703,13 +924,11 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                 topLeft: Radius.circular(12),
                 topRight: Radius.circular(12),
               ),
-              border: Border(
-                bottom: BorderSide(color: Colors.grey[800]!),
-              ),
+              border: Border(bottom: BorderSide(color: Colors.grey[800]!)),
             ),
             child: Row(
               children: [
-                const SizedBox(width: 40), // Checkbox space
+                const SizedBox(width: 40),
                 Expanded(
                   flex: 3,
                   child: Text(
@@ -755,7 +974,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                 ),
                 const SizedBox(width: 16),
                 SizedBox(
-                  width: 120,
+                  width: 150,
                   child: Text(
                     'Status',
                     style: TextStyle(
@@ -786,17 +1005,12 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
 
   Widget _buildFileItem(AudiobookFile file) {
     final isSelected = _selectedFiles.contains(file.path);
-    final isConverting = _fileStatus[file.path] == 'converting';
-    final isDone = _fileStatus[file.path] == 'done';
-    final isFailed = _fileStatus[file.path] == 'failed';
-    final progress = _fileProgress[file.path] ?? 0.0;
+    final progressInfo = _fileProgress[file.path];
     
     return Container(
       decoration: BoxDecoration(
         color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
-        border: Border(
-          bottom: BorderSide(color: Colors.grey[800]!),
-        ),
+        border: Border(bottom: BorderSide(color: Colors.grey[800]!)),
       ),
       child: Material(
         color: Colors.transparent,
@@ -877,10 +1091,10 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                 ),
                 const SizedBox(width: 16),
                 
-                // Status/Progress
+                // Enhanced status display
                 SizedBox(
-                  width: 120,
-                  child: _buildFileStatus(isConverting, isDone, isFailed, progress),
+                  width: 150,
+                  child: _buildEnhancedFileStatus(file, progressInfo),
                 ),
               ],
             ),
@@ -890,61 +1104,102 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
     );
   }
 
-  Widget _buildFileStatus(bool isConverting, bool isDone, bool isFailed, double progress) {
-    if (isDone) {
-      return Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.check_circle, color: Colors.green, size: 16),
-          const SizedBox(width: 4),
-          Text(
-            'Completed',
-            style: TextStyle(color: Colors.green[400], fontSize: 12),
-          ),
-        ],
-      );
+  Widget _buildEnhancedFileStatus(AudiobookFile file, FileProgressInfo? progressInfo) {
+    if (progressInfo == null) {
+      return const SizedBox();
     }
     
-    if (isFailed) {
-      final errorMsg = _errorMessages[_fileStatus.entries
-          .firstWhere((e) => e.value == 'failed')
-          .key] ?? 'Failed';
-      return Tooltip(
-        message: errorMsg,
-        child: Row(
+    switch (progressInfo.status) {
+      case FileStatus.waiting:
+        return Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error, color: Colors.red, size: 16),
+            Icon(Icons.schedule, color: Colors.grey[500], size: 16),
             const SizedBox(width: 4),
             Text(
-              'Failed',
-              style: TextStyle(color: Colors.red[400], fontSize: 12),
+              'Waiting...',
+              style: TextStyle(color: Colors.grey[500], fontSize: 12),
             ),
           ],
-        ),
-      );
-    }
-    
-    if (isConverting) {
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          LinearProgressIndicator(
-            value: progress,
-            backgroundColor: Colors.grey[800],
-            valueColor: const AlwaysStoppedAnimation<Color>(Color.fromARGB(255, 39, 176, 69)),
-            minHeight: 4,
+        );
+        
+      case FileStatus.converting:
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: LinearProgressIndicator(
+                    value: progressInfo.progress,
+                    backgroundColor: Colors.grey[800],
+                    valueColor: const AlwaysStoppedAnimation<Color>(Color.fromARGB(255, 39, 176, 69)),
+                    minHeight: 4,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${(progressInfo.progress * 100).toStringAsFixed(0)}%',
+                  style: const TextStyle(color: Color.fromARGB(255, 39, 176, 69), fontSize: 11),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Converting',
+                  style: TextStyle(color: Colors.grey[400], fontSize: 10),
+                ),
+                if (progressInfo.speed.isNotEmpty)
+                  Text(
+                    progressInfo.speed,
+                    style: const TextStyle(color: Color.fromARGB(255, 39, 176, 69), fontSize: 10),
+                  ),
+              ],
+            ),
+          ],
+        );
+        
+      case FileStatus.completed:
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.check_circle, color: Colors.green, size: 16),
+            const SizedBox(width: 4),
+            Column(
+              children: [
+                Text(
+                  'Completed',
+                  style: TextStyle(color: Colors.green[400], fontSize: 12),
+                ),
+                if (progressInfo.elapsedTime != null)
+                  Text(
+                    _formatDuration(progressInfo.elapsedTime!),
+                    style: TextStyle(color: Colors.grey[500], fontSize: 10),
+                  ),
+              ],
+            ),
+          ],
+        );
+        
+      case FileStatus.failed:
+        return Tooltip(
+          message: progressInfo.errorMessage ?? 'Unknown error',
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error, color: Colors.red, size: 16),
+              const SizedBox(width: 4),
+              Text(
+                'Failed',
+                style: TextStyle(color: Colors.red[400], fontSize: 12),
+              ),
+            ],
           ),
-          const SizedBox(height: 4),
-          Text(
-            '${(progress * 100).toStringAsFixed(1)}%',
-            style: const TextStyle(color: Color.fromARGB(255, 39, 176, 69), fontSize: 11),
-          ),
-        ],
-      );
+        );
     }
-    
-    return const SizedBox();
   }
 
   Widget _buildBottomActions() {
@@ -959,45 +1214,28 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
       ),
       child: Column(
         children: [
-          if (_statusMessage.isNotEmpty) ...[
+          if (_statusMessage.isNotEmpty && !_isConverting) ...[
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                color: _isConverting 
-                    ? Colors.blue.withOpacity(0.1)
-                    : Colors.green.withOpacity(0.1),
+                color: Colors.green.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _isConverting 
-                      ? Colors.blue.withOpacity(0.3)
-                      : Colors.green.withOpacity(0.3),
-                ),
+                border: Border.all(color: Colors.green.withOpacity(0.3)),
               ),
               child: Row(
                 children: [
-                  if (_isConverting)
-                    const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    Icon(
-                      Icons.info_outline,
-                      color: Colors.green[400],
-                      size: 16,
-                    ),
+                  Icon(
+                    Icons.info_outline,
+                    color: Colors.green[400],
+                    size: 16,
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       _statusMessage,
-                      style: TextStyle(
-                        color: _isConverting 
-                            ? Colors.blue[300]
-                            : Colors.green[300],
-                      ),
+                      style: TextStyle(color: Colors.green[300]),
                     ),
                   ),
                 ],
@@ -1009,9 +1247,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
             children: [
               Expanded(
                 child: ElevatedButton.icon(
-                  onPressed: (hasSelection && !_isConverting) 
-                      ? _startBatchConversion 
-                      : null,
+                  onPressed: (hasSelection && !_isConverting) ? _startBatchConversion : null,
                   icon: _isConverting
                       ? const SizedBox(
                           width: 16,
@@ -1024,12 +1260,12 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                       : const Icon(Icons.transform),
                   label: Text(
                     _isConverting 
-                        ? 'Converting... ($_convertedCount/$_totalToConvert)'
+                        ? 'Converting...'
                         : 'Convert Selected (${_selectedFiles.length})',
                     style: const TextStyle(fontSize: 16),
                   ),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Color.fromARGB(255, 39, 176, 69),
+                    backgroundColor: const Color.fromARGB(255, 39, 176, 69),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
@@ -1043,10 +1279,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                   label: const Text('Cancel', style: TextStyle(color: Colors.red)),
                   style: OutlinedButton.styleFrom(
                     side: const BorderSide(color: Colors.red),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 16,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                   ),
                 ),
               ],
@@ -1059,10 +1292,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
                     side: BorderSide(color: Colors.grey[600]!),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 16,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                   ),
                 ),
               ],
@@ -1073,7 +1303,370 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
     );
   }
 
-  // Helper methods
+  // PROCESSING METHODS - Enhanced with better progress tracking
+
+  Future<void> _startBatchConversion() async {
+    if (_selectedFiles.isEmpty) return;
+
+    // Validate environment
+    final validation = await widget.audioConversionService.validateEnvironment();
+    if (!validation.isValid) {
+      _showErrorDialog('Requirements Not Met', validation.issues.join('\n'));
+      return;
+    }
+
+    // Warn about high parallel conversion count
+    if (_parallelJobs > 4) {
+      final continueHighParallel = await _showParallelWarningDialog();
+      if (!continueHighParallel) return;
+    }
+
+    // Get confirmation
+    final confirmed = await _showConfirmationDialog();
+    if (!confirmed) return;
+
+    // Start conversion
+    await _executeConversion();
+  }
+
+  Future<void> _executeConversion() async {
+    setState(() {
+      _isConverting = true;
+      _statusMessage = 'Starting batch conversion...';
+      _conversionStartTime = DateTime.now();
+      _completedCount = 0;
+      _failedCount = 0;
+      _overallProgress = 0.0;
+      _currentSpeed = '';
+      _elapsedTime = Duration.zero;
+      _estimatedTimeRemaining = null;
+      
+      // Initialize file progress tracking
+      _fileProgress.clear();
+      _processingQueue.clear();
+      
+      // Set up initial file progress info
+      for (final filePath in _selectedFiles) {
+        _fileProgress[filePath] = FileProgressInfo(
+          filePath: filePath,
+          status: FileStatus.waiting,
+          progress: 0.0,
+        );
+        _processingQueue.add(filePath);
+      }
+    });
+
+    // Start progress timer for elapsed time tracking
+    _progressTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_conversionStartTime != null) {
+        setState(() {
+          _elapsedTime = DateTime.now().difference(_conversionStartTime!);
+        });
+      }
+    });
+
+    try {
+      // Get selected files
+      final selectedFilesList = _mp3Files.where(
+        (file) => _selectedFiles.contains(file.path)
+      ).toList();
+
+      // Create configuration
+      final config = AudioProcessingConfig(
+        parallelJobs: _parallelJobs,
+        bitrate: _preserveOriginalBitrate ? null : _selectedBitrate,
+        preserveOriginalBitrate: _preserveOriginalBitrate,
+      );
+
+      // Start conversion and listen to progress with enhanced tracking
+      _progressSubscription = widget.audioConversionService.progressStream?.listen(
+        (update) {
+          if (mounted) {
+            _handleProgressUpdate(update);
+          }
+        },
+        onError: (error) {
+          Logger.error('Error in conversion progress stream: $error');
+          if (mounted) {
+            setState(() {
+              _statusMessage = 'Progress tracking error: $error';
+            });
+          }
+        },
+      );
+
+      final result = await widget.audioConversionService.startBatchConversion(
+        files: selectedFilesList,
+        config: config,
+      );
+
+      // Handle result
+      await _handleConversionResult(result);
+
+    } catch (e) {
+      Logger.error('Error in batch conversion: $e');
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Error: $e';
+          _isConverting = false;
+        });
+      }
+    } finally {
+      _progressSubscription?.cancel();
+      _progressSubscription = null;
+      _progressTimer?.cancel();
+      _progressTimer = null;
+    }
+  }
+
+  void _handleProgressUpdate(ProcessingUpdate update) {
+    setState(() {
+      _currentUpdate = update;
+      _statusMessage = update.stage;
+      _overallProgress = update.progress?.clamp(0.0, 1.0) ?? 0.0;
+      
+      // Extract speed information
+      if (update.speed?.isNotEmpty == true) {
+        _currentSpeed = update.speed!;
+      }
+      
+      // Calculate ETA
+      if (update.estimatedTimeRemaining != null) {
+        _estimatedTimeRemaining = update.estimatedTimeRemaining;
+      } else if (_elapsedTime.inSeconds > 0 && _overallProgress > 0.01) {
+        // Calculate ETA based on current progress
+        final totalEstimatedSeconds = _elapsedTime.inSeconds / _overallProgress;
+        final remainingSeconds = totalEstimatedSeconds - _elapsedTime.inSeconds;
+        if (remainingSeconds > 0) {
+          _estimatedTimeRemaining = Duration(seconds: remainingSeconds.round());
+        }
+      }
+      
+      // Update individual file progress
+      _updateIndividualFileProgress(update);
+      
+      // Update completed/failed counts
+      _updateCompletionCounts();
+    });
+    
+    // Animate progress bar
+    _progressAnimationController.animateTo(_overallProgress);
+  }
+
+  void _updateIndividualFileProgress(ProcessingUpdate update) {
+    // Handle current file being processed
+    if (update.currentFile != null) {
+      final currentFile = update.currentFile!;
+      String? matchingFilePath = _findMatchingFilePath(currentFile);
+      
+      if (matchingFilePath != null) {
+        final existing = _fileProgress[matchingFilePath];
+        if (existing != null) {
+          _fileProgress[matchingFilePath] = existing.copyWith(
+            status: FileStatus.converting,
+            progress: update.progress?.clamp(0.0, 1.0) ?? existing.progress,
+            speed: update.speed ?? existing.speed,
+          );
+        }
+      }
+    }
+    
+    // Handle metadata updates for completed/failed files
+    if (update.metadata.isNotEmpty) {
+      // Handle completed files
+      if (update.metadata.containsKey('completed_files')) {
+        final completedFiles = update.metadata['completed_files'] as List<String>?;
+        if (completedFiles != null) {
+          for (final completedFile in completedFiles) {
+            String? matchingFilePath = _findMatchingFilePath(completedFile);
+            if (matchingFilePath != null) {
+              final existing = _fileProgress[matchingFilePath];
+              if (existing != null) {
+                _fileProgress[matchingFilePath] = existing.copyWith(
+                  status: FileStatus.completed,
+                  progress: 1.0,
+                  elapsedTime: existing.startTime != null 
+                      ? DateTime.now().difference(existing.startTime!)
+                      : null,
+                );
+              }
+            }
+          }
+        }
+      }
+      
+      // Handle failed files
+      if (update.metadata.containsKey('failed_files')) {
+        final failedFiles = update.metadata['failed_files'] as Map<String, String>?;
+        if (failedFiles != null) {
+          for (final entry in failedFiles.entries) {
+            String? matchingFilePath = _findMatchingFilePath(entry.key);
+            if (matchingFilePath != null) {
+              final existing = _fileProgress[matchingFilePath];
+              if (existing != null) {
+                _fileProgress[matchingFilePath] = existing.copyWith(
+                  status: FileStatus.failed,
+                  errorMessage: entry.value,
+                  elapsedTime: existing.startTime != null 
+                      ? DateTime.now().difference(existing.startTime!)
+                      : null,
+                );
+              }
+            }
+          }
+        }
+      }
+      
+      // Handle files that just started
+      if (update.metadata.containsKey('started_files')) {
+        final startedFiles = update.metadata['started_files'] as List<String>?;
+        if (startedFiles != null) {
+          for (final startedFile in startedFiles) {
+            String? matchingFilePath = _findMatchingFilePath(startedFile);
+            if (matchingFilePath != null) {
+              final existing = _fileProgress[matchingFilePath];
+              if (existing != null) {
+                _fileProgress[matchingFilePath] = existing.copyWith(
+                  status: FileStatus.converting,
+                  startTime: DateTime.now(),
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  String? _findMatchingFilePath(String fileName) {
+    // Try to find the full path that matches the given filename
+    for (final filePath in _selectedFiles) {
+      if (path_util.basename(filePath) == path_util.basename(fileName) ||
+          filePath == fileName ||
+          path_util.basenameWithoutExtension(filePath) == path_util.basenameWithoutExtension(fileName)) {
+        return filePath;
+      }
+    }
+    return null;
+  }
+
+  void _updateCompletionCounts() {
+    _completedCount = _fileProgress.values
+        .where((info) => info.status == FileStatus.completed)
+        .length;
+    
+    _failedCount = _fileProgress.values
+        .where((info) => info.status == FileStatus.failed)
+        .length;
+  }
+
+  Future<void> _handleConversionResult(ProcessingResult result) async {
+    if (!mounted) return;
+    
+    setState(() {
+      _isConverting = false;
+      _currentUpdate = null;
+      
+      // Final update of file statuses based on result
+      if (result.success) {
+        // Mark successful conversions
+        for (final outputFile in result.outputFiles) {
+          final baseName = path_util.basenameWithoutExtension(outputFile);
+          String? matchingInputFile = _findMatchingFilePathByBasename(baseName);
+          
+          if (matchingInputFile != null) {
+            final existing = _fileProgress[matchingInputFile];
+            if (existing != null) {
+              _fileProgress[matchingInputFile] = existing.copyWith(
+                status: FileStatus.completed,
+                progress: 1.0,
+                elapsedTime: existing.startTime != null 
+                    ? DateTime.now().difference(existing.startTime!)
+                    : null,
+              );
+            }
+          }
+        }
+      }
+      
+      // Mark failed conversions
+      for (final error in result.errors) {
+        final existing = _fileProgress[error.filePath];
+        if (existing != null) {
+          _fileProgress[error.filePath] = existing.copyWith(
+            status: FileStatus.failed,
+            errorMessage: error.message,
+            elapsedTime: existing.startTime != null 
+                ? DateTime.now().difference(existing.startTime!)
+                : null,
+          );
+        }
+      }
+      
+      // Update final counts
+      _updateCompletionCounts();
+      
+      // Clear selection
+      _selectedFiles.clear();
+    });
+
+    if (result.success) {
+      setState(() {
+        _statusMessage = 'Conversion completed: ${result.successCount} files converted successfully in ${_formatDuration(_elapsedTime)}';
+      });
+      _showResultsDialog(result.successCount, result.errorCount, result.errors);
+    } else {
+      setState(() {
+        _statusMessage = 'Conversion failed: ${result.errorCount} errors occurred';
+      });
+      _showResultsDialog(result.successCount, result.errorCount, result.errors);
+    }
+
+    // Reload library to reflect changes
+    await _loadMp3Files();
+  }
+
+  String? _findMatchingFilePathByBasename(String baseName) {
+    for (final filePath in _selectedFiles) {
+      if (path_util.basenameWithoutExtension(filePath) == baseName) {
+        return filePath;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _cancelConversion() async {
+    await widget.audioConversionService.cancelCurrentOperation();
+    if (mounted) {
+      setState(() {
+        _statusMessage = 'Conversion cancelled after ${_formatDuration(_elapsedTime)}';
+        _isConverting = false;
+        _currentUpdate = null;
+        
+        // Update any files that were converting to cancelled
+        for (final filePath in _fileProgress.keys.toList()) {
+          final existing = _fileProgress[filePath];
+          if (existing != null && existing.status == FileStatus.converting) {
+            _fileProgress[filePath] = existing.copyWith(
+              status: FileStatus.failed,
+              errorMessage: 'Cancelled by user',
+              elapsedTime: existing.startTime != null 
+                  ? DateTime.now().difference(existing.startTime!)
+                  : null,
+            );
+          }
+        }
+        
+        _updateCompletionCounts();
+      });
+    }
+    
+    _progressTimer?.cancel();
+    _progressTimer = null;
+  }
+
+  // HELPER METHODS
+
   Future<void> _loadMp3Files() async {
     setState(() {
       _isLoading = true;
@@ -1081,10 +1674,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
     });
 
     try {
-      // Get all files from library
       final allFiles = widget.libraryManager.files;
-      
-      // Filter MP3 files
       final mp3Files = allFiles.where((file) => 
         file.extension.toLowerCase() == '.mp3'
       ).toList();
@@ -1095,7 +1685,6 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
         _statusMessage = 'Found ${mp3Files.length} MP3 files in library';
       });
 
-      // Apply initial sorting
       _sortFiles();
     } catch (e) {
       Logger.error('Error loading MP3 files', e);
@@ -1191,130 +1780,51 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
     }
   }
 
-  String _calculateSpeed() {
-    if (_convertedCount == 0 || _totalElapsedTime.inSeconds == 0) {
-      return '-- files/hr';
-    }
-    
-    final filesPerSecond = _convertedCount / _totalElapsedTime.inSeconds;
-    final filesPerHour = filesPerSecond * 3600;
-    
-    if (filesPerHour >= 1) {
-      return '${filesPerHour.toStringAsFixed(1)} files/hr';
-    } else {
-      final minutesPerFile = 1 / (filesPerSecond * 60);
-      return '${minutesPerFile.toStringAsFixed(1)} min/file';
-    }
-  }
+  // DIALOG METHODS
 
-  String _calculateETA() {
-    if (_convertedCount == 0 || _totalElapsedTime.inSeconds == 0) {
-      return 'Calculating...';
-    }
-    
-    final filesRemaining = _totalToConvert - _convertedCount;
-    final avgSecondsPerFile = _totalElapsedTime.inSeconds / _convertedCount;
-    final secondsRemaining = (filesRemaining * avgSecondsPerFile) / _parallelJobs;
-    
-    final eta = Duration(seconds: secondsRemaining.round());
-    return _formatDuration(eta);
-  }
-
-  void _cancelConversion() {
-    setState(() {
-      _isCancelled = true;
-      _statusMessage = 'Cancelling conversion...';
-    });
-  }
-
-  Future<void> _startBatchConversion() async {
-    if (_selectedFiles.isEmpty) return;
-
-    // Check FFmpeg availability
-    final ffmpegAvailable = await _metadataService.isFFmpegAvailableForConversion();
-    if (!ffmpegAvailable) {
-      _showErrorDialog(
-        'FFmpeg Required',
-        'FFmpeg is required for batch conversion.\n\n'
-        'Please install FFmpeg and add it to your system PATH.\n'
-        'Download from: https://ffmpeg.org/download.html',
-      );
-      return;
-    }
-
-    // Warn about high parallel conversion count
-    if (_parallelJobs > 4) {
-      final continueHighParallel = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          backgroundColor: const Color(0xFF1A1A1A),
-          title: Row(
-            children: [
-              Icon(Icons.warning, color: Colors.orange),
-              const SizedBox(width: 8),
-              const Text('High Parallel Count Warning', style: TextStyle(color: Colors.white)),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'You have selected $_parallelJobs parallel conversions.',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'This may cause:',
-                style: TextStyle(color: Colors.orange),
-              ),
-              const Text('• High memory usage (200-500MB per conversion)', style: TextStyle(color: Colors.grey)),
-              const Text('• System slowdowns or freezes', style: TextStyle(color: Colors.grey)),
-              const Text('• Potential crashes if memory runs out', style: TextStyle(color: Colors.grey)),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.withOpacity(0.1),
-                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  'Recommended: 1-4 parallel conversions for stability',
-                  style: TextStyle(color: Colors.blue),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                setState(() => _parallelJobs = 3);
-                Navigator.of(context).pop(false);
-              },
-              child: const Text('Use Recommended (3)'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                foregroundColor: Colors.white,
-              ),
-              child: Text('Continue with $_parallelJobs'),
-            ),
+  Future<bool> _showParallelWarningDialog() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        title: const Row(
+          children: [
+            Icon(Icons.warning, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('High Parallel Count Warning', style: TextStyle(color: Colors.white)),
           ],
         ),
-      );
+        content: Text(
+          'You have selected $_parallelJobs parallel conversions.\n\n'
+          'This may cause high memory usage and system slowdowns.\n\n'
+          'Recommended: 1-4 parallel conversions for stability.',
+          style: const TextStyle(color: Colors.grey),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() => _parallelJobs = 3);
+              Navigator.of(context).pop(false);
+            },
+            child: const Text('Use Recommended (3)'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+            child: Text('Continue with $_parallelJobs'),
+          ),
+        ],
+      ),
+    );
+    return result ?? false;
+  }
 
-      if (continueHighParallel != true) return;
-    }
-
-    // Confirmation dialog
-    final confirmed = await showDialog<bool>(
+  Future<bool> _showConfirmationDialog() async {
+    final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
@@ -1325,80 +1835,13 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
             Text('Batch Convert to M4B', style: TextStyle(color: Colors.white)),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Convert ${_selectedFiles.length} MP3 file(s) to M4B format?',
-              style: const TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
-                border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.settings, color: Colors.blue, size: 16),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Conversion Settings:',
-                        style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '• Parallel conversions: $_parallelJobs${_parallelJobs > 4 ? " ⚠️ High memory usage" : ""}',
-                    style: TextStyle(
-                      color: _parallelJobs > 4 ? Colors.orange : Colors.blue,
-                    ),
-                  ),
-                  Text(
-                    '• Audio quality: ${_preserveOriginalBitrate ? "Preserve original" : _selectedBitrate}',
-                    style: const TextStyle(color: Colors.blue),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'This will:',
-              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-            ),
-            const Text('• Convert each MP3 to M4B format', style: TextStyle(color: Colors.grey)),
-            const Text('• Transfer all metadata and cover art', style: TextStyle(color: Colors.grey)),
-            const Text('• Delete original MP3 files', style: TextStyle(color: Colors.grey)),
-            const Text('• Update library with new M4B files', style: TextStyle(color: Colors.grey)),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.warning, color: Colors.orange, size: 20),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'This action cannot be undone. Make sure you have backups.',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        content: Text(
+          'Convert ${_selectedFiles.length} MP3 file(s) to M4B format?\n\n'
+          'Settings:\n'
+          '• Parallel conversions: $_parallelJobs\n'
+          '• Audio quality: ${_preserveOriginalBitrate ? "Preserve original" : _selectedBitrate}\n\n'
+          'This will delete the original MP3 files after successful conversion.',
+          style: const TextStyle(color: Colors.grey),
         ),
         actions: [
           TextButton(
@@ -1408,303 +1851,17 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
           ElevatedButton(
             onPressed: () => Navigator.of(context).pop(true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Color.fromARGB(255, 39, 176, 69),
-              foregroundColor: Colors.white,
+              backgroundColor: const Color.fromARGB(255, 39, 176, 69),
             ),
             child: const Text('Convert All'),
           ),
         ],
       ),
     );
-
-    if (confirmed != true) return;
-
-    // Start batch conversion
-    setState(() {
-      _isConverting = true;
-      _isCancelled = false;
-      _totalToConvert = _selectedFiles.length;
-      _convertedCount = 0;
-      _activeConversions = 0;
-      _statusMessage = 'Starting batch conversion...';
-      _fileProgress.clear();
-      _fileStatus.clear();
-      _errorMessages.clear();
-      _conversionStartTime = DateTime.now();
-      _totalElapsedTime = Duration.zero;
-    });
-
-    // Start elapsed time timer
-    _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_isConverting && mounted) {
-        setState(() {
-          _totalElapsedTime = DateTime.now().difference(_conversionStartTime!);
-        });
-      } else {
-        timer.cancel();
-      }
-    });
-
-    final selectedFilesList = _mp3Files.where(
-      (file) => _selectedFiles.contains(file.path)
-    ).toList();
-
-    int successCount = 0;
-    int failCount = 0;
-
-    // Process files with parallel execution
-    await _processFilesInParallel(selectedFilesList, successCount, failCount);
-
-    // Stop elapsed timer
-    _elapsedTimer?.cancel();
-
-    // Show results
-    setState(() {
-      _isConverting = false;
-      _statusMessage = _isCancelled 
-          ? 'Conversion cancelled: $successCount succeeded, $failCount failed'
-          : 'Conversion complete: $successCount succeeded, $failCount failed';
-      _selectedFiles.clear();
-    });
-
-    // Reload library to reflect changes
-    await _loadMp3Files();
-
-    // Show results dialog
-    if (mounted && !_isCancelled) {
-      _showResultsDialog(successCount, failCount);
-    }
+    return result ?? false;
   }
 
-  Future<void> _processFilesInParallel(
-    List<AudiobookFile> files,
-    int successCount,
-    int failCount,
-  ) async {
-    final queue = Queue<AudiobookFile>.from(files);
-    final activeConversions = <Future<bool>>[];
-    final results = <bool>[];
-    
-    // Track active processes to ensure cleanup
-    final activeProcesses = <String>{};
-
-    while (queue.isNotEmpty || activeConversions.isNotEmpty) {
-      if (_isCancelled) break;
-
-      // Start new conversions up to the parallel limit
-      while (activeConversions.length < _parallelJobs && queue.isNotEmpty && !_isCancelled) {
-        final file = queue.removeFirst();
-        
-        setState(() {
-          _activeConversions = activeConversions.length + 1;
-          _fileStatus[file.path] = 'converting';
-          activeProcesses.add(file.path);
-        });
-
-        final future = _convertSingleFile(file).then((success) {
-          setState(() {
-            _activeConversions = activeConversions.length - 1;
-            _convertedCount++;
-            activeProcesses.remove(file.path);
-            if (success) {
-              _fileStatus[file.path] = 'done';
-            } else {
-              _fileStatus[file.path] = 'failed';
-            }
-          });
-          results.add(success);
-          return success;
-        }).catchError((error) {
-          setState(() {
-            _activeConversions = activeConversions.length - 1;
-            _convertedCount++;
-            activeProcesses.remove(file.path);
-            _fileStatus[file.path] = 'failed';
-            _errorMessages[file.path] = error.toString();
-          });
-          results.add(false);
-          return false;
-        });
-
-        activeConversions.add(future);
-        
-        // Add a small delay between starting conversions to prevent memory spikes
-        if (queue.isNotEmpty) {
-          await Future.delayed(const Duration(milliseconds: 500));
-        }
-      }
-
-      // Wait for at least one conversion to complete
-      if (activeConversions.isNotEmpty) {
-        final completed = await Future.wait(
-          activeConversions.map((f) => f.then((result) => MapEntry(f, result)))
-        );
-        for (final entry in completed) {
-          activeConversions.remove(entry.key);
-        }
-        
-        // Small delay to allow memory to be freed
-        await Future.delayed(const Duration(milliseconds: 200));
-      }
-
-      // Update status message
-      setState(() {
-        _statusMessage = 'Converting files... (Active: $_activeConversions, Completed: $_convertedCount/$_totalToConvert)';
-      });
-    }
-
-    // Wait for all remaining conversions to complete
-    if (!_isCancelled && activeConversions.isNotEmpty) {
-      await Future.wait(activeConversions);
-    }
-
-    // Ensure all processes are marked as complete
-    for (final path in activeProcesses) {
-      if (_fileStatus[path] == 'converting') {
-        setState(() {
-          _fileStatus[path] = 'failed';
-          _errorMessages[path] = 'Process terminated unexpectedly';
-        });
-      }
-    }
-
-    // Count results
-    successCount = results.where((r) => r).length;
-    failCount = results.where((r) => !r).length;
-  }
-
-  Future<bool> _convertSingleFile(AudiobookFile file) async {
-    StreamController<ConversionProgress>? progressController;
-    Timer? progressThrottleTimer;
-    double lastReportedProgress = 0;
-    
-    try {
-      if (file.metadata == null) {
-        Logger.error('Cannot convert file without metadata: ${file.filename}');
-        _errorMessages[file.path] = 'No metadata available';
-        return false;
-      }
-
-      // Create M4B file path
-      final originalPath = file.path;
-      final directory = path_util.dirname(originalPath);
-      final baseName = path_util.basenameWithoutExtension(originalPath);
-      final m4bPath = path_util.join(directory, '$baseName.m4b');
-
-      // Check if M4B file already exists
-      if (await File(m4bPath).exists()) {
-        Logger.warning('M4B file already exists, skipping: $m4bPath');
-        _errorMessages[file.path] = 'M4B file already exists';
-        return false;
-      }
-
-      Logger.log('Converting ${file.filename} to M4B...');
-
-      // Create progress controller for individual file
-      progressController = StreamController<ConversionProgress>.broadcast();
-      
-      // Throttle progress updates to reduce memory usage and UI updates
-      progressController.stream.listen((progress) {
-        // Only update if progress changed significantly (>2%) or is complete
-        if ((progress.percentage - lastReportedProgress).abs() > 0.02 || 
-            progress.percentage >= 1.0) {
-          lastReportedProgress = progress.percentage;
-          
-          // Cancel previous timer if exists
-          progressThrottleTimer?.cancel();
-          
-          // Delay the update slightly to batch rapid changes
-          progressThrottleTimer = Timer(const Duration(milliseconds: 100), () {
-            if (mounted && !_isCancelled) {
-              setState(() {
-                _fileProgress[file.path] = progress.percentage;
-              });
-            }
-          });
-        }
-      });
-
-      // Perform the conversion with quality settings
-      final success = await _convertWithQualitySettings(
-        originalPath,
-        m4bPath,
-        file.metadata!,
-        progressController,
-      );
-
-      // Clean up resources
-      progressThrottleTimer?.cancel();
-      await progressController.close();
-
-      if (success && !_isCancelled) {
-        Logger.log('Conversion successful, updating library...');
-        
-        // Update the library manager to replace the old file with the new one
-        final updateSuccess = await widget.libraryManager.replaceFileInLibrary(
-          originalPath,
-          m4bPath,
-          file.metadata!,
-        );
-
-        if (updateSuccess) {
-          // Delete the original MP3 file
-          try {
-            await File(originalPath).delete();
-            Logger.log('Deleted original MP3 file: $originalPath');
-          } catch (e) {
-            Logger.warning('Failed to delete original file: $e');
-          }
-          
-          return true;
-        } else {
-          Logger.error('Failed to update library after conversion');
-          _errorMessages[file.path] = 'Library update failed';
-          // Try to delete the converted file since library update failed
-          try {
-            await File(m4bPath).delete();
-          } catch (e) {
-            Logger.warning('Failed to cleanup converted file: $e');
-          }
-          return false;
-        }
-      } else {
-        Logger.error('Failed to convert MP3 to M4B or was cancelled');
-        _errorMessages[file.path] = _isCancelled ? 'Cancelled' : 'Conversion failed';
-        return false;
-      }
-    } catch (e) {
-      Logger.error('Error converting file: ${file.filename}', e);
-      _errorMessages[file.path] = e.toString();
-      return false;
-    } finally {
-      // Ensure resources are cleaned up
-      progressThrottleTimer?.cancel();
-      if (progressController != null && !progressController.isClosed) {
-        await progressController.close();
-      }
-    }
-  }
-
-  Future<bool> _convertWithQualitySettings(
-    String inputPath,
-    String outputPath,
-    AudiobookMetadata metadata,
-    StreamController<ConversionProgress> progressController,
-  ) async {
-    // For now, use the existing conversion method
-    // In a real implementation, you would modify the FFmpeg args to use the selected bitrate
-    return await _metadataService.convertMP3ToM4B(
-      inputPath,
-      outputPath,
-      metadata,
-      progressController: progressController,
-      totalDuration: metadata.audioDuration,
-    );
-  }
-
-  void _showResultsDialog(int successCount, int failCount) {
-    final errors = _errorMessages.entries.toList();
-    
+  void _showResultsDialog(int successCount, int failCount, List<ProcessingError> errors) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -1723,16 +1880,11 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Successfully converted: $successCount file(s)',
-              style: const TextStyle(color: Colors.green),
-            ),
+            Text('Successfully converted: $successCount file(s)', style: const TextStyle(color: Colors.green)),
+            Text('Total time: ${_formatDuration(_elapsedTime)}', style: const TextStyle(color: Colors.blue)),
             if (failCount > 0) ...[
               const SizedBox(height: 8),
-              Text(
-                'Failed: $failCount file(s)',
-                style: const TextStyle(color: Colors.red),
-              ),
+              Text('Failed: $failCount file(s)', style: const TextStyle(color: Colors.red)),
               if (errors.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Container(
@@ -1740,12 +1892,12 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                   child: SingleChildScrollView(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: errors.map((entry) {
-                        final filename = path_util.basename(entry.key);
+                      children: errors.map((error) {
+                        final filename = path_util.basename(error.filePath);
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 4),
                           child: Text(
-                            '• $filename: ${entry.value}',
+                            '• $filename: ${error.message}',
                             style: const TextStyle(color: Colors.grey, fontSize: 12),
                           ),
                         );
@@ -1755,37 +1907,6 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                 ),
               ],
             ],
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
-                border: Border.all(color: Colors.blue.withOpacity(0.3)),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Performance Statistics:',
-                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Total time: ${_formatDuration(_totalElapsedTime)}',
-                    style: const TextStyle(color: Colors.blue, fontSize: 12),
-                  ),
-                  Text(
-                    'Average speed: ${_calculateSpeed()}',
-                    style: const TextStyle(color: Colors.blue, fontSize: 12),
-                  ),
-                  Text(
-                    'Parallel jobs used: $_parallelJobs',
-                    style: const TextStyle(color: Colors.blue, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
           ],
         ),
         actions: [
@@ -1810,21 +1931,20 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Header
               Container(
                 padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2A2A2A),
-                  borderRadius: const BorderRadius.only(
+                decoration: const BoxDecoration(
+                  color: Color(0xFF2A2A2A),
+                  borderRadius: BorderRadius.only(
                     topLeft: Radius.circular(8),
                     topRight: Radius.circular(8),
                   ),
                 ),
-                child: Row(
+                child: const Row(
                   children: [
-                    const Icon(Icons.memory, color: Colors.blue, size: 24),
-                    const SizedBox(width: 12),
-                    const Text(
+                    Icon(Icons.memory, color: Colors.blue, size: 24),
+                    SizedBox(width: 12),
+                    Text(
                       'Hardware Optimization Guide',
                       style: TextStyle(
                         color: Colors.white,
@@ -1835,7 +1955,6 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                   ],
                 ),
               ),
-              // Content
               Flexible(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(20),
@@ -1876,16 +1995,11 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                               'Recommended Parallel Jobs: ${_parallelJobs <= 4 ? _parallelJobs : "3-4"}',
                               style: const TextStyle(color: Colors.white),
                             ),
-                            const Text(
-                              'Max Safe Parallel: $_maxSafeParallelJobs',
-                              style: TextStyle(color: Colors.white),
-                            ),
                           ],
                         ),
                       ),
                       const SizedBox(height: 20),
                       
-                      // CPU optimization
                       _buildInfoSection(
                         icon: Icons.memory,
                         title: 'CPU Optimization',
@@ -1900,11 +2014,10 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                       ),
                       const SizedBox(height: 16),
                       
-                      // Storage optimization
                       _buildInfoSection(
                         icon: Icons.storage,
                         title: 'Storage Optimization',
-                        color: Color.fromARGB(255, 39, 176, 69),
+                        color: const Color.fromARGB(255, 39, 176, 69),
                         content: [
                           'Often the biggest bottleneck',
                           '• SSD: 2-3x faster than HDD',
@@ -1915,7 +2028,6 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                       ),
                       const SizedBox(height: 16),
                       
-                      // Memory optimization
                       _buildInfoSection(
                         icon: Icons.memory,
                         title: 'Memory Usage',
@@ -2003,10 +2115,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
             Text(title, style: const TextStyle(color: Colors.white)),
           ],
         ),
-        content: Text(
-          message,
-          style: const TextStyle(color: Colors.grey),
-        ),
+        content: Text(message, style: const TextStyle(color: Colors.grey)),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
@@ -2014,6 +2123,54 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// Enhanced file progress tracking classes
+enum FileStatus {
+  waiting,
+  converting,
+  completed,
+  failed,
+}
+
+class FileProgressInfo {
+  final String filePath;
+  final FileStatus status;
+  final double progress;
+  final String speed;
+  final String? errorMessage;
+  final DateTime? startTime;
+  final Duration? elapsedTime;
+
+  const FileProgressInfo({
+    required this.filePath,
+    required this.status,
+    required this.progress,
+    this.speed = '',
+    this.errorMessage,
+    this.startTime,
+    this.elapsedTime,
+  });
+
+  FileProgressInfo copyWith({
+    String? filePath,
+    FileStatus? status,
+    double? progress,
+    String? speed,
+    String? errorMessage,
+    DateTime? startTime,
+    Duration? elapsedTime,
+  }) {
+    return FileProgressInfo(
+      filePath: filePath ?? this.filePath,
+      status: status ?? this.status,
+      progress: progress ?? this.progress,
+      speed: speed ?? this.speed,
+      errorMessage: errorMessage ?? this.errorMessage,
+      startTime: startTime ?? this.startTime,
+      elapsedTime: elapsedTime ?? this.elapsedTime,
     );
   }
 }

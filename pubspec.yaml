@@ -43,7 +43,7 @@ dependencies:
   # Utilities
   intl: ^0.18.1
   package_info_plus: ^4.0.2
-  shared_preferences: ^2.1.2
+  shared_preferences: ^2.2.2
   url_launcher: ^6.1.10
   flutter_html: ^3.0.0
   mime: ^1.0.4
