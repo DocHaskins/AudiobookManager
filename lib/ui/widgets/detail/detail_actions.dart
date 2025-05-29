@@ -1,4 +1,4 @@
-// lib/ui/widgets/detail/utils/detail_actions.dart
+// lib/ui/widgets/detail/utils/detail_actions.dart - Updated with Goodreads support
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -9,9 +9,11 @@ import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
+import 'package:audiobook_organizer/services/providers/goodreads_service.dart';
 import 'package:audiobook_organizer/ui/widgets/detail/detail_controllers_mixin.dart';
 import 'package:audiobook_organizer/ui/widgets/dialogs/metadata_search_dialog.dart';
 import 'package:audiobook_organizer/ui/widgets/dialogs/conversion_progress_dialog.dart';
+import 'package:audiobook_organizer/ui/widgets/dialogs/goodreads_search_dialog.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
 class DetailActions {
@@ -232,20 +234,215 @@ class DetailActions {
     }
   }
 
-  Future<void> saveMetadataToFile(
+  // UPDATED: Browse Goodreads using HTTP-based search (Windows compatible)
+  Future<void> browseGoodreads(
     BuildContext context,
     AudiobookFile book,
   ) async {
-    if (book.metadata == null) {
-      if (context.mounted) {
-        _showSnackBar(context, 'No metadata to save', Colors.orange);
-      }
-      return;
-    }
-
+    Logger.log('=== Starting Goodreads browsing for: ${book.filename} ===');
     onUpdateMetadataStatus(true);
 
     try {
+      if (!context.mounted) {
+        Logger.error('Context not mounted, cannot browse Goodreads');
+        return;
+      }
+
+      // Extract title and author for search
+      String title = book.metadata?.title ?? book.filename.replaceAll(RegExp(r'\.[^.]+'), '');
+      String author = book.metadata?.authorsFormatted ?? '';
+
+      Logger.log('Opening Goodreads search with title: "$title", author: "$author"');
+
+      // Show the Goodreads search dialog (works on all platforms including Windows)
+      final result = await GoodreadsSearchDialog.show(
+        context: context,
+        title: title,
+        author: author,
+        currentMetadata: book.metadata,
+      );
+
+      if (result != null) {
+        Logger.log('Goodreads result received: ${result.metadata.title}');
+        Logger.log('Selected options: Title=${result.options.updateTitle}, Authors=${result.options.updateAuthors}, etc.');
+
+        // Convert GoodreadsMetadata to AudiobookMetadata
+        final goodreadsAudioMetadata = result.metadata.toAudiobookMetadata(book.path);
+        
+        // Apply selective updates based on user choices
+        AudiobookMetadata updatedMetadata = book.metadata ?? AudiobookMetadata(
+          id: book.path,
+          title: title,
+          authors: [],
+        );
+
+        // Selectively update fields based on options
+        updatedMetadata = updatedMetadata.copyWith(
+          title: result.options.updateTitle ? result.metadata.title : updatedMetadata.title,
+          subtitle: result.options.updateTitle ? result.metadata.subtitle : updatedMetadata.subtitle,
+          authors: result.options.updateAuthors ? result.metadata.authors : updatedMetadata.authors,
+          description: result.options.updateDescription ? result.metadata.description : updatedMetadata.description,
+          categories: result.options.updateGenres ? result.metadata.genres : updatedMetadata.categories,
+          averageRating: result.options.updateRating ? result.metadata.rating : updatedMetadata.averageRating,
+          ratingsCount: result.options.updateRating ? result.metadata.ratingsCount : updatedMetadata.ratingsCount,
+          publisher: result.options.updatePublisher ? result.metadata.publisher : updatedMetadata.publisher,
+          publishedDate: result.options.updatePublishedDate ? result.metadata.publishedDate : updatedMetadata.publishedDate,
+          series: result.options.updateSeries ? result.metadata.series : updatedMetadata.series,
+          seriesPosition: result.options.updateSeries ? result.metadata.seriesPosition : updatedMetadata.seriesPosition,
+          pageCount: result.metadata.pageCount > 0 ? result.metadata.pageCount : updatedMetadata.pageCount,
+          provider: 'goodreads',
+        );
+
+        // Handle cover update separately if requested
+        if (result.options.updateCover && result.metadata.coverImageUrl.isNotEmpty) {
+          Logger.log('Updating cover from Goodreads: ${result.metadata.coverImageUrl}');
+          final coverSuccess = await libraryManager.updateCoverImage(book, result.metadata.coverImageUrl);
+          Logger.log('Goodreads cover update success: $coverSuccess');
+        }
+
+        // Add ISBN identifier if available and selected
+        if (result.options.updateISBN && result.metadata.isbn.isNotEmpty) {
+          final existingIdentifiers = List<AudiobookIdentifier>.from(updatedMetadata.identifiers);
+          // Remove existing ISBN entries
+          existingIdentifiers.removeWhere((id) => id.type.contains('ISBN'));
+          // Add new ISBN
+          existingIdentifiers.add(AudiobookIdentifier(type: 'ISBN', identifier: result.metadata.isbn));
+          updatedMetadata = updatedMetadata.copyWith(identifiers: existingIdentifiers);
+        }
+
+        // Update the metadata
+        final success = await libraryManager.updateMetadata(book, updatedMetadata);
+
+        if (success) {
+          Logger.log('Goodreads metadata update successful');
+          
+          // Update the local book object
+          book.metadata = updatedMetadata;
+          
+          // Refresh the book data
+          onRefreshBook();
+          
+          // Call the update callback
+          onBookUpdated?.call(book);
+          
+          // Show success message
+          if (context.mounted) {
+            final updatedFields = _getUpdatedFieldsList(result.options);
+            _showSnackBar(
+              context, 
+              'Successfully updated from Goodreads: ${updatedFields.join(", ")}', 
+              Colors.green,
+              duration: const Duration(seconds: 4),
+            );
+          }
+          
+          Logger.log('Successfully updated metadata from Goodreads for: ${book.filename}');
+        } else {
+          Logger.error('Failed to update metadata from Goodreads');
+          if (context.mounted) {
+            _showSnackBar(context, 'Failed to update metadata from Goodreads', Colors.red);
+          }
+        }
+      } else {
+        Logger.log('User cancelled Goodreads browsing');
+      }
+    } catch (e) {
+      Logger.error('Error browsing Goodreads: $e');
+      Logger.error('Stack trace: ${StackTrace.current}');
+      if (context.mounted) {
+        _showSnackBar(context, 'Error browsing Goodreads: ${e.toString()}', Colors.red);
+      }
+    } finally {
+      Logger.log('=== Goodreads browsing completed ===');
+      onUpdateMetadataStatus(false);
+    }
+  }
+
+  // Helper method to get list of updated fields
+  List<String> _getUpdatedFieldsList(GoodreadsSelectionOptions options) {
+    final updatedFields = <String>[];
+    
+    if (options.updateTitle) updatedFields.add('Title');
+    if (options.updateAuthors) updatedFields.add('Authors');
+    if (options.updateDescription) updatedFields.add('Description');
+    if (options.updateGenres) updatedFields.add('Genres');
+    if (options.updateRating) updatedFields.add('Rating');
+    if (options.updateCover) updatedFields.add('Cover');
+    if (options.updatePublisher) updatedFields.add('Publisher');
+    if (options.updatePublishedDate) updatedFields.add('Published Date');
+    if (options.updateSeries) updatedFields.add('Series');
+    if (options.updateISBN) updatedFields.add('ISBN');
+    
+    return updatedFields;
+  }
+
+  Future<void> saveMetadataToFile(
+    BuildContext context,
+    AudiobookFile book, {
+    DetailControllersMixin? controllers,
+  }) async {
+    onUpdateMetadataStatus(true);
+
+    try {
+      AudiobookMetadata? metadataToSave = book.metadata;
+      
+      if (controllers != null && controllers.isEditingMetadata && controllers.titleController != null) {
+        Logger.log('Syncing controller changes before saving to file');
+        
+        final currentMetadata = book.metadata ?? AudiobookMetadata(
+          id: book.path,
+          title: controllers.titleController!.text,
+          authors: [],
+        );
+
+        // Parse the genres/categories from the controller
+        final categories = controllers.parseCommaSeparatedValues(
+          controllers.categoriesController!.text
+        );
+        final userTags = controllers.parseCommaSeparatedValues(
+          controllers.userTagsController!.text
+        );
+        final genres = controllers.parseCommaSeparatedValues(
+          controllers.genresController!.text
+        );
+        
+        // Create updated metadata with controller values
+        metadataToSave = currentMetadata.copyWith(
+          title: controllers.titleController!.text,
+          authors: controllers.authorController!.text
+              .split(',')
+              .map((s) => s.trim())
+              .where((s) => s.isNotEmpty)
+              .toList(),
+          series: controllers.seriesController!.text,
+          seriesPosition: controllers.seriesPositionController!.text,
+          description: controllers.descriptionController!.text,
+          categories: genres.isNotEmpty ? genres : categories,
+          userTags: userTags,
+          publisher: controllers.publisherController?.text ?? currentMetadata.publisher,
+          publishedDate: controllers.publishedDateController?.text ?? currentMetadata.publishedDate,
+        );
+
+        // Update the book object with synced metadata
+        final updateSuccess = await libraryManager.updateMetadata(book, metadataToSave);
+        if (!updateSuccess) {
+          Logger.error('Failed to update book metadata before file save');
+          if (context.mounted) {
+            _showSnackBar(context, 'Failed to update metadata before file save', Colors.red);
+          }
+          return;
+        }
+        
+        Logger.log('Successfully synced controller changes to book metadata');
+      }
+
+      if (metadataToSave == null) {
+        if (context.mounted) {
+          _showSnackBar(context, 'No metadata to save', Colors.orange);
+        }
+        return;
+      }
+
       Logger.log('Saving metadata to file for: ${book.filename}');
       
       final success = await libraryManager.writeMetadataToFile(book);
@@ -286,7 +483,7 @@ class DetailActions {
     }
   }
 
-  // NEW: Convert MP3 to M4B method with progress dialog
+  // Convert MP3 to M4B method with progress dialog
   Future<void> convertToM4B(
     BuildContext context,
     AudiobookFile book,

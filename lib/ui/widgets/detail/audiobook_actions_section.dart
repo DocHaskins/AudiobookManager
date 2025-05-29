@@ -1,4 +1,4 @@
-// lib/ui/widgets/detail/audiobook_actions_section.dart
+// lib/ui/widgets/detail/audiobook_actions_section.dart - Updated with Goodreads support
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
@@ -8,6 +8,7 @@ import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'package:audiobook_organizer/ui/screens/player_screen.dart';
 import 'package:audiobook_organizer/ui/widgets/collections/add_to_collection_dialog.dart';
 import 'package:audiobook_organizer/ui/widgets/detail/detail_actions.dart';
+import 'package:audiobook_organizer/ui/widgets/detail/detail_controllers_mixin.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
 class AudiobookActionsSection extends StatefulWidget {
@@ -17,6 +18,7 @@ class AudiobookActionsSection extends StatefulWidget {
   final ValueChanged<bool> onUpdateMetadataStatus;
   final Function(AudiobookFile)? onBookUpdated;
   final bool isUpdatingMetadata;
+  final DetailControllersMixin? controllers;
 
   const AudiobookActionsSection({
     Key? key,
@@ -26,6 +28,7 @@ class AudiobookActionsSection extends StatefulWidget {
     required this.onUpdateMetadataStatus,
     this.onBookUpdated,
     this.isUpdatingMetadata = false,
+    this.controllers, // ADD THIS LINE
   }) : super(key: key);
 
   @override
@@ -36,14 +39,18 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
     with TickerProviderStateMixin {
   late AnimationController _favoriteController;
   late AnimationController _collectionController;
+  late AnimationController _goodreadsController; // NEW: Animation for Goodreads button
   late Animation<double> _favoriteScaleAnimation;
   late Animation<double> _collectionScaleAnimation;
+  late Animation<double> _goodreadsScaleAnimation; // NEW
   late Animation<Color?> _favoriteColorAnimation;
   late Animation<Color?> _collectionColorAnimation;
+  late Animation<Color?> _goodreadsColorAnimation; // NEW
   
   bool _isFavoriteAnimating = false;
   bool _isCollectionAnimating = false;
-  bool _isConverting = false; // NEW: Track conversion state
+  bool _isGoodreadsAnimating = false; // NEW: Track Goodreads animation
+  bool _isConverting = false;
 
   @override
   void initState() {
@@ -88,12 +95,33 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
       parent: _collectionController,
       curve: Curves.easeInOut,
     ));
+
+    // NEW: Goodreads animation controller
+    _goodreadsController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    _goodreadsScaleAnimation = Tween<double>(
+      begin: 1.0,
+      end: 1.1,
+    ).animate(CurvedAnimation(
+      parent: _goodreadsController,
+      curve: Curves.easeInOut,
+    ));
+    _goodreadsColorAnimation = ColorTween(
+      begin: Colors.grey[600],
+      end: Colors.orange,
+    ).animate(CurvedAnimation(
+      parent: _goodreadsController,
+      curve: Curves.easeInOut,
+    ));
   }
 
   @override
   void dispose() {
     _favoriteController.dispose();
     _collectionController.dispose();
+    _goodreadsController.dispose(); // NEW: Dispose Goodreads controller
     super.dispose();
   }
 
@@ -210,6 +238,29 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
         
         const SizedBox(height: 12),
         
+        // NEW: Browse Goodreads button with animation
+        SizedBox(
+          width: double.infinity,
+          child: AnimatedBuilder(
+            animation: _goodreadsController,
+            builder: (context, child) {
+              return Transform.scale(
+                scale: _goodreadsScaleAnimation.value,
+                child: _buildSecondaryButton(
+                  context,
+                  onPressed: (widget.isUpdatingMetadata || _isGoodreadsAnimating) ? null : () => _browseGoodreads(context),
+                  icon: Icons.menu_book,
+                  label: 'Browse Goodreads',
+                  iconColor: _goodreadsColorAnimation.value,
+                  isLoading: _isGoodreadsAnimating,
+                ),
+              );
+            },
+          ),
+        ),
+        
+        const SizedBox(height: 12),
+        
         // Save to File button
         SizedBox(
           width: double.infinity,
@@ -222,7 +273,7 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
           ),
         ),
         
-        // NEW: Convert to M4B button (only show for MP3 files)
+        // Convert to M4B button (only show for MP3 files)
         if (widget.book.extension.toLowerCase() == '.mp3') ...[
           const SizedBox(height: 12),
           SizedBox(
@@ -461,10 +512,55 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
       onUpdateMetadataStatus: widget.onUpdateMetadataStatus,
     );
     
-    await actions.saveMetadataToFile(context, widget.book);
+    await actions.saveMetadataToFile(
+      context, 
+      widget.book,
+      controllers: widget.controllers,
+    );
   }
 
-  // NEW: Convert MP3 to M4B method
+  Future<void> _browseGoodreads(BuildContext context) async {
+    if (_isGoodreadsAnimating) return;
+    
+    setState(() {
+      _isGoodreadsAnimating = true;
+    });
+
+    try {
+      // Start animation for visual feedback
+      _goodreadsController.forward();
+
+      final actions = DetailActions(
+        libraryManager: widget.libraryManager,
+        onRefreshBook: widget.onRefreshBook,
+        onUpdateMetadataStatus: widget.onUpdateMetadataStatus,
+        onBookUpdated: widget.onBookUpdated,
+      );
+      
+      await actions.browseGoodreads(context, widget.book);
+
+      // Complete animation
+      await _goodreadsController.forward();
+      await Future.delayed(const Duration(milliseconds: 200));
+      await _goodreadsController.reverse();
+    } catch (e) {
+      if (_goodreadsController.isAnimating && mounted) {
+        _goodreadsController.reverse();
+      }
+      Logger.error('Error browsing Goodreads: $e');
+      if (context.mounted) {
+        _showSnackBar(context, 'Error browsing Goodreads: ${e.toString()}', Colors.red);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isGoodreadsAnimating = false;
+        });
+      }
+    }
+  }
+
+  // Convert MP3 to M4B method
   Future<void> _convertToM4B(BuildContext context) async {
     if (_isConverting) return;
     

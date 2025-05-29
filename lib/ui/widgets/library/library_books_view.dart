@@ -58,7 +58,6 @@ class LibraryBooksView extends StatelessWidget {
   Widget _buildGridView() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Fixed card dimensions - no resizing
         const double cardWidth = 200.0;
         const double cardHeight = 400.0;
         const double spacing = 24.0;

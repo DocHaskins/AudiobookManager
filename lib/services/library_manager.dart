@@ -756,45 +756,52 @@ class LibraryManager {
 
     try {
       Logger.log('Writing metadata to file: ${file.filename}');
-      final originalMetadata = file.metadata!;
+      final currentMetadata = file.metadata!;
       final metadataService = MetadataService();
       await metadataService.initialize();
       
       String? coverImagePath;
-      if (originalMetadata.thumbnailUrl.isNotEmpty && 
-          !originalMetadata.thumbnailUrl.startsWith('http')) {
-        final coverFile = File(originalMetadata.thumbnailUrl);
+      if (currentMetadata.thumbnailUrl.isNotEmpty && 
+          !currentMetadata.thumbnailUrl.startsWith('http')) {
+        final coverFile = File(currentMetadata.thumbnailUrl);
         if (await coverFile.exists()) {
-          coverImagePath = originalMetadata.thumbnailUrl;
+          coverImagePath = currentMetadata.thumbnailUrl;
           Logger.log('Using cover image for embedding: ${path_util.basename(coverImagePath)}');
         } else {
-          Logger.warning('Cover file does not exist: ${originalMetadata.thumbnailUrl}');
+          Logger.warning('Cover file does not exist: ${currentMetadata.thumbnailUrl}');
         }
       }
 
       final success = await metadataService.writeMetadata(
         file.path, 
-        originalMetadata,
+        currentMetadata,
         coverImagePath: coverImagePath,
       );
       
       if (success) {
         Logger.log('Successfully wrote metadata to file: ${file.filename}${coverImagePath != null ? ' (including cover)' : ''}');
+        
         final freshMetadata = await metadataService.extractMetadata(
           file.path, 
           forceRefresh: true
         );
         
         if (freshMetadata != null) {
-          final enhancedMetadata = freshMetadata.enhance(originalMetadata);
-          file.metadata = enhancedMetadata;
-          await _storageManager.enhanceMetadataForFile(file.path, enhancedMetadata);
-          _notifyLibraryChanged();
+          final preservedMetadata = currentMetadata.copyWith(
+            audioDuration: freshMetadata.audioDuration,
+            fileFormat: freshMetadata.fileFormat,
+          );
           
-          Logger.log('Metadata successfully written and enhanced for: ${file.filename}');
+          file.metadata = preservedMetadata;
+          
+          await _storageManager.updateMetadataForFile(file.path, preservedMetadata, force: true);
+          
+          Logger.log('Metadata written to file and rich metadata preserved for: ${file.filename}');
         } else {
-          Logger.warning('Could not verify written metadata, keeping original for: ${file.filename}');
+          Logger.warning('Could not verify file write, keeping all current metadata for: ${file.filename}');
         }
+
+        _notifyLibraryChanged();
         
         return true;
       } else {

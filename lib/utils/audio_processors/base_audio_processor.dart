@@ -1,7 +1,5 @@
 // lib/utils/audio_processors/base_audio_processor.dart
 import 'dart:async';
-import 'dart:collection';
-import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 
 /// Base class for all audio processing operations
 abstract class BaseAudioProcessor {

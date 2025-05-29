@@ -16,9 +16,10 @@ dependencies:
   
   flutter_slidable: ^3.0.0
   google_fonts: ^6.2.1
-  # State management
   provider: ^6.1.1
-  
+  webview_flutter: ^4.4.2
+  webview_flutter_android: ^3.12.1
+  webview_flutter_wkwebview: ^3.9.4
   
   # File handling
   path_provider: ^2.1.1

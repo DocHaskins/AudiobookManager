@@ -1185,20 +1185,25 @@ class MetadataService {
     AudiobookMetadata metadata, {
     StreamController<ConversionProgress>? progressController,
     Duration? totalDuration,
-    String? bitrate, // New parameter for bitrate
-    bool preserveOriginalBitrate = false, // New parameter to preserve original
+    String? bitrate,
+    bool preserveOriginalBitrate = false,
   }) async {
     try {
-      Logger.log('Starting MP3 to M4B conversion: $inputPath -> $outputPath');
-      Logger.log('Quality settings - Bitrate: ${bitrate ?? "default"}, Preserve original: $preserveOriginalBitrate');
+      Logger.log('🎵 MetadataService: Starting MP3 to M4B conversion');
+      Logger.log('📁 Input: $inputPath');
+      Logger.log('📁 Output: $outputPath');
+      Logger.log('🔧 Bitrate: ${bitrate ?? "default"}, Preserve original: $preserveOriginalBitrate');
+      Logger.log('⏱️ Total duration: ${totalDuration != null ? _formatDuration(totalDuration) : "unknown"}');
+      Logger.log('📊 Progress controller provided: ${progressController != null}');
       
       // Ensure FFmpeg is available
       if (!_systemFFmpegAvailable || _systemFFmpegPath == null) {
-        Logger.error('System FFmpeg not available for conversion');
+        Logger.error('❌ System FFmpeg not available for conversion');
         return false;
       }
       
       // Step 1: Convert audio format with progress tracking
+      Logger.log('📊 Emitting initial progress');
       progressController?.add(ConversionProgress.initial());
       
       final conversionSuccess = await _convertAudioFormatWithProgress(
@@ -1210,14 +1215,17 @@ class MetadataService {
         preserveOriginalBitrate: preserveOriginalBitrate,
       );
       
+      Logger.log('🔄 Audio format conversion result: $conversionSuccess');
+      
       if (!conversionSuccess) {
-        Logger.error('Audio format conversion failed');
+        Logger.error('❌ Audio format conversion failed');
         return false;
       }
-      
-      Logger.log('Audio conversion successful, embedding metadata...');
+
+      Logger.log('✅ Audio conversion successful, embedding metadata...');
       
       // Step 2: Embed metadata into the converted M4B file
+      Logger.log('📊 Emitting metadata embedding progress');
       progressController?.add(ConversionProgress.embeddingMetadata());
       
       final metadataSuccess = await writeMetadataWithDiagnostics(
@@ -1229,22 +1237,26 @@ class MetadataService {
                         : null,
       );
       
+      Logger.log('🔄 Metadata embedding result: $metadataSuccess');
+      
       if (metadataSuccess) {
-        Logger.log('MP3 to M4B conversion completed successfully');
+        Logger.log('✅ MP3 to M4B conversion completed successfully');
+        Logger.log('📊 Emitting completion progress');
         progressController?.add(ConversionProgress.completed());
         return true;
       } else {
-        Logger.error('Failed to embed metadata in converted M4B file');
+        Logger.error('❌ Failed to embed metadata in converted M4B file');
         // Clean up the converted file if metadata embedding failed
         try {
           await File(outputPath).delete();
+          Logger.log('🗑️ Cleaned up failed conversion file');
         } catch (e) {
-          Logger.warning('Failed to cleanup failed conversion file: $e');
+          Logger.warning('⚠️ Failed to cleanup failed conversion file: $e');
         }
         return false;
       }
     } catch (e) {
-      Logger.error('Error in MP3 to M4B conversion: $e');
+      Logger.error('❌ Error in MP3 to M4B conversion: $e');
       return false;
     }
   }
@@ -1256,16 +1268,20 @@ class MetadataService {
     Duration? totalDuration,
     String? bitrate,
     bool preserveOriginalBitrate = false,
-    int? cpuThreads, // Allow custom thread count
+    int? cpuThreads,
     bool useHardwareOptimizations = true,
   }) async {
     Process? process;
     
     try {
-      Logger.log('Converting audio format with hardware optimizations: $inputPath -> $outputPath');
+      Logger.log('🔄 Starting audio format conversion with debug');
+      Logger.log('📁 Input: ${path_util.basename(inputPath)}');
+      Logger.log('📁 Output: ${path_util.basename(outputPath)}');
+      Logger.log('📊 Progress controller: ${progressController != null}');
+      Logger.log('⏱️ Total duration: ${totalDuration != null ? _formatDuration(totalDuration) : "unknown"}');
       
       if (_systemFFmpegPath == null) {
-        Logger.error('System FFmpeg path not available');
+        Logger.error('❌ System FFmpeg path not available');
         return false;
       }
       
@@ -1281,8 +1297,8 @@ class MetadataService {
       // Add hardware decoding optimizations
       if (useHardwareOptimizations) {
         args.addAll([
-          '-threads', effectiveThreads.toString(), // Optimize thread usage
-          '-thread_type', 'slice',     // Better for audio processing
+          '-threads', effectiveThreads.toString(),
+          '-thread_type', 'slice',
         ]);
       }
       
@@ -1294,15 +1310,15 @@ class MetadataService {
       if (preserveOriginalBitrate) {
         final inputBitrate = await _getAudioBitrate(inputPath);
         if (inputBitrate != null) {
-          Logger.log('Preserving original bitrate: $inputBitrate');
+          Logger.log('🔧 Preserving original bitrate: $inputBitrate');
           args.addAll([
-            '-c:a', 'aac',           // Use AAC codec
-            '-b:a', inputBitrate,    // Use original bitrate
+            '-c:a', 'aac',
+            '-b:a', inputBitrate,
           ]);
         } else {
           args.addAll([
             '-c:a', 'aac',
-            '-q:a', '2',             // Quality-based encoding
+            '-q:a', '2',
           ]);
         }
       } else if (bitrate != null && bitrate.isNotEmpty) {
@@ -1319,96 +1335,108 @@ class MetadataService {
       
       // Advanced encoding optimizations
       args.addAll([
-        // AAC encoder optimizations
-        '-aac_coder', 'twoloop',     // Better quality AAC encoding
-        '-cutoff', '20000',          // Preserve high frequencies
-        
-        // CPU optimization flags
-        '-cpu-used', '0',            // Use all CPU optimizations
-        
-        // Container optimizations
+        '-aac_coder', 'twoloop',
+        '-cutoff', '20000',
+        '-cpu-used', '0',
         '-f', 'mp4',
         '-movflags', '+faststart',
         '-avoid_negative_ts', 'make_zero',
-        
-        // Memory and buffer optimizations
         '-max_muxing_queue_size', '256',
         '-fflags', '+genpts+discardcorrupt',
         
-        // Progress reporting
-        '-progress', 'pipe:2',
+        // CRITICAL: Progress reporting - this is key!
+        '-progress', 'pipe:2',  // Send progress to stderr
         '-nostdin',
         '-hide_banner',
-        '-loglevel', 'warning',
+        '-loglevel', 'info',    // Changed from 'warning' to 'info' for more output
         
         '-y', outputPath,
       ]);
       
-      Logger.log('FFmpeg optimized for $effectiveThreads threads on $cpuCores core system');
-      
-      // Set process priority for better performance
-      final Map<String, String> environment = Map.from(Platform.environment);
-      if (Platform.isWindows) {
-        // Windows: Use below normal priority to prevent system freezing
-        environment['FFMPEG_PRIORITY'] = 'below_normal';
-      } else {
-        // Unix/Linux: Use nice value
-        args.insert(0, '10'); // Nice value
-        args.insert(0, '-n');
-        args.insert(0, 'nice');
-      }
+      Logger.log('🔧 FFmpeg command: $_systemFFmpegPath ${args.join(' ')}');
+      Logger.log('🔧 Optimized for $effectiveThreads threads on $cpuCores core system');
       
       // Start FFmpeg process
+      Logger.log('🚀 Starting FFmpeg process');
       process = await Process.start(
         _systemFFmpegPath!,
         args,
-        environment: environment,
       );
       
-      // Rest of the conversion logic remains the same...
       final Completer<bool> completer = Completer<bool>();
       StreamSubscription? stderrSubscription;
       StreamSubscription? stdoutSubscription;
       
+      // Track progress updates
+      int progressUpdateCount = 0;
+      DateTime lastProgressTime = DateTime.now();
+      
       try {
         final List<String> stderrBuffer = [];
         const maxBufferLines = 100;
-        DateTime lastProgressUpdate = DateTime.now();
-        const progressUpdateInterval = Duration(milliseconds: 500);
         
+        Logger.log('📊 Setting up progress monitoring streams');
+        
+        // Monitor stderr for progress updates
         stderrSubscription = process.stderr
             .transform(const SystemEncoding().decoder)
             .transform(const LineSplitter())
             .listen((line) {
           stderrBuffer.add(line);
+          Logger.log('🔍 FFmpeg stderr: $line'); // Log every line for debugging
+          
           if (stderrBuffer.length > maxBufferLines) {
             stderrBuffer.removeRange(0, stderrBuffer.length - maxBufferLines);
           }
           
+          // Parse progress and emit updates
           final now = DateTime.now();
-          if (now.difference(lastProgressUpdate) >= progressUpdateInterval) {
+          if (now.difference(lastProgressTime).inMilliseconds >= 500) { // Throttle updates
             _parseFFmpegProgress(line, progressController, totalDuration);
-            lastProgressUpdate = now;
+            lastProgressTime = now;
+            progressUpdateCount++;
           }
+        }, onError: (error) {
+          Logger.error('❌ FFmpeg stderr stream error: $error');
         });
         
+        // Monitor stdout (usually empty for FFmpeg but good for debugging)
         stdoutSubscription = process.stdout
             .transform(const SystemEncoding().decoder)
-            .listen((_) {});
+            .listen((data) {
+          if (data.trim().isNotEmpty) {
+            Logger.log('🔍 FFmpeg stdout: $data');
+          }
+        }, onError: (error) {
+          Logger.error('❌ FFmpeg stdout stream error: $error');
+        });
         
+        Logger.log('📊 Waiting for FFmpeg process to complete');
         final exitCode = await process.exitCode;
+        Logger.log('🔄 FFmpeg process completed with exit code: $exitCode');
+        Logger.log('📊 Total progress updates received: $progressUpdateCount');
         
         await stderrSubscription.cancel();
         await stdoutSubscription.cancel();
         
         if (exitCode == 0) {
-          Logger.log('Hardware-optimized conversion successful');
+          Logger.log('✅ Hardware-optimized conversion successful');
+          
+          // Emit final progress update
+          if (progressController != null) {
+            Logger.log('📊 Emitting final progress update');
+            progressController.add(ConversionProgress.converting(
+              percentage: 1.0,
+              speed: 'Complete',
+            ));
+          }
+          
           completer.complete(true);
         } else {
-          Logger.error('FFmpeg conversion failed with exit code: $exitCode');
+          Logger.error('❌ FFmpeg conversion failed with exit code: $exitCode');
           if (stderrBuffer.isNotEmpty) {
             final lastLines = stderrBuffer.sublist(stderrBuffer.length > 10 ? stderrBuffer.length - 10 : 0);
-            Logger.error('Last stderr output: ${lastLines.join('\n')}');
+            Logger.error('📋 Last stderr output: ${lastLines.join('\n')}');
           }
           completer.complete(false);
         }
@@ -1416,19 +1444,23 @@ class MetadataService {
         return await completer.future;
         
       } catch (e) {
+        Logger.error('❌ Error in conversion process: $e');
         await stderrSubscription?.cancel();
         await stdoutSubscription?.cancel();
         throw e;
       }
       
     } catch (e) {
-      Logger.error('Error in hardware-optimized conversion: $e');
+      Logger.error('❌ Error in hardware-optimized conversion: $e');
       return false;
     } finally {
       if (process != null) {
         try {
+          Logger.log('🛑 Killing FFmpeg process');
           process.kill();
-        } catch (e) {}
+        } catch (e) {
+          Logger.log('⚠️ Error killing process: $e');
+        }
       }
     }
   }
@@ -1483,60 +1515,165 @@ class MetadataService {
     StreamController<ConversionProgress>? progressController,
     Duration? totalDuration,
   ) {
-    if (progressController == null) return;
+    // Always log what we're parsing
+    Logger.log('🔍 Parsing FFmpeg output: ${data.trim()}');
+    
+    if (progressController == null) {
+      Logger.log('⚠️ No progress controller provided, skipping progress parsing');
+      return;
+    }
+    
+    if (totalDuration == null) {
+      Logger.log('⚠️ No total duration provided, progress percentage will be unavailable');
+    }
     
     try {
       // FFmpeg progress format includes lines like:
       // out_time_ms=12345678
       // progress=continue
       // speed=1.23x
+      // Also check for time= format in regular output
       
       final lines = data.split('\n');
       Duration? currentTime;
       String speed = '';
+      bool foundProgressData = false;
       
       for (final line in lines) {
         final trimmedLine = line.trim();
         
+        // Parse progress stream format (from -progress pipe:2)
         if (trimmedLine.startsWith('out_time_ms=')) {
           final timeMs = int.tryParse(trimmedLine.substring('out_time_ms='.length));
           if (timeMs != null) {
             currentTime = Duration(microseconds: timeMs);
+            foundProgressData = true;
+            Logger.log('⏱️ Found out_time_ms: $timeMs (${_formatDuration(currentTime)})');
+          }
+        } else if (trimmedLine.startsWith('out_time=')) {
+          // Alternative time format: out_time=00:01:23.45
+          final timeStr = trimmedLine.substring('out_time='.length);
+          currentTime = _parseTimeString(timeStr);
+          if (currentTime != null) {
+            foundProgressData = true;
+            Logger.log('⏱️ Found out_time: $timeStr (${_formatDuration(currentTime)})');
           }
         } else if (trimmedLine.startsWith('speed=')) {
           speed = trimmedLine.substring('speed='.length);
+          foundProgressData = true;
+          Logger.log('🏃 Found speed: $speed');
+        } else if (trimmedLine.contains('time=')) {
+          // Parse regular FFmpeg output format: time=00:01:23.45
+          final timeMatch = RegExp(r'time=(\d{2}:\d{2}:\d{2}\.\d{2})').firstMatch(trimmedLine);
+          if (timeMatch != null) {
+            currentTime = _parseTimeString(timeMatch.group(1)!);
+            if (currentTime != null) {
+              foundProgressData = true;
+              Logger.log('⏱️ Found time from regular output: ${timeMatch.group(1)} (${_formatDuration(currentTime)})');
+            }
+          }
+        } else if (trimmedLine.contains('speed=')) {
+          // Parse speed from regular output
+          final speedMatch = RegExp(r'speed=(\S+)').firstMatch(trimmedLine);
+          if (speedMatch != null) {
+            speed = speedMatch.group(1)!;
+            foundProgressData = true;
+            Logger.log('🏃 Found speed from regular output: $speed');
+          }
         }
       }
       
+      if (!foundProgressData) {
+        Logger.log('⚠️ No progress data found in line: ${data.trim()}');
+        return;
+      }
+      
       // Calculate progress percentage if we have both current and total time
-      if (currentTime != null && totalDuration != null && totalDuration.inMicroseconds > 0) {
-        final percentage = (currentTime.inMicroseconds / totalDuration.inMicroseconds).clamp(0.0, 1.0);
-        
-        // Calculate ETA
+      if (currentTime != null) {
+        double percentage = 0.0;
         Duration? eta;
-        if (percentage > 0 && speed.isNotEmpty) {
-          try {
-            final speedValue = double.tryParse(speed.replaceAll('x', ''));
-            if (speedValue != null && speedValue > 0) {
-              final remainingTime = totalDuration - currentTime;
-              eta = Duration(microseconds: (remainingTime.inMicroseconds / speedValue).round());
+        
+        if (totalDuration != null && totalDuration.inMicroseconds > 0) {
+          percentage = (currentTime.inMicroseconds / totalDuration.inMicroseconds).clamp(0.0, 1.0);
+          
+          // Calculate ETA
+          if (percentage > 0 && speed.isNotEmpty) {
+            try {
+              final speedValue = double.tryParse(speed.replaceAll('x', ''));
+              if (speedValue != null && speedValue > 0) {
+                final remainingTime = totalDuration - currentTime;
+                eta = Duration(microseconds: (remainingTime.inMicroseconds / speedValue).round());
+              }
+            } catch (e) {
+              Logger.log('⚠️ Error parsing speed value: $e');
             }
-          } catch (e) {
-            // Ignore speed parsing errors
           }
+        } else {
+          // Even without total duration, we can show that progress is happening
+          percentage = 0.1; // Show some progress to indicate activity
         }
         
-        progressController.add(ConversionProgress.converting(
+        Logger.log('📊 Calculated progress: ${(percentage * 100).toStringAsFixed(1)}%');
+        Logger.log('⏱️ Current time: ${_formatDuration(currentTime)}');
+        if (totalDuration != null) Logger.log('⏱️ Total duration: ${_formatDuration(totalDuration)}');
+        if (eta != null) Logger.log('⏱️ ETA: ${_formatDuration(eta)}');
+        
+        // Create and emit progress update
+        final progressUpdate = ConversionProgress.converting(
           percentage: percentage,
           currentTime: currentTime,
           eta: eta,
           speed: speed,
-        ));
+        );
+        
+        Logger.log('📤 Emitting progress update to controller');
+        progressController.add(progressUpdate);
+        
+      } else {
+        Logger.log('⚠️ No current time found, cannot calculate progress');
       }
     } catch (e) {
-      Logger.debug('Error parsing FFmpeg progress: $e');
-      // Don't fail the conversion for progress parsing errors
+      Logger.error('❌ Error parsing FFmpeg progress: $e');
+      Logger.error('📋 Raw data was: ${data.trim()}');
     }
+  }
+
+  Duration? _parseTimeString(String timeStr) {
+    try {
+      Logger.log('🔍 Parsing time string: $timeStr');
+      
+      // Parse format like "00:01:23.45" or "01:23.45"
+      final parts = timeStr.split(':');
+      if (parts.length >= 2) {
+        int hours = 0;
+        int minutes = 0;
+        double seconds = 0;
+        
+        if (parts.length == 3) {
+          // HH:MM:SS.ss format
+          hours = int.parse(parts[0]);
+          minutes = int.parse(parts[1]);
+          seconds = double.parse(parts[2]);
+        } else if (parts.length == 2) {
+          // MM:SS.ss format
+          minutes = int.parse(parts[0]);
+          seconds = double.parse(parts[1]);
+        }
+        
+        final duration = Duration(
+          hours: hours,
+          minutes: minutes,
+          seconds: seconds.floor(),
+          milliseconds: ((seconds - seconds.floor()) * 1000).round(),
+        );
+        
+        Logger.log('✅ Parsed time: ${_formatDuration(duration)}');
+        return duration;
+      }
+    } catch (e) {
+      Logger.error('❌ Error parsing time string "$timeStr": $e');
+    }
+    return null;
   }
   
   // Extract detailed audio information for debugging (existing method)

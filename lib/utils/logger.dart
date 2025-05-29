@@ -14,9 +14,13 @@ class Logger {
   static const int LEVEL_LOG = 1;
   static const int LEVEL_WARNING = 2;
   static const int LEVEL_ERROR = 3;
+  static const int LEVEL_DISABLED = 999;
   
   // Current log level
   static int _logLevel = LEVEL_LOG;
+  
+  // Enable/disable flag
+  static bool _enabled = false;
   
   // Log file
   static File? _logFile;
@@ -45,10 +49,18 @@ class Logger {
     int logLevel = LEVEL_LOG, 
     bool logToFile = false,
     bool enableConsoleColors = true,
+    bool enabled = true, // Added parameter
   }) async {
     _logLevel = logLevel;
     _logToFile = logToFile;
     _enableConsoleColors = enableConsoleColors;
+    _enabled = enabled; // Set the enable flag
+    
+    // Early return if disabled
+    if (!_enabled) {
+      _initialized = true;
+      return;
+    }
     
     // Get platform info
     try {
@@ -96,6 +108,22 @@ class Logger {
     }
     
     _initialized = true;
+  }
+  
+  // Enable/disable logging
+  static void enable() {
+    _enabled = true;
+  }
+  
+  static void disable() {
+    _enabled = false;
+  }
+  
+  static bool get isEnabled => _enabled;
+  
+  // Check if logging is enabled and level is appropriate
+  static bool _shouldLog(int level) {
+    return _enabled && _logLevel <= level;
   }
   
   // Print to console with optional coloring
@@ -188,7 +216,7 @@ class Logger {
   
   // Debug level logging
   static void debug(String message, [Object? error, StackTrace? stackTrace]) {
-    if (_logLevel <= LEVEL_DEBUG) {
+    if (_shouldLog(LEVEL_DEBUG)) {
       final now = DateTime.now();
       final formattedMessage = '[${_dateFormat.format(now)}] [DEBUG] $message ${error != null ? '\nError: $error' : ''}${stackTrace != null ? '\nStack Trace: $stackTrace' : ''}';
       _printToConsole(formattedMessage, LEVEL_DEBUG);
@@ -198,7 +226,7 @@ class Logger {
   
   // Info level logging
   static void log(String message, [Object? data]) {
-    if (_logLevel <= LEVEL_LOG) {
+    if (_shouldLog(LEVEL_LOG)) {
       final now = DateTime.now();
       final formattedMessage = '[${_dateFormat.format(now)}] [INFO] $message ${data != null ? '\nData: $data' : ''}';
       _printToConsole(formattedMessage, LEVEL_LOG);
@@ -208,7 +236,7 @@ class Logger {
   
   // Warning level logging
   static void warning(String message, [Object? error, StackTrace? stackTrace]) {
-    if (_logLevel <= LEVEL_WARNING) {
+    if (_shouldLog(LEVEL_WARNING)) {
       final now = DateTime.now();
       final formattedMessage = '[${_dateFormat.format(now)}] [WARNING] $message ${error != null ? '\nError: $error' : ''}${stackTrace != null ? '\nStack Trace: $stackTrace' : ''}';
       _printToConsole(formattedMessage, LEVEL_WARNING);
@@ -218,7 +246,7 @@ class Logger {
   
   // Error level logging
   static void error(String message, [Object? error, StackTrace? stackTrace]) {
-    if (_logLevel <= LEVEL_ERROR) {
+    if (_shouldLog(LEVEL_ERROR)) {
       final now = DateTime.now();
       final formattedMessage = '[${_dateFormat.format(now)}] [ERROR] $message ${error != null ? '\nError: $error' : ''}${stackTrace != null ? '\nStack Trace: $stackTrace' : ''}';
       _printToConsole(formattedMessage, LEVEL_ERROR);
@@ -241,6 +269,8 @@ class Logger {
   
   // Log platform/device information
   static void logDeviceInfo() {
+    if (!_shouldLog(LEVEL_LOG)) return;
+    
     try {
       final info = StringBuffer('Device Information:\n');
       info.writeln('  Platform: ${Platform.operatingSystem} ${Platform.operatingSystemVersion}');
@@ -258,11 +288,15 @@ class Logger {
   // Set log level
   static void setLogLevel(int level) {
     _logLevel = level;
-    log('Log level changed to: $_logLevel');
+    if (_shouldLog(LEVEL_LOG)) {
+      log('Log level changed to: $_logLevel');
+    }
   }
   
   // Flush logs
   static Future<void> flush() async {
+    if (!_enabled) return;
+    
     // Wait for write queue to be processed
     if (_isProcessingQueue) {
       final isQueueEmpty = _writeQueue.isEmpty;
@@ -274,6 +308,8 @@ class Logger {
   
   // Clean up old log files (older than 7 days)
   static Future<void> cleanupOldLogs() async {
+    if (!_enabled) return;
+    
     try {
       final appDir = await getApplicationDocumentsDirectory();
       final logDir = Directory(path_util.join(appDir.path, 'logs'));
