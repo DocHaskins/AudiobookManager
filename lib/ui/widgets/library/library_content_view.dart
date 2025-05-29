@@ -7,8 +7,6 @@ import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'package:audiobook_organizer/ui/widgets/library/library_books_view.dart';
 import 'package:audiobook_organizer/ui/widgets/library/library_collections_view.dart';
-import 'package:audiobook_organizer/ui/widgets/audiobook/audiobook_detail_view.dart';
-import 'package:audiobook_organizer/ui/widgets/collections/collection_detail_view.dart';
 import 'package:audiobook_organizer/utils/library_filter_utils.dart';
 
 class LibraryContentView extends StatefulWidget {
@@ -192,25 +190,7 @@ class _LibraryContentViewState extends State<LibraryContentView> {
             ),
             child: Row(
               children: [
-                // Collections/Books toggle
-                IconButton(
-                  icon: Icon(
-                    Icons.collections_bookmark,
-                    color: widget.showCollections ? Theme.of(context).primaryColor : Colors.grey[600],
-                  ),
-                  onPressed: () {}, // Controlled by sidebar now
-                  tooltip: 'Collections',
-                ),
-                IconButton(
-                  icon: Icon(
-                    Icons.library_books,
-                    color: !widget.showCollections ? Theme.of(context).primaryColor : Colors.grey[600],
-                  ),
-                  onPressed: () {}, // Controlled by sidebar now
-                  tooltip: 'Books',
-                ),
                 const VerticalDivider(color: Color(0xFF404040), width: 1),
-                // Grid/List view toggle (only for books)
                 if (!widget.showCollections) ...[
                   IconButton(
                     icon: Icon(

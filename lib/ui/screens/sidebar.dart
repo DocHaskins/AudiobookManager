@@ -519,6 +519,7 @@ class _UnifiedSidebarState extends State<Sidebar> {
         children: [
           _buildSectionTitle('MEDIA TOOLS'),
           _buildCategoryItem(context, 'Mp3 Merger', Icons.merge_type_rounded),
+          _buildCategoryItem(context, 'Batch Converter', Icons.transform),
         ],
       ),
     );

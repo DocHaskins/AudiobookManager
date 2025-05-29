@@ -1,7 +1,6 @@
 // lib/ui/widgets/library_sidebar.dart - Updated sidebar component
 // =============================================================================
 
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/collection.dart';

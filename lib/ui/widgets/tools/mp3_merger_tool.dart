@@ -574,7 +574,7 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
           ),
           const SizedBox(height: 16),
           
-          Container(
+          SizedBox(
             height: 300,
             child: ReorderableListView.builder(
               itemCount: _chapters.length,
@@ -686,34 +686,61 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
                      (_bookMetadata != null || (_bookTitle.isNotEmpty && _bookAuthor.isNotEmpty)) &&
                      !_isProcessing;
 
-    return Row(
+    return Column(
       children: [
-        ElevatedButton.icon(
-          onPressed: canProcess ? _startMergeProcess : null,
-          icon: _isProcessing 
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.merge_type),
-          label: Text(_isProcessing ? 'Processing...' : 'Merge to M4B'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          ),
+        // Primary action row - Merge and Reset
+        Row(
+          children: [
+            ElevatedButton.icon(
+              onPressed: canProcess ? _startMergeProcess : null,
+              icon: _isProcessing 
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.merge_type),
+              label: Text(_isProcessing ? 'Processing...' : 'Merge to M4B'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              ),
+            ),
+            const SizedBox(width: 12),
+            OutlinedButton.icon(
+              onPressed: _isProcessing ? null : _resetTool,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Reset'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: BorderSide(color: Colors.grey[600]!),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        OutlinedButton.icon(
-          onPressed: _isProcessing ? null : _resetTool,
-          icon: const Icon(Icons.refresh),
-          label: const Text('Reset'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.white,
-            side: BorderSide(color: Colors.grey[600]!),
+        
+        // Secondary action row - Clear All button
+        if (_selectedFolder != null || _chapters.isNotEmpty || _bookMetadata != null || 
+            _bookTitle.isNotEmpty || _bookAuthor.isNotEmpty || _outputFileName.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _isProcessing ? null : _clearAllData,
+              icon: const Icon(Icons.clear_all, color: Colors.orange),
+              label: const Text(
+                'Clear All & Start Fresh',
+                style: TextStyle(color: Colors.orange),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.orange,
+                side: const BorderSide(color: Colors.orange),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+            ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -813,7 +840,7 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
           final metadata = await _metadataService.extractMetadata(file.path);
           final duration = metadata?.audioDuration ?? const Duration(minutes: 3); // Fallback duration
           
-          final chapterTitle = metadata?.title?.isNotEmpty == true 
+          final chapterTitle = metadata?.title.isNotEmpty == true 
               ? metadata!.title 
               : _generateChapterTitle(path_util.basenameWithoutExtension(file.path), i + 1);
 
@@ -1154,7 +1181,7 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
       return 'Chapter $chapterNumber';
     }
     
-    return 'Chapter $chapterNumber: ${cleaned}';
+    return 'Chapter $chapterNumber: $cleaned';
   }
 
   String _extractBookTitle(String folderPath, AudiobookMetadata metadata) {
@@ -1169,7 +1196,7 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
 
   String _generateOutputFileName() {
     if (_bookTitle.isNotEmpty && _bookAuthor.isNotEmpty) {
-      return '${_bookAuthor} - ${_bookTitle}';
+      return '$_bookAuthor - $_bookTitle';
     } else if (_bookTitle.isNotEmpty) {
       return _bookTitle;
     } else if (_selectedFolder != null) {
@@ -1213,6 +1240,70 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
         duration: const Duration(seconds: 4),
       ),
     );
+  }
+
+  Future<void> _clearAllData() async {
+    final shouldClear = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        title: const Row(
+          children: [
+            Icon(Icons.warning, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('Clear All Data', style: TextStyle(color: Colors.white)),
+          ],
+        ),
+        content: const Text(
+          'This will clear all current data including:\n'
+          '• Selected folder\n'
+          '• All chapters\n'
+          '• Book metadata\n'
+          '• Manual input fields\n'
+          '• Output filename\n\n'
+          'Are you sure you want to start fresh?',
+          style: TextStyle(color: Colors.grey),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldClear == true) {
+      setState(() {
+        // Clear folder and chapters
+        _selectedFolder = null;
+        _chapters = [];
+        
+        // Clear metadata
+        _bookMetadata = null;
+        
+        // Clear manual input fields
+        _bookTitle = '';
+        _bookAuthor = '';
+        _outputFileName = '';
+        
+        // Clear status
+        _statusMessage = '';
+        _isScanning = false;
+        _isProcessing = false;
+      });
+      
+      _showSuccessSnackBar('All data cleared. Ready for a new merge project!');
+      Logger.log('MP3 Merger: All data cleared by user');
+    }
   }
 }
 
@@ -1319,7 +1410,7 @@ class _MergeProgressDialogState extends State<_MergeProgressDialog> {
           ),
         ],
       ),
-      content: Container(
+      content: SizedBox(
         width: 400,
         child: Column(
           mainAxisSize: MainAxisSize.min,

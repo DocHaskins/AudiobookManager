@@ -1,12 +1,11 @@
 // lib/services/metadata_service.dart
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:math' as math;
 import 'dart:async';
 import 'dart:convert';
 import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter/ffmpeg_session.dart';
 import 'package:ffmpeg_kit_flutter/return_code.dart';
-import 'package:ffmpeg_kit_flutter/log.dart';
 import 'package:metadata_god/metadata_god.dart';
 import 'package:path/path.dart' as path_util;
 import 'package:mime/mime.dart';
@@ -1186,9 +1185,12 @@ class MetadataService {
     AudiobookMetadata metadata, {
     StreamController<ConversionProgress>? progressController,
     Duration? totalDuration,
+    String? bitrate, // New parameter for bitrate
+    bool preserveOriginalBitrate = false, // New parameter to preserve original
   }) async {
     try {
       Logger.log('Starting MP3 to M4B conversion: $inputPath -> $outputPath');
+      Logger.log('Quality settings - Bitrate: ${bitrate ?? "default"}, Preserve original: $preserveOriginalBitrate');
       
       // Ensure FFmpeg is available
       if (!_systemFFmpegAvailable || _systemFFmpegPath == null) {
@@ -1204,6 +1206,8 @@ class MetadataService {
         outputPath,
         progressController: progressController,
         totalDuration: totalDuration,
+        bitrate: bitrate,
+        preserveOriginalBitrate: preserveOriginalBitrate,
       );
       
       if (!conversionSuccess) {
@@ -1220,9 +1224,9 @@ class MetadataService {
         outputPath,
         metadata,
         coverImagePath: metadata.thumbnailUrl.isNotEmpty && 
-                       !metadata.thumbnailUrl.startsWith('http') 
-                         ? metadata.thumbnailUrl 
-                         : null,
+                      !metadata.thumbnailUrl.startsWith('http') 
+                        ? metadata.thumbnailUrl 
+                        : null,
       );
       
       if (metadataSuccess) {
@@ -1245,72 +1249,231 @@ class MetadataService {
     }
   }
 
-  // Helper method to convert audio format with progress tracking
   Future<bool> _convertAudioFormatWithProgress(
     String inputPath, 
     String outputPath, {
     StreamController<ConversionProgress>? progressController,
     Duration? totalDuration,
+    String? bitrate,
+    bool preserveOriginalBitrate = false,
+    int? cpuThreads, // Allow custom thread count
+    bool useHardwareOptimizations = true,
   }) async {
+    Process? process;
+    
     try {
-      Logger.log('Converting audio format with progress tracking: $inputPath -> $outputPath');
+      Logger.log('Converting audio format with hardware optimizations: $inputPath -> $outputPath');
       
       if (_systemFFmpegPath == null) {
         Logger.error('System FFmpeg path not available');
         return false;
       }
       
-      // Build FFmpeg arguments for MP3 to M4B conversion with progress
+      // Detect system capabilities
+      final cpuCores = Platform.numberOfProcessors;
+      final effectiveThreads = cpuThreads ?? _calculateOptimalThreads(cpuCores);
+      
+      // Build FFmpeg arguments with hardware optimizations
       final List<String> args = [
         '-i', inputPath,              // Input MP3 file
-        '-map', '0:a',               // Map only audio stream
-        '-c:a', 'aac',               // Use AAC codec
-        '-b:a', '64k',               // Set bitrate to 64k
-        '-f', 'mp4',                 // Force MP4 container format
-        '-movflags', '+faststart',   // Optimize for streaming
-        '-avoid_negative_ts', 'make_zero', // Handle timestamp issues
-        '-progress', 'pipe:2',       // Send progress to stderr
-        '-y',                        // Overwrite output file if exists
-        '-threads', '0',             // Use all available CPU cores
-        outputPath,                  // Output M4B file
       ];
       
-      Logger.log('FFmpeg command with progress: $_systemFFmpegPath ${args.join(' ')}');
+      // Add hardware decoding optimizations
+      if (useHardwareOptimizations) {
+        args.addAll([
+          '-threads', effectiveThreads.toString(), // Optimize thread usage
+          '-thread_type', 'slice',     // Better for audio processing
+        ]);
+      }
+      
+      args.addAll([
+        '-map', '0:a',               // Map only audio stream
+      ]);
+      
+      // Audio codec settings with optimizations
+      if (preserveOriginalBitrate) {
+        final inputBitrate = await _getAudioBitrate(inputPath);
+        if (inputBitrate != null) {
+          Logger.log('Preserving original bitrate: $inputBitrate');
+          args.addAll([
+            '-c:a', 'aac',           // Use AAC codec
+            '-b:a', inputBitrate,    // Use original bitrate
+          ]);
+        } else {
+          args.addAll([
+            '-c:a', 'aac',
+            '-q:a', '2',             // Quality-based encoding
+          ]);
+        }
+      } else if (bitrate != null && bitrate.isNotEmpty) {
+        args.addAll([
+          '-c:a', 'aac',
+          '-b:a', bitrate,
+        ]);
+      } else {
+        args.addAll([
+          '-c:a', 'aac',
+          '-b:a', '128k',
+        ]);
+      }
+      
+      // Advanced encoding optimizations
+      args.addAll([
+        // AAC encoder optimizations
+        '-aac_coder', 'twoloop',     // Better quality AAC encoding
+        '-cutoff', '20000',          // Preserve high frequencies
+        
+        // CPU optimization flags
+        '-cpu-used', '0',            // Use all CPU optimizations
+        
+        // Container optimizations
+        '-f', 'mp4',
+        '-movflags', '+faststart',
+        '-avoid_negative_ts', 'make_zero',
+        
+        // Memory and buffer optimizations
+        '-max_muxing_queue_size', '256',
+        '-fflags', '+genpts+discardcorrupt',
+        
+        // Progress reporting
+        '-progress', 'pipe:2',
+        '-nostdin',
+        '-hide_banner',
+        '-loglevel', 'warning',
+        
+        '-y', outputPath,
+      ]);
+      
+      Logger.log('FFmpeg optimized for $effectiveThreads threads on $cpuCores core system');
+      
+      // Set process priority for better performance
+      final Map<String, String> environment = Map.from(Platform.environment);
+      if (Platform.isWindows) {
+        // Windows: Use below normal priority to prevent system freezing
+        environment['FFMPEG_PRIORITY'] = 'below_normal';
+      } else {
+        // Unix/Linux: Use nice value
+        args.insert(0, '10'); // Nice value
+        args.insert(0, '-n');
+        args.insert(0, 'nice');
+      }
       
       // Start FFmpeg process
-      final process = await Process.start(_systemFFmpegPath!, args);
+      process = await Process.start(
+        _systemFFmpegPath!,
+        args,
+        environment: environment,
+      );
       
-      // Track progress by parsing stderr
+      // Rest of the conversion logic remains the same...
       final Completer<bool> completer = Completer<bool>();
-      bool hasError = false;
+      StreamSubscription? stderrSubscription;
+      StreamSubscription? stdoutSubscription;
       
-      // Parse progress from stderr
-      process.stderr.transform(const SystemEncoding().decoder).listen((data) {
-        _parseFFmpegProgress(data, progressController, totalDuration);
-      });
-      
-      // Log stdout for debugging
-      process.stdout.transform(const SystemEncoding().decoder).listen((data) {
-        Logger.debug('FFmpeg stdout: $data');
-      });
-      
-      // Wait for process completion
-      process.exitCode.then((exitCode) {
+      try {
+        final List<String> stderrBuffer = [];
+        const maxBufferLines = 100;
+        DateTime lastProgressUpdate = DateTime.now();
+        const progressUpdateInterval = Duration(milliseconds: 500);
+        
+        stderrSubscription = process.stderr
+            .transform(const SystemEncoding().decoder)
+            .transform(const LineSplitter())
+            .listen((line) {
+          stderrBuffer.add(line);
+          if (stderrBuffer.length > maxBufferLines) {
+            stderrBuffer.removeRange(0, stderrBuffer.length - maxBufferLines);
+          }
+          
+          final now = DateTime.now();
+          if (now.difference(lastProgressUpdate) >= progressUpdateInterval) {
+            _parseFFmpegProgress(line, progressController, totalDuration);
+            lastProgressUpdate = now;
+          }
+        });
+        
+        stdoutSubscription = process.stdout
+            .transform(const SystemEncoding().decoder)
+            .listen((_) {});
+        
+        final exitCode = await process.exitCode;
+        
+        await stderrSubscription.cancel();
+        await stdoutSubscription.cancel();
+        
         if (exitCode == 0) {
-          Logger.log('Audio conversion successful');
+          Logger.log('Hardware-optimized conversion successful');
           completer.complete(true);
         } else {
           Logger.error('FFmpeg conversion failed with exit code: $exitCode');
-          hasError = true;
+          if (stderrBuffer.isNotEmpty) {
+            final lastLines = stderrBuffer.sublist(stderrBuffer.length > 10 ? stderrBuffer.length - 10 : 0);
+            Logger.error('Last stderr output: ${lastLines.join('\n')}');
+          }
           completer.complete(false);
         }
-      });
-      
-      return await completer.future;
+        
+        return await completer.future;
+        
+      } catch (e) {
+        await stderrSubscription?.cancel();
+        await stdoutSubscription?.cancel();
+        throw e;
+      }
       
     } catch (e) {
-      Logger.error('Error in audio format conversion with progress: $e');
+      Logger.error('Error in hardware-optimized conversion: $e');
       return false;
+    } finally {
+      if (process != null) {
+        try {
+          process.kill();
+        } catch (e) {}
+      }
+    }
+  }
+
+  int _calculateOptimalThreads(int cpuCores) {
+    // For audio encoding, using all cores doesn't always help
+    // Optimal is usually 2-4 threads per conversion
+    if (cpuCores >= 16) return 4;
+    if (cpuCores >= 8) return 3;
+    if (cpuCores >= 4) return 2;
+    return 1;
+  }
+
+  Future<String?> _getAudioBitrate(String inputPath) async {
+    try {
+      if (_systemFFmpegPath == null) return null;
+      
+      // Use ffprobe to get audio bitrate
+      final ffprobePath = _systemFFmpegPath!.replaceAll('ffmpeg', 'ffprobe');
+      
+      final result = await Process.run(ffprobePath, [
+        '-v', 'error',
+        '-select_streams', 'a:0',
+        '-show_entries', 'stream=bit_rate',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        inputPath,
+      ]);
+      
+      if (result.exitCode == 0) {
+        final bitrateStr = result.stdout.toString().trim();
+        if (bitrateStr.isNotEmpty && bitrateStr != 'N/A') {
+          final bitrate = int.tryParse(bitrateStr);
+          if (bitrate != null) {
+            // Convert to k format (e.g., 128000 -> 128k)
+            final bitrateK = (bitrate / 1000).round();
+            return '${bitrateK}k';
+          }
+        }
+      }
+      
+      Logger.warning('Could not determine audio bitrate for: $inputPath');
+      return null;
+    } catch (e) {
+      Logger.error('Error getting audio bitrate: $e');
+      return null;
     }
   }
 
@@ -1449,34 +1612,24 @@ class MetadataService {
       tempFiles.add(tempListPath);
       
       Logger.log('Created concat list with ${chapters.length} files');
-      onProgress?.call('Concatenating audio files...', 0.1);
+      onProgress?.call('Starting audio concatenation...', 0.05);
 
-      // Step 1: Concatenate all MP3 files into a single M4B
-      final concatArgs = [
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', tempListPath,
-        '-c:a', 'aac',
-        '-b:a', '64k',
-        '-f', 'mp4',
-        '-movflags', '+faststart',
-        '-y',
+      // Step 1: Enhanced concatenation with progress tracking
+      final concatSuccess = await _concatenateWithProgress(
+        tempListPath,
         tempConcatPath,
-      ];
+        chapters,
+        onProgress,
+      );
 
-      Logger.log('FFmpeg concat command: $_systemFFmpegPath ${concatArgs.join(' ')}');
-      
-      final concatResult = await Process.run(_systemFFmpegPath!, concatArgs);
-      
-      if (concatResult.exitCode != 0) {
-        Logger.error('FFmpeg concat failed with exit code: ${concatResult.exitCode}');
-        Logger.error('FFmpeg concat stderr: ${concatResult.stderr}');
+      if (!concatSuccess) {
+        Logger.error('Audio concatenation failed');
         return false;
       }
 
       tempFiles.add(tempConcatPath);
       Logger.log('Successfully concatenated MP3 files');
-      onProgress?.call('Adding chapter metadata...', 0.4);
+      onProgress?.call('Adding chapter metadata...', 0.6);
 
       // Step 2: Create chapter metadata file
       final chapterMetadataPath = await _createChapterMetadataFile(chapters, timestamp);
@@ -1484,7 +1637,7 @@ class MetadataService {
         tempFiles.add(chapterMetadataPath);
       }
 
-      onProgress?.call('Embedding chapters and metadata...', 0.6);
+      onProgress?.call('Embedding chapters and metadata...', 0.7);
 
       // Step 3: Add chapters and metadata to the final M4B file
       final finalArgs = await _buildFinalMergeArgs(
@@ -1543,6 +1696,174 @@ class MetadataService {
           Logger.debug('Failed to cleanup $tempFile: $e');
         }
       }
+    }
+  }
+
+  Future<bool> _concatenateWithProgress(
+    String tempListPath,
+    String tempConcatPath,
+    List<ChapterInfo> chapters,
+    Function(String step, double progress)? onProgress,
+  ) async {
+    try {
+      Logger.log('Starting enhanced concatenation with progress tracking');
+      
+      // Calculate total duration for progress calculation
+      final totalDuration = chapters.fold(Duration.zero, (sum, chapter) => sum + chapter.duration);
+      Logger.log('Total duration for concatenation: ${_formatDuration(totalDuration)}');
+      
+      onProgress?.call('Concatenating ${chapters.length} audio files...', 0.1);
+
+      final concatArgs = [
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', tempListPath,
+        '-c:a', 'aac',
+        '-b:a', '64k',
+        '-f', 'mp4',
+        '-movflags', '+faststart',
+        '-progress', 'pipe:1', // Send progress to stdout instead of stderr
+        '-v', 'info',           // Set verbosity level
+        '-stats',               // Enable statistics
+        '-y',
+        tempConcatPath,
+      ];
+
+      Logger.log('FFmpeg concat command: $_systemFFmpegPath ${concatArgs.join(' ')}');
+      
+      // Start FFmpeg process
+      final process = await Process.start(_systemFFmpegPath!, concatArgs);
+      
+      // Track progress by parsing stdout and stderr
+      final Completer<bool> completer = Completer<bool>();
+      bool hasError = false;
+      
+      // Enhanced progress tracking with both stdout and stderr
+      final progressTracker = _EnhancedProgressTracker(
+        totalDuration: totalDuration,
+        onProgress: onProgress,
+        baseProgress: 0.1,
+        maxProgress: 0.55,
+      );
+      
+      // Parse progress from stdout (where -progress pipe:1 sends data)
+      process.stdout.transform(const SystemEncoding().decoder).listen((data) {
+        progressTracker.parseFFmpegOutput(data, isProgressStream: true);
+      });
+      
+      // Parse additional info from stderr
+      process.stderr.transform(const SystemEncoding().decoder).listen((data) {
+        progressTracker.parseFFmpegOutput(data, isProgressStream: false);
+      });
+      
+      // Set up a fallback progress timer in case FFmpeg progress isn't captured
+      Timer? fallbackTimer;
+      int fallbackStep = 0;
+      
+      fallbackTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+        if (!completer.isCompleted) {
+          fallbackStep++;
+          final fallbackProgress = 0.1 + (fallbackStep * 0.05);
+          final cappedProgress = math.min(fallbackProgress, 0.5);
+          
+          onProgress?.call(
+            'Concatenating audio... (${fallbackStep * 2}s elapsed)', 
+            cappedProgress
+          );
+          
+          Logger.debug('Fallback progress: ${(cappedProgress * 100).toStringAsFixed(1)}%');
+          
+          // Stop fallback after reasonable time
+          if (fallbackStep >= 20) {
+            timer.cancel();
+          }
+        } else {
+          timer.cancel();
+        }
+      });
+      
+      // Wait for process completion
+      process.exitCode.then((exitCode) {
+        fallbackTimer?.cancel();
+        
+        if (exitCode == 0) {
+          Logger.log('Audio concatenation successful');
+          onProgress?.call('Concatenation complete, preparing final merge...', 0.55);
+          completer.complete(true);
+        } else {
+          Logger.error('FFmpeg concatenation failed with exit code: $exitCode');
+          hasError = true;
+          completer.complete(false);
+        }
+      });
+      
+      return await completer.future;
+      
+    } catch (e) {
+      Logger.error('Error in enhanced concatenation: $e');
+      return false;
+    }
+  }
+
+  /// Parse FFmpeg concatenation progress output
+  void _parseConcatenationProgress(
+    String data, 
+    Function(String step, double progress)? onProgress,
+    Duration totalDuration,
+  ) {
+    if (onProgress == null) return;
+    
+    try {
+      // FFmpeg progress format includes lines like:
+      // out_time_ms=12345678
+      // progress=continue
+      // speed=1.23x
+      
+      final lines = data.split('\n');
+      Duration? currentTime;
+      String speed = '';
+      
+      for (final line in lines) {
+        final trimmedLine = line.trim();
+        
+        if (trimmedLine.startsWith('out_time_ms=')) {
+          final timeMs = int.tryParse(trimmedLine.substring('out_time_ms='.length));
+          if (timeMs != null) {
+            currentTime = Duration(microseconds: timeMs);
+          }
+        } else if (trimmedLine.startsWith('speed=')) {
+          speed = trimmedLine.substring('speed='.length);
+        }
+      }
+      
+      // Calculate progress percentage if we have both current and total time
+      if (currentTime != null && totalDuration.inMicroseconds > 0) {
+        final rawProgress = (currentTime.inMicroseconds / totalDuration.inMicroseconds).clamp(0.0, 1.0);
+        
+        // Map concatenation progress to overall progress (10% to 55%)
+        final mappedProgress = 0.1 + (rawProgress * 0.45);
+        
+        // Calculate ETA and format time strings
+        final currentTimeStr = _formatDuration(currentTime);
+        final totalTimeStr = _formatDuration(totalDuration);
+        final progressPercent = (rawProgress * 100).toStringAsFixed(1);
+        
+        String statusMessage = 'Concatenating audio: $currentTimeStr / $totalTimeStr ($progressPercent%)';
+        
+        if (speed.isNotEmpty && speed != '0.0x') {
+          statusMessage += ' @ $speed';
+        }
+        
+        onProgress(statusMessage, mappedProgress);
+        
+        // Log progress occasionally for debugging
+        if (rawProgress > 0 && (rawProgress * 100) % 10 < 1) {
+          Logger.debug('Concatenation progress: $progressPercent% ($currentTimeStr / $totalTimeStr)');
+        }
+      }
+    } catch (e) {
+      Logger.debug('Error parsing concatenation progress: $e');
+      // Don't fail the conversion for progress parsing errors
     }
   }
 
@@ -1609,6 +1930,7 @@ class MetadataService {
           '-c:a', 'copy',        // Copy audio without re-encoding
           '-c:v', 'copy',        // Copy video without re-encoding
           '-disposition:v:0', 'attached_pic', // Mark video as attached picture
+          '-threads', '0', 
         ]);
         Logger.log('Adding cover image to M4B');
       } else {
@@ -1830,5 +2152,181 @@ class MetadataService {
   void clearCache() {
     _metadataCache.clear();
     Logger.debug('Metadata cache cleared');
+  }
+}
+
+class _EnhancedProgressTracker {
+  final Duration totalDuration;
+  final Function(String step, double progress)? onProgress;
+  final double baseProgress;
+  final double maxProgress;
+  
+  Duration? _lastReportedTime;
+  DateTime? _startTime;
+  int _frameCount = 0;
+  
+  _EnhancedProgressTracker({
+    required this.totalDuration,
+    required this.onProgress,
+    required this.baseProgress,
+    required this.maxProgress,
+  }) {
+    _startTime = DateTime.now();
+  }
+  
+  void parseFFmpegOutput(String data, {required bool isProgressStream}) {
+    if (onProgress == null) return;
+    
+    try {
+      final lines = data.split('\n');
+      Duration? currentTime;
+      String speed = '';
+      int? currentFrame;
+      
+      for (final line in lines) {
+        final trimmedLine = line.trim();
+        
+        if (isProgressStream) {
+          // Parse progress stream format
+          if (trimmedLine.startsWith('out_time_ms=')) {
+            final timeMs = int.tryParse(trimmedLine.substring('out_time_ms='.length));
+            if (timeMs != null) {
+              currentTime = Duration(microseconds: timeMs);
+            }
+          } else if (trimmedLine.startsWith('out_time=')) {
+            // Alternative time format: out_time=00:01:23.45
+            final timeStr = trimmedLine.substring('out_time='.length);
+            currentTime = _parseTimeString(timeStr);
+          } else if (trimmedLine.startsWith('speed=')) {
+            speed = trimmedLine.substring('speed='.length);
+          } else if (trimmedLine.startsWith('frame=')) {
+            final frameStr = trimmedLine.substring('frame='.length);
+            currentFrame = int.tryParse(frameStr);
+          }
+        } else {
+          // Parse stderr output for additional progress indicators
+          if (trimmedLine.contains('time=')) {
+            final timeMatch = RegExp(r'time=(\d{2}:\d{2}:\d{2}\.\d{2})').firstMatch(trimmedLine);
+            if (timeMatch != null) {
+              currentTime = _parseTimeString(timeMatch.group(1)!);
+            }
+          }
+          
+          if (trimmedLine.contains('speed=')) {
+            final speedMatch = RegExp(r'speed=(\S+)').firstMatch(trimmedLine);
+            if (speedMatch != null) {
+              speed = speedMatch.group(1)!;
+            }
+          }
+        }
+      }
+      
+      // Update progress if we have new time information
+      if (currentTime != null && currentTime != _lastReportedTime) {
+        _updateProgress(currentTime, speed, currentFrame);
+        _lastReportedTime = currentTime;
+      }
+      
+    } catch (e) {
+      Logger.debug('Error parsing FFmpeg output: $e');
+    }
+  }
+  
+  void _updateProgress(Duration currentTime, String speed, int? frameCount) {
+    if (totalDuration.inMicroseconds <= 0) return;
+    
+    final rawProgress = (currentTime.inMicroseconds / totalDuration.inMicroseconds).clamp(0.0, 1.0);
+    final mappedProgress = baseProgress + (rawProgress * (maxProgress - baseProgress));
+    
+    // Calculate elapsed time
+    final elapsed = _startTime != null ? DateTime.now().difference(_startTime!) : Duration.zero;
+    
+    // Calculate ETA
+    Duration? eta;
+    if (rawProgress > 0.01 && speed.isNotEmpty) {
+      try {
+        final speedValue = double.tryParse(speed.replaceAll('x', ''));
+        if (speedValue != null && speedValue > 0) {
+          final remainingTime = totalDuration - currentTime;
+          eta = Duration(microseconds: (remainingTime.inMicroseconds / speedValue).round());
+        }
+      } catch (e) {
+        // Ignore speed parsing errors
+      }
+    }
+    
+    // Format status message
+    final currentTimeStr = _formatDuration(currentTime);
+    final totalTimeStr = _formatDuration(totalDuration);
+    final progressPercent = (rawProgress * 100).toStringAsFixed(1);
+    
+    String statusMessage = 'Concatenating: $currentTimeStr / $totalTimeStr ($progressPercent%)';
+    
+    if (speed.isNotEmpty && speed != '0.0x') {
+      statusMessage += ' @ $speed';
+    }
+    
+    if (eta != null && eta.inSeconds > 0) {
+      statusMessage += ' • ETA: ${_formatDuration(eta)}';
+    }
+    
+    if (frameCount != null) {
+      _frameCount = frameCount;
+      statusMessage += ' • Frame: $frameCount';
+    }
+    
+    onProgress!(statusMessage, mappedProgress);
+    
+    // Log significant progress milestones
+    if (rawProgress > 0 && (rawProgress * 100) % 20 < 2) {
+      Logger.log('Concatenation milestone: $progressPercent% complete');
+      Logger.log('- Current: $currentTimeStr / $totalTimeStr');
+      Logger.log('- Speed: $speed, Elapsed: ${_formatDuration(elapsed)}');
+      if (eta != null) Logger.log('- ETA: ${_formatDuration(eta)}');
+    }
+  }
+  
+  Duration? _parseTimeString(String timeStr) {
+    try {
+      // Parse format like "00:01:23.45" or "01:23.45"
+      final parts = timeStr.split(':');
+      if (parts.length >= 2) {
+        int hours = 0;
+        int minutes = 0;
+        double seconds = 0;
+        
+        if (parts.length == 3) {
+          // HH:MM:SS.ss format
+          hours = int.parse(parts[0]);
+          minutes = int.parse(parts[1]);
+          seconds = double.parse(parts[2]);
+        } else if (parts.length == 2) {
+          // MM:SS.ss format
+          minutes = int.parse(parts[0]);
+          seconds = double.parse(parts[1]);
+        }
+        
+        return Duration(
+          hours: hours,
+          minutes: minutes,
+          seconds: seconds.floor(),
+          milliseconds: ((seconds - seconds.floor()) * 1000).round(),
+        );
+      }
+    } catch (e) {
+      Logger.debug('Error parsing time string "$timeStr": $e');
+    }
+    return null;
+  }
+  
+  String _formatDuration(Duration duration) {
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 }

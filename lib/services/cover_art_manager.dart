@@ -355,12 +355,10 @@ class CoverArtManager {
       // Determine extension
       String extension = '.jpg';
       final mimeType = metadata.picture!.mimeType.toLowerCase();
-      if (mimeType != null) {
-        if (mimeType.contains('png')) {
-          extension = '.png';
-        } else if (mimeType.contains('webp')) extension = '.webp';
-      }
-      
+      if (mimeType.contains('png')) {
+        extension = '.png';
+      } else if (mimeType.contains('webp')) extension = '.webp';
+          
       // Save with timestamp
       final fileId = FileUtils.generateFileId(filePath);
       final timestamp = DateTime.now().millisecondsSinceEpoch;

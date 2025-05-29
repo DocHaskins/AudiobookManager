@@ -5,6 +5,7 @@ import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/ui/widgets/tools/mp3_merger_tool.dart';
+import 'package:audiobook_organizer/ui/widgets/tools/mp3_batch_converter_tool.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
 class ToolsContentView extends StatefulWidget {
@@ -28,14 +29,16 @@ class ToolsContentView extends StatefulWidget {
 }
 
 class _ToolsContentViewState extends State<ToolsContentView> {
-  bool _isLoading = false;
-  String _statusMessage = '';
+  final bool _isLoading = false;
+  final String _statusMessage = '';
 
   @override
   Widget build(BuildContext context) {
     switch (widget.currentSubsection) {
       case 'Mp3 Merger':
         return _buildMp3MergerTool();
+      case 'Batch Converter':
+        return _buildBatchConverterTool();
       default:
         return _buildDefaultView();
     }
@@ -60,6 +63,14 @@ class _ToolsContentViewState extends State<ToolsContentView> {
     return Mp3MergerTool(
       libraryManager: widget.libraryManager,
       metadataProviders: providers,
+    );
+  }
+
+  Widget _buildBatchConverterTool() {
+    Logger.log('=== ToolsContentView: Building Batch Converter Tool ===');
+    
+    return Mp3BatchConverterTool(
+      libraryManager: widget.libraryManager,
     );
   }
 

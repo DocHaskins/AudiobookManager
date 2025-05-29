@@ -74,7 +74,7 @@ class LibraryBooksView extends StatelessWidget {
             ((crossAxisCount - 1) * spacing);
         
         return Center(
-          child: Container(
+          child: SizedBox(
             width: gridWidth + (spacing * 2),
             child: Padding(
               padding: const EdgeInsets.all(24),

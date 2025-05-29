@@ -14,6 +14,7 @@ import 'package:audiobook_organizer/storage/audiobook_storage_manager.dart';
 import 'package:audiobook_organizer/storage/metadata_cache.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 import 'package:audiobook_organizer/utils/file_utils.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:audiobook_organizer/services/cover_art_manager.dart';
 
 /// Manages the library of audiobooks
@@ -252,6 +253,146 @@ class LibraryManager {
       rethrow;
     }
   }
+
+  Future<Map<String, dynamic>> cleanLibrary() async {
+  try {
+    Logger.log('Starting library cleanup...');
+    
+    final List<AudiobookFile> missingFiles = [];
+    final List<AudiobookFile> validFiles = [];
+    int orphanedMetadataCount = 0;
+    
+    // Check each audiobook file in the library by its actual path
+    Logger.log('Checking ${_files.length} audiobook files for existence...');
+    
+    for (final file in _files) {
+      // Check if the actual audiobook file exists at its stored path
+      final audioFile = File(file.path);
+      final fileExists = await audioFile.exists();
+      
+      if (fileExists) {
+        validFiles.add(file);
+        Logger.debug('✓ File exists: ${file.path}');
+      } else {
+        missingFiles.add(file);
+        Logger.log('✗ Missing file detected: ${file.path}');
+      }
+    }
+    
+    // If there are missing files, clean them up
+    if (missingFiles.isNotEmpty) {
+      Logger.log('Found ${missingFiles.length} missing files to remove');
+      
+      // Clean up metadata and covers for missing files
+      for (final file in missingFiles) {
+        // Delete metadata
+        await _storageManager.deleteMetadataForFile(file.path);
+        Logger.debug('Deleted metadata for missing file: ${file.path}');
+        
+        // Remove cover art
+        await _coverArtManager.removeCover(file.path);
+        Logger.debug('Removed cover for missing file: ${file.path}');
+        
+        // Remove from collections if collection manager is available
+        if (_collectionManager != null) {
+          final collections = _collectionManager!.getCollectionsForBook(file.path);
+          for (final collection in collections) {
+            await _collectionManager!.removeBookFromCollection(collection.id, file.path);
+          }
+        }
+      }
+      
+      // Update the files list with only valid files
+      _files = validFiles;
+      
+      // Save the cleaned library
+      await _storageManager.saveLibrary(_files);
+      
+      // Notify listeners
+      _notifyLibraryChanged();
+    }
+    
+    // Check for orphaned metadata (metadata files without corresponding library entries)
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final metadataDir = Directory('${appDir.path}/audiobook_metadata');
+      
+      if (await metadataDir.exists()) {
+        await for (final entity in metadataDir.list()) {
+          if (entity is File && entity.path.endsWith('.json')) {
+            // Extract the file path from metadata filename
+            final metadataFilename = path_util.basenameWithoutExtension(entity.path);
+            final decodedPath = Uri.decodeComponent(metadataFilename);
+            
+            // Check if this metadata belongs to any file in our library
+            final hasCorrespondingFile = _files.any((f) => 
+              Uri.encodeComponent(f.path) == metadataFilename || 
+              f.path == decodedPath
+            );
+            
+            if (!hasCorrespondingFile) {
+              // This is orphaned metadata
+              await entity.delete();
+              orphanedMetadataCount++;
+              Logger.debug('Deleted orphaned metadata file: ${entity.path}');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      Logger.error('Error checking for orphaned metadata', e);
+    }
+    
+    // Check for orphaned cover art
+    int orphanedCoversCount = 0;
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final coversDir = Directory('${appDir.path}/audiobook_covers');
+      
+      if (await coversDir.exists()) {
+        await for (final entity in coversDir.list()) {
+          if (entity is File) {
+            final coverFilename = path_util.basename(entity.path);
+            
+            // Check if any file in library references this cover
+            final isReferencedCover = _files.any((f) => 
+              f.metadata?.thumbnailUrl.contains(coverFilename) ?? false
+            );
+            
+            if (!isReferencedCover) {
+              // This is an orphaned cover
+              await entity.delete();
+              orphanedCoversCount++;
+              Logger.debug('Deleted orphaned cover file: ${entity.path}');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      Logger.error('Error checking for orphaned covers', e);
+    }
+    
+    final cleanupResults = {
+      'missingFilesRemoved': missingFiles.length,
+      'missingFiles': missingFiles.map((f) => f.path).toList(),
+      'orphanedMetadataRemoved': orphanedMetadataCount,
+      'orphanedCoversRemoved': orphanedCoversCount,
+      'totalCleaned': missingFiles.length + orphanedMetadataCount + orphanedCoversCount,
+      'remainingFiles': _files.length,
+    };
+    
+    Logger.log('Library cleanup completed: ${cleanupResults['totalCleaned']} items cleaned');
+    Logger.log('- Missing files removed: ${cleanupResults['missingFilesRemoved']}');
+    Logger.log('- Orphaned metadata removed: ${cleanupResults['orphanedMetadataRemoved']}');
+    Logger.log('- Orphaned covers removed: ${cleanupResults['orphanedCoversRemoved']}');
+    Logger.log('- Remaining files in library: ${cleanupResults['remainingFiles']}');
+    
+    return cleanupResults;
+  } catch (e) {
+    Logger.error('Error during library cleanup', e);
+    throw Exception('Failed to clean library: ${e.toString()}');
+  }
+}
   
   /// Clear library but keep watched directories (UI convenience method)
   Future<void> clearLibraryKeepingDirectories() async {

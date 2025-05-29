@@ -225,7 +225,7 @@ class _AudiobookCoverSectionState extends State<AudiobookCoverSection> {
       color: Colors.grey[800],
       child: InkWell(
         onTap: () => _changeCoverImage(context),
-        child: Container(
+        child: SizedBox(
           width: double.infinity,
           height: double.infinity,
           child: Column(

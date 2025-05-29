@@ -183,7 +183,7 @@ class _CoverImageDialogState extends State<CoverImageDialog> {
     return Dialog(
       backgroundColor: const Color(0xFF1A1A1A),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
+      child: SizedBox(
         width: 1200,
         height: 800,
         child: Column(
@@ -191,9 +191,9 @@ class _CoverImageDialogState extends State<CoverImageDialog> {
             // Header
             Container(
               padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2A2A2A),
-                borderRadius: const BorderRadius.only(
+              decoration: const BoxDecoration(
+                color: Color(0xFF2A2A2A),
+                borderRadius: BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
                 ),

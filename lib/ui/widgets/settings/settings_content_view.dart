@@ -800,11 +800,92 @@ class _SettingsContentViewState extends State<SettingsContentView> {
     );
     
     if (confirmed == true) {
-      // Implement clean library logic
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Library cleaned')),
-        );
+      setState(() {
+        _isLoading = true;
+      });
+      
+      try {
+        // Call the cleanLibrary method from LibraryManager
+        final results = await widget.libraryManager.cleanLibrary();
+        
+        setState(() {
+          _isLoading = false;
+        });
+        
+        if (mounted) {
+          // Show detailed results dialog
+          await showDialog(
+            context: context,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              title: const Text('Library Cleanup Complete', style: TextStyle(color: Colors.white)),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (results['totalCleaned'] == 0)
+                      const Text(
+                        'No issues found. Your library is clean!',
+                        style: TextStyle(color: Colors.green),
+                      )
+                    else ...[
+                      Text(
+                        'Cleaned ${results['totalCleaned']} items:',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 12),
+                      if (results['missingFilesRemoved'] > 0)
+                        Text(
+                          '• ${results['missingFilesRemoved']} missing files removed',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      if (results['orphanedMetadataRemoved'] > 0)
+                        Text(
+                          '• ${results['orphanedMetadataRemoved']} orphaned metadata files removed',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      if (results['orphanedCoversRemoved'] > 0)
+                        Text(
+                          '• ${results['orphanedCoversRemoved']} orphaned cover files removed',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Remaining files in library: ${results['remainingFiles']}',
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+          
+          // Refresh cache size after cleanup
+          _refreshCacheSize();
+        }
+      } catch (e) {
+        setState(() {
+          _isLoading = false;
+        });
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error cleaning library: ${e.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        
+        Logger.error('Error cleaning library', e);
       }
     }
   }

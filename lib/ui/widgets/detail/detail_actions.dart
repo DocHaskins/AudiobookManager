@@ -189,7 +189,7 @@ class DetailActions {
             break;
         }
         
-        if (success && finalMetadata != null) {
+        if (success) {
           Logger.log('Metadata update successful, updating UI...');
           
           // Update the local book object
