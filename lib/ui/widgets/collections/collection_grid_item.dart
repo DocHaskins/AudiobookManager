@@ -89,10 +89,10 @@ class CollectionGridItem extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).primaryColor.withOpacity(0.2),
+                            color: Theme.of(context).primaryColor.withAlpha(60),
                             borderRadius: BorderRadius.circular(10),
                             border: Border.all(
-                              color: Theme.of(context).primaryColor.withOpacity(0.5),
+                              color: Theme.of(context).primaryColor.withAlpha(128),
                               width: 1,
                             ),
                           ),

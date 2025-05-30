@@ -37,7 +37,7 @@ class ProcessingStatusWidgetState extends State<ProcessingStatusWidget>
   double _yPosition = 100;
   
   // Processing stats
-  String _operationType = '';
+  final String _operationType = '';
   int _totalFiles = 0;
   int _completedFiles = 0;
   int _successCount = 0;
@@ -291,7 +291,7 @@ class ProcessingStatusWidgetState extends State<ProcessingStatusWidget>
           color: Theme.of(context).colorScheme.surface,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: Theme.of(context).colorScheme.outline.withOpacity(0.3),
+            color: Theme.of(context).colorScheme.outline.withAlpha(90),
             width: 1,
           ),
         ),
@@ -316,7 +316,7 @@ class ProcessingStatusWidgetState extends State<ProcessingStatusWidget>
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+          color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(128),
           borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
         ),
         child: Column(
@@ -383,7 +383,7 @@ class ProcessingStatusWidgetState extends State<ProcessingStatusWidget>
                           _buildTimeString(),
                           style: TextStyle(
                             fontSize: 11,
-                            color: Theme.of(context).textTheme.bodySmall?.color?.withOpacity(0.8),
+                            color: Theme.of(context).textTheme.bodySmall?.color?.withAlpha(160),
                           ),
                         ),
                       ],
@@ -425,7 +425,7 @@ class ProcessingStatusWidgetState extends State<ProcessingStatusWidget>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                  color: Theme.of(context).colorScheme.primary.withAlpha(24),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Row(
@@ -506,7 +506,7 @@ class ProcessingStatusWidgetState extends State<ProcessingStatusWidget>
                     Icon(
                       _getStageIcon(),
                       size: 48,
-                      color: Theme.of(context).colorScheme.primary.withOpacity(0.7),
+                      color: Theme.of(context).colorScheme.primary.withAlpha(140),
                     ),
                     const SizedBox(height: 8),
                     Text(

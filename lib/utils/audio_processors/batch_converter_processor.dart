@@ -585,7 +585,7 @@ class BatchConverterProcessor extends BaseAudioProcessor {
       }
     } catch (e) {
       Logger.error('❌ Error converting ${file.filename}: $e');
-      throw e; // Re-throw to be handled by the calling method
+      rethrow; // Re-throw to be handled by the calling method
     }
   }
 

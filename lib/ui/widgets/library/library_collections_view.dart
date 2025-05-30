@@ -1,4 +1,4 @@
-// lib/ui/widgets/library_collections_view.dart - Collections display component
+// lib/ui/widgets/library_collections_view.dart
 // =============================================================================
 
 import 'package:flutter/material.dart';

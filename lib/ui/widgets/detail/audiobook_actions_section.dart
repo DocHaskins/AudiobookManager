@@ -1,4 +1,4 @@
-// lib/ui/widgets/detail/audiobook_actions_section.dart - Updated with Goodreads support
+// lib/ui/widgets/detail/audiobook_actions_section.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
@@ -378,7 +378,9 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
     
     try {
       // Start animation immediately for visual feedback
-      _favoriteController.forward();
+      if (mounted) {
+        _favoriteController.forward();
+      }
       
       final success = await widget.libraryManager.updateUserData(
         widget.book,
@@ -399,16 +401,39 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
           icon: isFavorite ? Icons.favorite : Icons.favorite_border,
         );
         
-        // Complete animation
-        await _favoriteController.forward();
-        await Future.delayed(const Duration(milliseconds: 200));
-        await _favoriteController.reverse();
+        // Complete animation - only if widget is still mounted
+        if (mounted) {
+          try {
+            await _favoriteController.forward();
+            await Future.delayed(const Duration(milliseconds: 200));
+            if (mounted) {
+              await _favoriteController.reverse();
+            }
+          } catch (e) {
+            // Animation controller was disposed, ignore
+            Logger.debug('Animation controller disposed during favorite animation: $e');
+          }
+        }
       } else {
-        _favoriteController.reverse();
+        if (mounted) {
+          try {
+            _favoriteController.reverse();
+          } catch (e) {
+            // Animation controller was disposed, ignore
+            Logger.debug('Animation controller disposed during favorite reverse: $e');
+          }
+        }
         _showSnackBar(context, 'Failed to update favorite status', Colors.red);
       }
     } catch (e) {
-      _favoriteController.reverse();
+      if (mounted) {
+        try {
+          _favoriteController.reverse();
+        } catch (e) {
+          // Animation controller was disposed, ignore
+          Logger.debug('Animation controller disposed during favorite error handling: $e');
+        }
+      }
       Logger.error('Error toggling favorite: $e');
       _showSnackBar(context, 'Error updating favorite: ${e.toString()}', Colors.red);
     } finally {
@@ -435,7 +460,13 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
 
     try {
       // Start animation for visual feedback
-      _collectionController.forward();
+      if (mounted) {
+        try {
+          _collectionController.forward();
+        } catch (e) {
+          Logger.debug('Animation controller disposed during collection forward: $e');
+        }
+      }
       
       final currentCollections = collectionManager.getCollectionsForBook(widget.book.path);
       final initialCollectionCount = currentCollections.length;
@@ -474,15 +505,35 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
           icon: Icons.folder_special,
         );
         
-        // Complete animation
-        await _collectionController.forward();
-        await Future.delayed(const Duration(milliseconds: 200));
-        await _collectionController.reverse();
+        // Complete animation - only if widget is still mounted
+        if (mounted) {
+          try {
+            await _collectionController.forward();
+            await Future.delayed(const Duration(milliseconds: 200));
+            if (mounted) {
+              await _collectionController.reverse();
+            }
+          } catch (e) {
+            Logger.debug('Animation controller disposed during collection animation: $e');
+          }
+        }
       } else {
-        _collectionController.reverse();
+        if (mounted) {
+          try {
+            _collectionController.reverse();
+          } catch (e) {
+            Logger.debug('Animation controller disposed during collection reverse: $e');
+          }
+        }
       }
     } catch (e) {
-      _collectionController.reverse();
+      if (mounted) {
+        try {
+          _collectionController.reverse();
+        } catch (e) {
+          Logger.debug('Animation controller disposed during collection error handling: $e');
+        }
+      }
       Logger.error('Error managing collections: $e');
       _showSnackBar(context, 'Error managing collections: ${e.toString()}', Colors.red);
     } finally {
@@ -528,7 +579,13 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
 
     try {
       // Start animation for visual feedback
-      _goodreadsController.forward();
+      if (mounted) {
+        try {
+          _goodreadsController.forward();
+        } catch (e) {
+          Logger.debug('Animation controller disposed during Goodreads forward: $e');
+        }
+      }
 
       final actions = DetailActions(
         libraryManager: widget.libraryManager,
@@ -539,13 +596,25 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
       
       await actions.browseGoodreads(context, widget.book);
 
-      // Complete animation
-      await _goodreadsController.forward();
-      await Future.delayed(const Duration(milliseconds: 200));
-      await _goodreadsController.reverse();
+      // Complete animation - only if widget is still mounted
+      if (mounted) {
+        try {
+          await _goodreadsController.forward();
+          await Future.delayed(const Duration(milliseconds: 200));
+          if (mounted) {
+            await _goodreadsController.reverse();
+          }
+        } catch (e) {
+          Logger.debug('Animation controller disposed during Goodreads animation: $e');
+        }
+      }
     } catch (e) {
-      if (_goodreadsController.isAnimating && mounted) {
-        _goodreadsController.reverse();
+      if (mounted && _goodreadsController.isAnimating) {
+        try {
+          _goodreadsController.reverse();
+        } catch (animationError) {
+          Logger.debug('Animation controller disposed during Goodreads error handling: $animationError');
+        }
       }
       Logger.error('Error browsing Goodreads: $e');
       if (context.mounted) {

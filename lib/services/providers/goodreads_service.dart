@@ -1,9 +1,6 @@
 // lib/services/providers/goodreads_service.dart
-import 'dart:convert';
-import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as html_parser;
-import 'package:html/dom.dart' as html;
 import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 
@@ -146,9 +143,7 @@ class GoodreadsService {
       final results = <GoodreadsSearchResult>[];
       
       // Look for book results in the search page
-      final bookElements = document.querySelectorAll('tr[itemtype="http://schema.org/Book"]') ??
-                          document.querySelectorAll('.bookBox') ??
-                          document.querySelectorAll('[data-testid="bookItem"]');
+      final bookElements = document.querySelectorAll('tr[itemtype="http://schema.org/Book"]');
       
       Logger.log('Found ${bookElements.length} potential book elements');
       
@@ -173,9 +168,7 @@ class GoodreadsService {
           
           // Extract authors
           final authors = <String>[];
-          final authorElements = element.querySelectorAll('.authorName') ??
-                               element.querySelectorAll('[data-testid="author"]') ??
-                               element.querySelectorAll('a[class*="author"]');
+          final authorElements = element.querySelectorAll('.authorName');
           
           for (final authorElement in authorElements) {
             final authorName = authorElement.text.trim();
@@ -314,10 +307,7 @@ class GoodreadsService {
 
       // Extract authors
       final authors = <String>[];
-      final authorElements = document.querySelectorAll('[data-testid="name"]') ??
-                            document.querySelectorAll('.BookPageMetadataSection__contributor a') ??
-                            document.querySelectorAll('#bookAuthors a') ??
-                            document.querySelectorAll('.authorName');
+      final authorElements = document.querySelectorAll('[data-testid="name"]');
       
       for (final element in authorElements) {
         final authorName = element.text.trim();
@@ -381,9 +371,7 @@ class GoodreadsService {
 
       // Extract genres/categories
       final genres = <String>[];
-      final genreElements = document.querySelectorAll('[data-testid="genresList"] a') ??
-                           document.querySelectorAll('.BookPageMetadataSection__genres a') ??
-                           document.querySelectorAll('.elementList .actionLinkLite');
+      final genreElements = document.querySelectorAll('[data-testid="genresList"] a');
       
       for (final element in genreElements.take(5)) { // Limit to top 5 genres
         final genre = element.text.trim();
@@ -398,9 +386,7 @@ class GoodreadsService {
       int pageCount = 0;
       String isbn = '';
 
-      final detailsElements = document.querySelectorAll('[data-testid="publicationInfo"]') ??
-                             document.querySelectorAll('.BookPageMetadataSection__details') ??
-                             document.querySelectorAll('#details .row');
+      final detailsElements = document.querySelectorAll('[data-testid="publicationInfo"]');
       
       for (final element in detailsElements) {
         final text = element.text.toLowerCase();

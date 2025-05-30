@@ -104,7 +104,7 @@ class _DescriptionSectionState extends State<DescriptionSection> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: Theme.of(context).secondaryHeaderColor.withOpacity(0.2),
+                color: Theme.of(context).secondaryHeaderColor.withAlpha(60),
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(color: Theme.of(context).secondaryHeaderColor),
               ),

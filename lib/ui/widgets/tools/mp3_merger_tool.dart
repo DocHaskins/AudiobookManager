@@ -14,7 +14,6 @@ import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/ui/widgets/dialogs/metadata_search_dialog.dart';
 import 'package:audiobook_organizer/utils/audio_processors/base_audio_processor.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
-import 'package:audiobook_organizer/utils/file_utils.dart';
 
 class Mp3MergerTool extends StatefulWidget {
   final LibraryManager libraryManager;
@@ -128,7 +127,7 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.indigo.withOpacity(0.2),
+            color: Colors.indigo.withAlpha(60),
             borderRadius: BorderRadius.circular(12),
           ),
           child: const Icon(
@@ -404,7 +403,7 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: Colors.blue.withOpacity(0.2),
+                          color: Colors.blue.withAlpha(60),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
@@ -630,7 +629,7 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: Colors.purple.withOpacity(0.2),
+              color: Colors.purple.withAlpha(60),
               borderRadius: BorderRadius.circular(16),
             ),
             child: Center(
@@ -775,10 +774,10 @@ class _Mp3MergerToolState extends State<Mp3MergerTool> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _isProcessing ? Colors.blue.withOpacity(0.1) : Colors.green.withOpacity(0.1),
+        color: _isProcessing ? Colors.blue.withAlpha(24) : Colors.green.withAlpha(24),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: _isProcessing ? Colors.blue.withOpacity(0.3) : Colors.green.withOpacity(0.3),
+          color: _isProcessing ? Colors.blue.withAlpha(90) : Colors.green.withAlpha(90),
         ),
       ),
       child: Row(

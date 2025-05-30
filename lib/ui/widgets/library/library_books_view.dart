@@ -1,4 +1,4 @@
-// lib/ui/widgets/library_books_view.dart - Books display component
+// lib/ui/widgets/library_books_view.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';

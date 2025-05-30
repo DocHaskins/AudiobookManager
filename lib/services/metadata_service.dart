@@ -3,9 +3,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:async';
 import 'dart:convert';
-import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter/ffmpeg_session.dart';
-import 'package:ffmpeg_kit_flutter/return_code.dart';
 import 'package:metadata_god/metadata_god.dart';
 import 'package:path/path.dart' as path_util;
 import 'package:mime/mime.dart';
@@ -23,12 +20,11 @@ class MetadataService {
 
   final Map<String, AudiobookMetadata> _metadataCache = {};
   bool _isInitialized = false;
-  bool _ffmpegKitAvailable = false;
   bool _systemFFmpegAvailable = false;
   String? _systemFFmpegPath;
   
   // Computed property for overall FFmpeg availability
-  bool get _ffmpegAvailable => _ffmpegKitAvailable || _systemFFmpegAvailable;
+  bool get _ffmpegAvailable => _systemFFmpegAvailable;
   
   // Initialize the service
   Future<bool> initialize() async {
@@ -42,9 +38,6 @@ class MetadataService {
       
       _isInitialized = true;
       Logger.log('MetadataService initialized successfully');
-      Logger.log('- FFmpeg Kit: ${_ffmpegKitAvailable ? "✅" : "❌"}');
-      Logger.log('- System FFmpeg: ${_systemFFmpegAvailable ? "✅" : "❌"}${_systemFFmpegPath != null ? " ($_systemFFmpegPath)" : ""}');
-      Logger.log('- Overall FFmpeg: ${_ffmpegAvailable ? "✅" : "❌"}');
       
       if (!_ffmpegAvailable) {
         Logger.log('💡 To enable FFmpeg features, install FFmpeg and add it to your system PATH');
@@ -61,79 +54,17 @@ class MetadataService {
   // Detect all FFmpeg sources
   Future<void> _detectAllFFmpegSources() async {
     Logger.log('Detecting FFmpeg availability from all sources...');
-    
-    // Check FFmpeg Kit first
-    await _checkFFmpegKitAvailability();
-    
+
     // Check system FFmpeg
     await _checkSystemFFmpegAvailability();
     
     // Log results
-    if (_ffmpegKitAvailable && _systemFFmpegAvailable) {
+    if (_systemFFmpegAvailable) {
       Logger.log('🎉 Both FFmpeg Kit and System FFmpeg available - maximum compatibility!');
-    } else if (_ffmpegKitAvailable) {
-      Logger.log('FFmpeg Kit available but no system FFmpeg detected');
     } else if (_systemFFmpegAvailable) {
       Logger.log('System FFmpeg available but FFmpeg Kit not working');
     } else {
       Logger.log('No FFmpeg sources available - will use metadata_god only');
-    }
-  }
-
-  // Check FFmpeg Kit availability (original method)
-  Future<void> _checkFFmpegKitAvailability() async {
-    try {
-      Logger.log('Checking FFmpeg Kit availability...');
-      
-      // Method 1: Try to execute a simple FFmpeg command
-      final session = await FFmpegKit.execute('-version');
-      final returnCode = await session.getReturnCode();
-      
-      if (ReturnCode.isSuccess(returnCode)) {
-        _ffmpegKitAvailable = true;
-        Logger.log('✅ FFmpeg Kit is available and working');
-        
-        // Get FFmpeg version for logging
-        final logs = await session.getAllLogsAsString();
-        final versionLine = (logs ?? '').split('\n').firstWhere(
-          (line) => line.contains('ffmpeg version'),
-          orElse: () => 'Unknown version'
-        );
-        Logger.log('FFmpeg Kit version: $versionLine');
-        
-      } else {
-        _ffmpegKitAvailable = false;
-        Logger.log('FFmpeg Kit returned non-success code: $returnCode');
-      }
-    } catch (e) {
-      _ffmpegKitAvailable = false;
-      Logger.log('FFmpeg Kit not available: ${e.toString()}');
-      
-      // Try alternative check
-      try {
-        final session = await FFmpegKit.executeAsync('-f lavfi -i testsrc=duration=1:size=320x240:rate=1 -f null -', 
-          (session) {
-            // Success callback
-          }, 
-          (log) {
-            // Log callback
-          }, 
-          (statistics) {
-            // Statistics callback
-          }
-        );
-        
-        await Future.delayed(const Duration(milliseconds: 500));
-        await session.cancel();
-        
-        final returnCode = await session.getReturnCode();
-        if (returnCode != null) {
-          _ffmpegKitAvailable = true;
-          Logger.log('✅ FFmpeg Kit async check successful');
-        }
-      } catch (asyncError) {
-        Logger.debug('FFmpeg Kit async check also failed: $asyncError');
-      }
     }
   }
 
@@ -364,20 +295,7 @@ class MetadataService {
         
         // Try FFmpeg approaches with priority order
         bool ffmpegSuccess = false;
-        
-        // Priority 1: FFmpeg Kit (if available)
-        if (_ffmpegKitAvailable) {
-          Logger.log('Attempting FFmpeg Kit for M4B cover embedding');
-          ffmpegSuccess = await _writeM4BWithFFmpegKit(filePath, metadata, coverImagePath);
-          if (ffmpegSuccess) {
-            Logger.log('✅ FFmpeg Kit succeeded');
-            return true;
-          } else {
-            Logger.warning('FFmpeg Kit failed, trying system FFmpeg');
-          }
-        }
-        
-        // Priority 2: System FFmpeg (if available)
+
         if (_systemFFmpegAvailable && !ffmpegSuccess) {
           Logger.log('Attempting system FFmpeg for M4B cover embedding');
           ffmpegSuccess = await _writeM4BWithSystemFFmpeg(filePath, metadata, coverImagePath);
@@ -389,7 +307,6 @@ class MetadataService {
           }
         }
         
-        // Priority 3: Enhanced metadata_god strategies
         if (!ffmpegSuccess) {
           Logger.log('All FFmpeg approaches failed, trying enhanced metadata_god strategies');
           return await _tryEnhancedMetadataGodStrategies(filePath, metadata, coverImagePath);
@@ -406,69 +323,6 @@ class MetadataService {
       return false;
     } catch (e) {
       Logger.error('Error in writeMetadataWithDiagnostics', e);
-      return false;
-    }
-  }
-
-  // FFmpeg Kit implementation (original method)
-  Future<bool> _writeM4BWithFFmpegKit(String filePath, AudiobookMetadata metadata, String? coverImagePath) async {
-    FFmpegSession? session;
-    String? backupPath;
-    String? tempOutputPath;
-    
-    try {
-      Logger.log('Starting FFmpeg Kit M4B metadata write');
-      
-      // Create backup
-      backupPath = '$filePath.backup';
-      await File(filePath).copy(backupPath);
-      Logger.log('Created backup: $backupPath');
-      
-      // Create temporary output file
-      final tempDir = Directory.systemTemp;
-      tempOutputPath = path_util.join(tempDir.path, 'ffmpeg_kit_output_${DateTime.now().millisecondsSinceEpoch}.m4b');
-      
-      // Build FFmpeg command
-      final ffmpegArgs = await _buildFFmpegArgs(filePath, coverImagePath, metadata, tempOutputPath);
-      
-      Logger.log('FFmpeg Kit command: ffmpeg ${ffmpegArgs.join(' ')}');
-      
-      // Execute FFmpeg with proper session handling
-      session = await FFmpegKit.executeWithArguments(ffmpegArgs);
-      final returnCode = await session.getReturnCode();
-      
-      if (ReturnCode.isSuccess(returnCode)) {
-        return await _verifyAndReplaceFile(filePath, tempOutputPath, coverImagePath, backupPath, 'FFmpeg Kit');
-      } else {
-        // FFmpeg failed, get logs for debugging
-        final logs = await session.getAllLogsAsString();
-        Logger.error('FFmpeg Kit failed with return code: $returnCode');
-        Logger.error('FFmpeg Kit logs: $logs');
-        
-        await _restoreFromBackup(filePath, backupPath);
-        await _cleanupFiles([tempOutputPath]);
-        return false;
-      }
-    } catch (e) {
-      Logger.error('Error in _writeM4BWithFFmpegKit: $e');
-      
-      // Cancel session if it exists
-      if (session != null) {
-        try {
-          await session.cancel();
-        } catch (cancelError) {
-          Logger.debug('Error canceling FFmpeg Kit session: $cancelError');
-        }
-      }
-      
-      // Cleanup and restore
-      if (tempOutputPath != null) {
-        await _cleanupFiles([tempOutputPath]);
-      }
-      if (backupPath != null) {
-        await _restoreFromBackup(filePath, backupPath);
-      }
-      
       return false;
     }
   }
@@ -1447,7 +1301,7 @@ class MetadataService {
         Logger.error('❌ Error in conversion process: $e');
         await stderrSubscription?.cancel();
         await stdoutSubscription?.cancel();
-        throw e;
+        rethrow;
       }
       
     } catch (e) {
@@ -1942,68 +1796,6 @@ class MetadataService {
     }
   }
 
-  /// Parse FFmpeg concatenation progress output
-  void _parseConcatenationProgress(
-    String data, 
-    Function(String step, double progress)? onProgress,
-    Duration totalDuration,
-  ) {
-    if (onProgress == null) return;
-    
-    try {
-      // FFmpeg progress format includes lines like:
-      // out_time_ms=12345678
-      // progress=continue
-      // speed=1.23x
-      
-      final lines = data.split('\n');
-      Duration? currentTime;
-      String speed = '';
-      
-      for (final line in lines) {
-        final trimmedLine = line.trim();
-        
-        if (trimmedLine.startsWith('out_time_ms=')) {
-          final timeMs = int.tryParse(trimmedLine.substring('out_time_ms='.length));
-          if (timeMs != null) {
-            currentTime = Duration(microseconds: timeMs);
-          }
-        } else if (trimmedLine.startsWith('speed=')) {
-          speed = trimmedLine.substring('speed='.length);
-        }
-      }
-      
-      // Calculate progress percentage if we have both current and total time
-      if (currentTime != null && totalDuration.inMicroseconds > 0) {
-        final rawProgress = (currentTime.inMicroseconds / totalDuration.inMicroseconds).clamp(0.0, 1.0);
-        
-        // Map concatenation progress to overall progress (10% to 55%)
-        final mappedProgress = 0.1 + (rawProgress * 0.45);
-        
-        // Calculate ETA and format time strings
-        final currentTimeStr = _formatDuration(currentTime);
-        final totalTimeStr = _formatDuration(totalDuration);
-        final progressPercent = (rawProgress * 100).toStringAsFixed(1);
-        
-        String statusMessage = 'Concatenating audio: $currentTimeStr / $totalTimeStr ($progressPercent%)';
-        
-        if (speed.isNotEmpty && speed != '0.0x') {
-          statusMessage += ' @ $speed';
-        }
-        
-        onProgress(statusMessage, mappedProgress);
-        
-        // Log progress occasionally for debugging
-        if (rawProgress > 0 && (rawProgress * 100) % 10 < 1) {
-          Logger.debug('Concatenation progress: $progressPercent% ($currentTimeStr / $totalTimeStr)');
-        }
-      }
-    } catch (e) {
-      Logger.debug('Error parsing concatenation progress: $e');
-      // Don't fail the conversion for progress parsing errors
-    }
-  }
-
   /// Create FFmpeg chapter metadata file
   Future<String?> _createChapterMetadataFile(List<ChapterInfo> chapters, int timestamp) async {
     try {
@@ -2267,7 +2059,6 @@ class MetadataService {
       'cached_files': _metadataCache.length,
       'initialized': _isInitialized,
       'ffmpeg_available': _ffmpegAvailable,
-      'ffmpeg_kit_available': _ffmpegKitAvailable,
       'system_ffmpeg_available': _systemFFmpegAvailable,
       'system_ffmpeg_path': _systemFFmpegPath,
     };

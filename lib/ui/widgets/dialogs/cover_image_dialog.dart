@@ -5,7 +5,6 @@ import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/utils/logger.dart';
 import 'dart:io';
-import 'dart:typed_data';
 
 enum CoverSource { url, file, online }
 
@@ -353,7 +352,7 @@ class _CoverImageDialogState extends State<CoverImageDialog> {
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.indigo.withOpacity(0.2) : Colors.transparent,
+          color: isSelected ? Colors.indigo.withAlpha(60) : Colors.transparent,
           border: Border.all(
             color: isSelected ? Colors.indigo : Colors.grey[700]!,
             width: isSelected ? 2 : 1,
@@ -546,7 +545,7 @@ class _CoverImageDialogState extends State<CoverImageDialog> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     decoration: BoxDecoration(
-                      color: Colors.indigo.withOpacity(0.2),
+                      color: Colors.indigo.withAlpha(60),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(

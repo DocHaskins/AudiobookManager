@@ -85,7 +85,7 @@ class HardwareDetector {
       },
     );
     
-    Logger.log('Optimal config: ${parallelJobs} parallel jobs, bitrate: ${bitrate ?? "auto"}');
+    Logger.log('Optimal config: $parallelJobs parallel jobs, bitrate: ${bitrate ?? "auto"}');
     return config;
   }
   

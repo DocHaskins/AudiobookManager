@@ -121,7 +121,7 @@ class _AudiobookCoverSectionState extends State<AudiobookCoverSection> {
               color: Colors.grey[900],
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.4),
+                  color: Colors.black.withAlpha(120),
                   blurRadius: 25,
                   offset: const Offset(0, 15),
                 ),

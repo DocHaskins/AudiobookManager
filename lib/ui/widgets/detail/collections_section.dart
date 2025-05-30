@@ -84,7 +84,7 @@ class _CollectionsSectionState extends State<CollectionsSection> {
             runSpacing: 8,
             children: currentCollections.map((collection) => 
               Material(
-                color: Colors.blue.withOpacity(0.2),
+                color: Colors.blue.withAlpha(60),
                 borderRadius: BorderRadius.circular(12),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(12),
@@ -93,7 +93,7 @@ class _CollectionsSectionState extends State<CollectionsSection> {
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.blue.withOpacity(0.5)),
+                      border: Border.all(color: Colors.blue.withAlpha(128)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -109,7 +109,7 @@ class _CollectionsSectionState extends State<CollectionsSection> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Icon(Icons.close, color: Colors.blue.withOpacity(0.7), size: 16),
+                        Icon(Icons.close, color: Colors.blue.withAlpha(140), size: 16),
                       ],
                     ),
                   ),

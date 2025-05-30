@@ -137,7 +137,7 @@ class _RatingSectionState extends State<RatingSection>
                   child: Text(
                     _getRatingText(_hoveredRating),
                     style: TextStyle(
-                      color: Colors.amber.withOpacity(0.8),
+                      color: Colors.amber.withAlpha(160),
                       fontSize: 12,
                       fontStyle: FontStyle.italic,
                     ),
@@ -226,7 +226,7 @@ class _RatingSectionState extends State<RatingSection>
     if (starIndex <= userRating) {
       return Colors.amber;
     } else if (isHovered) {
-      return Colors.amber.withOpacity(0.7);
+      return Colors.amber.withAlpha(140);
     } else {
       return Colors.grey[400]!;
     }

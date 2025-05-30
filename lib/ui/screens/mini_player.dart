@@ -154,7 +154,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                 color: const Color(0xFF181818), // Spotify's mini player color
                 border: Border(
                   top: BorderSide(
-                    color: Colors.grey[800]!.withOpacity(0.5),
+                    color: Colors.grey[800]!.withAlpha(128),
                     width: 1,
                   ),
                 ),
@@ -338,7 +338,7 @@ class _MiniPlayerState extends State<MiniPlayer> with TickerProviderStateMixin {
                                   shape: BoxShape.circle,
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
+                                      color: Colors.black.withAlpha(60),
                                       blurRadius: 2,
                                       offset: const Offset(0, 1),
                                     ),

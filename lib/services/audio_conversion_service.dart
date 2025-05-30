@@ -1,4 +1,4 @@
-// lib/services/audio_conversion_service.dart - Updated to use hardware caching while keeping all functionality
+// lib/services/audio_conversion_service.dart
 import 'dart:async';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/chapter_info.dart';
@@ -153,7 +153,7 @@ class AudioConversionService {
       
       Logger.log('Starting merge operation with configuration:');
       Logger.log('- Chapters: ${chapters.length}');
-      Logger.log('- Output: ${outputPath}');
+      Logger.log('- Output: $outputPath');
       Logger.log('- Book: ${bookMetadata.title}');
       Logger.log('- Using cached hardware profile from: ${_hardwareInfo?.detectedAt}');
 

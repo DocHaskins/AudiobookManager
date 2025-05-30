@@ -211,7 +211,7 @@ class HardwareCacheService {
       detectedAt: DateTime.now(),
     );
 
-    Logger.log('Hardware detected: ${cpuCores} cores, ${totalMemoryMB}MB RAM, max parallel jobs: ${maxParallelJobs}');
+    Logger.log('Hardware detected: $cpuCores cores, ${totalMemoryMB}MB RAM, max parallel jobs: $maxParallelJobs');
     return info;
   }
 

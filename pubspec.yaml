@@ -13,13 +13,11 @@ dependencies:
   
   # UI
   cupertino_icons: ^1.0.5
-  
+  font_awesome_flutter: ^10.6.0
+  material_symbols_icons: ^4.2719.3
   flutter_slidable: ^3.0.0
   google_fonts: ^6.2.1
   provider: ^6.1.1
-  webview_flutter: ^4.4.2
-  webview_flutter_android: ^3.12.1
-  webview_flutter_wkwebview: ^3.9.4
   
   # File handling
   path_provider: ^2.1.1
@@ -38,7 +36,6 @@ dependencies:
   flutter_media_metadata: ^1.0.0 
   id3: ^1.0.2
   metadata_god: ^1.0.0
-  ffmpeg_kit_flutter: ^5.1.0
   permission_handler: ^10.3.0
   
   # Utilities

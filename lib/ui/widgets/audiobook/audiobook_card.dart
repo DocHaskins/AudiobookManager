@@ -91,8 +91,8 @@ class _AudiobookCardState extends State<AudiobookCard>
                 boxShadow: [
                   BoxShadow(
                     color: isDarkMode 
-                        ? Colors.black.withOpacity(0.3)
-                        : Colors.black.withOpacity(0.1),
+                        ? Colors.black.withAlpha(90)
+                        : Colors.black.withAlpha(24),
                     blurRadius: _isPressed ? 4 : 8,
                     offset: Offset(0, _isPressed ? 2 : 4),
                   ),
@@ -122,7 +122,7 @@ class _AudiobookCardState extends State<AudiobookCard>
                                     colors: [
                                       Colors.transparent,
                                       Colors.transparent,
-                                      Colors.black.withOpacity(0.7),
+                                      Colors.black.withAlpha(140),
                                     ],
                                     stops: const [0.0, 0.5, 1.0],
                                   ),
@@ -337,7 +337,7 @@ class _AudiobookCardState extends State<AudiobookCard>
         borderRadius: BorderRadius.circular(12),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.2),
+            color: Colors.black.withAlpha(60),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -358,7 +358,7 @@ class _AudiobookCardState extends State<AudiobookCard>
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.5),
+        color: Colors.black.withAlpha(128),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Icon(
@@ -373,7 +373,7 @@ class _AudiobookCardState extends State<AudiobookCard>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.5),
+        color: Colors.black.withAlpha(128),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -402,7 +402,7 @@ class _AudiobookCardState extends State<AudiobookCard>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.5),
+        color: Colors.black.withAlpha(128),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
@@ -426,7 +426,7 @@ class _AudiobookCardState extends State<AudiobookCard>
           borderRadius: BorderRadius.circular(2),
           child: LinearProgressIndicator(
             value: progress,
-            backgroundColor: Colors.white.withOpacity(0.3),
+            backgroundColor: Colors.white.withAlpha(90),
             valueColor: AlwaysStoppedAnimation<Color>(
               Theme.of(context).primaryColor,
             ),

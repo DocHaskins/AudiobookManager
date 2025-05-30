@@ -32,7 +32,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
 
   // UI state
   bool _isSettingsExpanded = false;
-  bool _showTips = false;
+  final bool _showTips = false;
 
   // Configuration
   bool _preserveOriginalBitrate = true;
@@ -51,7 +51,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
   StreamSubscription<ProcessingUpdate>? _progressSubscription;
   
   // Individual file progress (extracted from service metadata)
-  Map<String, FileProgressDisplay> _fileProgressInfo = {};
+  final Map<String, FileProgressDisplay> _fileProgressInfo = {};
 
   @override
   void initState() {
@@ -134,7 +134,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: const Color.fromARGB(255, 39, 176, 69).withOpacity(0.2),
+            color: const Color.fromARGB(255, 39, 176, 69).withAlpha(60),
             borderRadius: BorderRadius.circular(12),
           ),
           child: const Icon(
@@ -178,7 +178,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
         decoration: BoxDecoration(
           color: const Color(0xFF1A1A1A),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color.fromARGB(255, 39, 176, 69).withOpacity(0.3)),
+          border: Border.all(color: const Color.fromARGB(255, 39, 176, 69).withAlpha(90)),
         ),
         child: const Center(
           child: CircularProgressIndicator(
@@ -198,7 +198,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
       decoration: BoxDecoration(
         color: const Color(0xFF1A1A1A),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color.fromARGB(255, 39, 176, 69).withOpacity(0.3)),
+        border: Border.all(color: const Color.fromARGB(255, 39, 176, 69).withAlpha(90)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -221,7 +221,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Colors.blue.withOpacity(0.2),
+                    color: Colors.blue.withAlpha(60),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
@@ -305,9 +305,9 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
+                color: Colors.blue.withAlpha(24),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                border: Border.all(color: Colors.blue.withAlpha(90)),
               ),
               child: Text(
                 update.stage,
@@ -328,9 +328,9 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withAlpha(24),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withAlpha(90)),
       ),
       child: Column(
         children: [
@@ -348,7 +348,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
           Text(
             label,
             style: TextStyle(
-              color: color.withOpacity(0.8),
+              color: color.withAlpha(160),
               fontSize: 11,
             ),
           ),
@@ -450,7 +450,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                                   decoration: BoxDecoration(
-                                    color: Colors.blue.withOpacity(0.2),
+                                    color: Colors.blue.withAlpha(60),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                   child: Text(
@@ -862,7 +862,7 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
     
     return Container(
       decoration: BoxDecoration(
-        color: isSelected ? Colors.blue.withOpacity(0.1) : Colors.transparent,
+        color: isSelected ? Colors.blue.withAlpha(24) : Colors.transparent,
         border: Border(bottom: BorderSide(color: Colors.grey[800]!)),
       ),
       child: Material(
@@ -1066,9 +1066,9 @@ class _Mp3BatchConverterToolState extends State<Mp3BatchConverterTool> {
               padding: const EdgeInsets.all(12),
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                color: Colors.green.withOpacity(0.1),
+                color: Colors.green.withAlpha(24),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green.withOpacity(0.3)),
+                border: Border.all(color: Colors.green.withAlpha(90)),
               ),
               child: Row(
                 children: [

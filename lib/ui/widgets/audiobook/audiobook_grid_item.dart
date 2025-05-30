@@ -92,7 +92,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.5),
+                      color: Colors.black.withAlpha(128),
                       blurRadius: _elevationAnimation.value,
                       offset: Offset(0, _elevationAnimation.value / 2),
                     ),
@@ -140,7 +140,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                                   child: Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                     decoration: BoxDecoration(
-                                      color: Colors.black.withOpacity(0.8),
+                                      color: Colors.black.withAlpha(160),
                                       borderRadius: BorderRadius.circular(12),
                                     ),
                                     child: Row(
@@ -175,7 +175,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                               width: double.infinity,
                               height: double.infinity,
                               decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.3),
+                                color: Colors.black.withAlpha(90),
                                 borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                               ),
                               child: Align(
@@ -189,7 +189,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                                       end: Alignment.bottomCenter,
                                       colors: [
                                         Colors.transparent,
-                                        Colors.black.withOpacity(0.8),
+                                        Colors.black.withAlpha(160),
                                       ],
                                     ),
                                     borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
@@ -205,7 +205,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                                         color: metadata?.isFavorite == true 
                                             ? Colors.red 
                                             : Colors.white,
-                                        backgroundColor: Colors.black.withOpacity(0.7),
+                                        backgroundColor: Colors.black.withAlpha(140),
                                         onPressed: () => _handleFavoritePress(context),
                                       ),
                                       
@@ -323,7 +323,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                               height: 20,
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF6366F1).withOpacity(0.2),
+                                color: const Color(0xFF6366F1).withAlpha(60),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Center(
@@ -370,7 +370,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
           shape: BoxShape.circle,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.3),
+              color: Colors.black.withAlpha(90),
               blurRadius: 8,
               offset: const Offset(0, 4),
             ),

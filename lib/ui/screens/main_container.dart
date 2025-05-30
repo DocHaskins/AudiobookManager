@@ -1,11 +1,10 @@
-// lib/ui/screens/main_container.dart - Updated to use hardware caching
+// lib/ui/screens/main_container.dart
 import 'package:flutter/material.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/collection_manager.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
 import 'package:audiobook_organizer/services/audio_conversion_service.dart';
-import 'package:audiobook_organizer/services/hardware_cache_service.dart';
 import 'package:audiobook_organizer/services/providers/metadata_provider.dart';
 import 'package:audiobook_organizer/ui/screens/sidebar.dart';
 import 'package:audiobook_organizer/ui/widgets/library/library_content_view.dart';

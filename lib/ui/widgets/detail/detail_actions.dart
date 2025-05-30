@@ -1,4 +1,4 @@
-// lib/ui/widgets/detail/utils/detail_actions.dart - Updated with Goodreads support
+// lib/ui/widgets/detail/utils/detail_actions.dart
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -9,7 +9,6 @@ import 'package:audiobook_organizer/models/audiobook_metadata.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
 import 'package:audiobook_organizer/services/metadata_service.dart';
-import 'package:audiobook_organizer/services/providers/goodreads_service.dart';
 import 'package:audiobook_organizer/ui/widgets/detail/detail_controllers_mixin.dart';
 import 'package:audiobook_organizer/ui/widgets/dialogs/metadata_search_dialog.dart';
 import 'package:audiobook_organizer/ui/widgets/dialogs/conversion_progress_dialog.dart';
@@ -532,8 +531,8 @@ class DetailActions {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
-                  border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                  color: Colors.orange.withAlpha(24),
+                  border: Border.all(color: Colors.orange.withAlpha(90)),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Row(

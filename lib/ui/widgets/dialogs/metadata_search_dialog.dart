@@ -620,7 +620,7 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: isSelected ? Colors.indigo.withOpacity(0.2) : const Color(0xFF2A2A2A),
+        color: isSelected ? Colors.indigo.withAlpha(60) : const Color(0xFF2A2A2A),
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
           onTap: onTap,
@@ -804,7 +804,7 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withAlpha(30),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -981,7 +981,7 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.2) : const Color(0xFF2A2A2A),
+          color: isSelected ? color.withAlpha(60) : const Color(0xFF2A2A2A),
           borderRadius: BorderRadius.circular(8),
           border: isSelected ? Border.all(color: color) : null,
         ),
@@ -1006,7 +1006,7 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: color.withOpacity(0.2),
+                      color: color.withAlpha(60),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
@@ -1101,7 +1101,7 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
                 borderRadius: BorderRadius.circular(8),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.3),
+                    color: Colors.black.withAlpha(90),
                     blurRadius: 10,
                     offset: const Offset(0, 5),
                   ),
@@ -1308,9 +1308,9 @@ class _MetadataSearchDialogState extends State<MetadataSearchDialog> {
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
+                color: Colors.orange.withAlpha(24),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                border: Border.all(color: Colors.orange.withAlpha(90)),
               ),
               child: Row(
                 children: [

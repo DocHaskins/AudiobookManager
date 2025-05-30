@@ -120,7 +120,7 @@ class _UnifiedSidebarState extends State<Sidebar> {
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.2),
+              color: Colors.black.withAlpha(60),
               blurRadius: 6,
               offset: const Offset(0, 2),
             ),
@@ -172,8 +172,8 @@ class _UnifiedSidebarState extends State<Sidebar> {
           gradient: isSelected
               ? LinearGradient(
                   colors: [
-                    Theme.of(context).primaryColor.withOpacity(0.8),
-                    Theme.of(context).primaryColor.withOpacity(0.6),
+                    Theme.of(context).primaryColor.withAlpha(160),
+                    Theme.of(context).primaryColor.withAlpha(130),
                   ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
@@ -182,7 +182,7 @@ class _UnifiedSidebarState extends State<Sidebar> {
           boxShadow: isSelected
               ? [
                   BoxShadow(
-                    color: Theme.of(context).primaryColor.withOpacity(0.3),
+                    color: Theme.of(context).primaryColor.withAlpha(90),
                     blurRadius: 8,
                     spreadRadius: 1,
                   ),
@@ -194,8 +194,8 @@ class _UnifiedSidebarState extends State<Sidebar> {
           child: InkWell(
             onTap: () => widget.onSectionChanged(section),
             borderRadius: BorderRadius.circular(12),
-            splashColor: Theme.of(context).primaryColor.withOpacity(0.2),
-            highlightColor: Theme.of(context).primaryColor.withOpacity(0.1),
+            splashColor: Theme.of(context).primaryColor.withAlpha(60),
+            highlightColor: Theme.of(context).primaryColor.withAlpha(24),
             child: Container(
               height: 60,
               padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -645,7 +645,7 @@ class _UnifiedSidebarState extends State<Sidebar> {
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 color: isSelected 
-                    ? Theme.of(context).primaryColor.withOpacity(0.2)
+                    ? Theme.of(context).primaryColor.withAlpha(60)
                     : Colors.grey[800],
                 borderRadius: BorderRadius.circular(10),
               ),

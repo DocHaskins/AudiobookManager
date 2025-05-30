@@ -22,7 +22,7 @@ class MissingFileWidget extends StatelessWidget {
           decoration: BoxDecoration(
             color: const Color(0xFF2A2A2A),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.red.withOpacity(0.5)),
+            border: Border.all(color: Colors.red.withAlpha(128)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,

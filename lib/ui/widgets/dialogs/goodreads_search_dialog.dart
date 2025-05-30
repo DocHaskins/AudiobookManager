@@ -112,24 +112,30 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
     final author = _authorController.text.trim();
     
     if (title.isEmpty) {
-      setState(() {
-        _searchError = 'Please enter a book title';
-      });
+      if (mounted) {
+        setState(() {
+          _searchError = 'Please enter a book title';
+        });
+      }
       return;
     }
 
-    setState(() {
-      _isSearching = true;
-      _searchError = '';
-      _searchResults.clear();
-      _selectedMetadata = null;
-      _selectedIndex = -1;
-    });
+    if (mounted) {
+      setState(() {
+        _isSearching = true;
+        _searchError = '';
+        _searchResults.clear();
+        _selectedMetadata = null;
+        _selectedIndex = -1;
+      });
+    }
 
     try {
       Logger.log('Searching Goodreads for: "$title" by "$author"');
       
       final results = await GoodreadsService.searchBooks(title, author);
+      
+      if (!mounted) return; // Check mounted before setState
       
       setState(() {
         _searchResults = results;
@@ -137,9 +143,11 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
       });
       
       if (results.isEmpty) {
-        setState(() {
-          _searchError = 'No books found. Try adjusting your search terms.';
-        });
+        if (mounted) {
+          setState(() {
+            _searchError = 'No books found. Try adjusting your search terms.';
+          });
+        }
       } else {
         Logger.log('Found ${results.length} search results');
         
@@ -151,10 +159,12 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
       
     } catch (e) {
       Logger.error('Error searching Goodreads: $e');
-      setState(() {
-        _isSearching = false;
-        _searchError = 'Search failed: ${e.toString()}';
-      });
+      if (mounted) {
+        setState(() {
+          _isSearching = false;
+          _searchError = 'Search failed: ${e.toString()}';
+        });
+      }
     }
   }
 
@@ -178,17 +188,21 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
   Future<void> _selectBook(int index) async {
     if (index < 0 || index >= _searchResults.length) return;
     
-    setState(() {
-      _isLoadingDetails = true;
-      _selectedIndex = index;
-      _selectedMetadata = null;
-    });
+    if (mounted) {
+      setState(() {
+        _isLoadingDetails = true;
+        _selectedIndex = index;
+        _selectedMetadata = null;
+      });
+    }
 
     try {
       final result = _searchResults[index];
       Logger.log('Loading details for: ${result.title}');
       
       final metadata = await GoodreadsService.getBookMetadata(result.bookUrl);
+      
+      if (!mounted) return; // Check mounted before setState
       
       if (metadata != null) {
         setState(() {
@@ -204,10 +218,12 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
       }
     } catch (e) {
       Logger.error('Error loading book details: $e');
-      setState(() {
-        _isLoadingDetails = false;
-        _searchError = 'Error loading details: ${e.toString()}';
-      });
+      if (mounted) {
+        setState(() {
+          _isLoadingDetails = false;
+          _searchError = 'Error loading details: ${e.toString()}';
+        });
+      }
     }
   }
 
@@ -263,9 +279,9 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
   Widget _buildHeader() {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF000000),
-        borderRadius: const BorderRadius.only(
+      decoration: const BoxDecoration(
+        color: Color(0xFF000000),
+        borderRadius: BorderRadius.only(
           topLeft: Radius.circular(16),
           topRight: Radius.circular(16),
         ),
@@ -392,9 +408,9 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.red.withOpacity(0.1),
+                color: Colors.red.withAlpha(24),
                 borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: Colors.red.withOpacity(0.3)),
+                border: Border.all(color: Colors.red.withAlpha(90)),
               ),
               child: Row(
                 children: [
@@ -451,9 +467,9 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
           // Results header
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFF3A3A3A),
-              borderRadius: const BorderRadius.only(
+            decoration: const BoxDecoration(
+              color: Color(0xFF3A3A3A),
+              borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(8),
                 topRight: Radius.circular(8),
               ),
@@ -497,7 +513,7 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: isSelected ? Colors.orange.withOpacity(0.1) : const Color(0xFF1A1A1A),
+        color: isSelected ? Colors.orange.withAlpha(24) : const Color(0xFF1A1A1A),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: isSelected ? Colors.orange : Colors.grey[700]!,
@@ -555,7 +571,7 @@ class _GoodreadsSearchDialogState extends State<GoodreadsSearchDialog> {
             Row(
               children: [
                 if (result.rating > 0) ...[
-                  Icon(Icons.star, color: Colors.orange, size: 14),
+                  const Icon(Icons.star, color: Colors.orange, size: 14),
                   const SizedBox(width: 4),
                   Text(
                     result.rating.toStringAsFixed(1),

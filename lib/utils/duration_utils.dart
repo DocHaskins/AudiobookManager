@@ -1,4 +1,4 @@
-// lib/utils/duration_utils.dart - Duration calculation utilities
+// lib/utils/duration_utils.dart
 // =============================================================================
 
 import 'package:audiobook_organizer/models/audiobook_file.dart';

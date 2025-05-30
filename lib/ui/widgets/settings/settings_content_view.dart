@@ -1,4 +1,4 @@
-// lib/ui/widgets/settings/settings_content_view.dart - Settings section content
+// lib/ui/widgets/settings/settings_content_view.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';

@@ -291,7 +291,7 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.4),
+                      color: Colors.black.withAlpha(102),
                       blurRadius: 24,
                       offset: const Offset(0, 12),
                     ),
@@ -363,11 +363,11 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
       decoration: BoxDecoration(
         color: const Color(0xFF181818),
         border: Border(
-          top: BorderSide(color: Colors.grey[800]!.withOpacity(0.5)),
+          top: BorderSide(color: Colors.grey[800]!.withAlpha(120)),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.3),
+            color: Colors.black.withAlpha(100),
             blurRadius: 8,
             offset: const Offset(0, -4),
           ),
@@ -407,7 +407,7 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
             activeTrackColor: const Color(0xFF1DB954),
             inactiveTrackColor: Colors.grey[800],
             thumbColor: Colors.white,
-            overlayColor: const Color(0xFF1DB954).withOpacity(0.1),
+            overlayColor: const Color(0xFF1DB954).withAlpha(20),
           ),
           child: Slider(
             value: _position.inMilliseconds.toDouble(),
@@ -554,9 +554,9 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             decoration: BoxDecoration(
-              color: Colors.amber.withOpacity(0.1),
+              color: Colors.amber.withAlpha(20),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.amber.withOpacity(0.3)),
+              border: Border.all(color: Colors.amber.withAlpha(50)),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -576,7 +576,7 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
                   child: Icon(
                     Icons.close,
                     size: 16,
-                    color: Colors.amber.withOpacity(0.7),
+                    color: Colors.amber.withAlpha(150),
                   ),
                 ),
               ],
@@ -658,7 +658,7 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF1DB954).withOpacity(0.1),
+                            color: const Color(0xFF1DB954).withAlpha(20),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: const Icon(
@@ -787,7 +787,7 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
                                   width: 32,
                                   height: 32,
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF1DB954).withOpacity(0.1),
+                                    color: const Color(0xFF1DB954).withAlpha(20),
                                     borderRadius: BorderRadius.circular(16),
                                   ),
                                   child: const Icon(
@@ -940,7 +940,7 @@ class PlayerScreenState extends State<PlayerScreen> with SingleTickerProviderSta
               ListTile(
                 title: Text('${speed.toStringAsFixed(2)}x', style: const TextStyle(color: Colors.white)),
                 selected: (speed - _playbackSpeed).abs() < 0.01,
-                selectedTileColor: const Color(0xFF1DB954).withOpacity(0.1),
+                selectedTileColor: const Color(0xFF1DB954).withAlpha(25),
                 onTap: () {
                   Navigator.pop(context);
                   playerService.setSpeed(speed);

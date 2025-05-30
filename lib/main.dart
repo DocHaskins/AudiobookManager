@@ -1,16 +1,10 @@
-// lib/main.dart - Updated main app structure with WebView initialization
+// lib/main.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:metadata_god/metadata_god.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:ffmpeg_kit_flutter/ffmpeg_kit_config.dart';
-// NEW: WebView imports
-import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
-import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
-
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/directory_scanner.dart';
 import 'package:audiobook_organizer/services/metadata_matcher.dart';
@@ -41,37 +35,7 @@ void main() async {
   
   Logger.log('Starting Audiobook Organizer on platform: ${Platform.operatingSystem}');
   Logger.logDeviceInfo();
-  
-  // NEW: Initialize WebView platform implementations
-  try {
-    Logger.log('Initializing WebView platform...');
     
-    if (Platform.isAndroid) {
-      // Initialize Android WebView
-      WebViewPlatform.instance = AndroidWebViewPlatform();
-      PlatformWebViewControllerCreationParams params = const PlatformWebViewControllerCreationParams();
-      final WebViewController controller = WebViewController.fromPlatformCreationParams(params);
-      Logger.log('Android WebView platform initialized');
-    } else if (Platform.isIOS) {
-      // Initialize iOS WebView
-      final iosWebView = WebKitWebViewController(
-        const PlatformWebViewControllerCreationParams(),
-      );
-      WebViewPlatform.instance = WebKitWebViewPlatform();
-      Logger.log('iOS WebView platform initialized');
-    } else if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      // For desktop platforms, we'll handle this gracefully
-      Logger.log('Desktop platform detected - WebView may have limited functionality');
-      // Note: Desktop WebView support is limited, but we won't crash the app
-    }
-    
-    Logger.log('WebView platform initialization completed');
-  } catch (e) {
-    Logger.error('Error initializing WebView platform:', e);
-    Logger.warning('WebView functionality may be limited');
-    // Don't crash the app, just log the error
-  }
-  
   // Initialize MetadataGod early
   try {
     await MetadataGod.initialize();
@@ -83,13 +47,6 @@ void main() async {
   // Initialize FFmpeg with comprehensive setup
   bool ffmpegInitialized = false;
   try {   
-    Logger.log('Initializing FFmpeg...');
-    await FFmpegKitConfig.init();
-    Logger.log('FFmpegKitConfig.init() completed');
-    await FFmpegKitConfig.setLogLevel(32);
-    Logger.log('FFmpeg log level set to INFO');
-    await FFmpegKitConfig.enableStatistics();
-    Logger.log('FFmpeg statistics enabled');
     ffmpegInitialized = true;
     Logger.log('FFmpeg initialization completed successfully');
   } catch (e, stack) {
@@ -166,12 +123,6 @@ void main() async {
       return;
     }
     
-    // NEW: Handle WebView errors gracefully
-    if (exceptionString.contains('webview') || exceptionString.contains('WebView')) {
-      Logger.warning('WebView-related error caught - functionality may be limited: ${details.exception}');
-      return;
-    }
-    
     FlutterError.presentError(details);
   };
   
@@ -180,7 +131,6 @@ void main() async {
   Logger.log('- Audio: ${audioInitialized ? "✅" : "❌"}');
   Logger.log('- FFmpeg: ${ffmpegInitialized ? "✅" : "❌"}');
   Logger.log('- MetadataGod: ✅');
-  Logger.log('- WebView: ${_isWebViewSupported() ? "✅" : "⚠️ Limited"}');
   
   if (!audioInitialized) {
     Logger.warning('Audio initialization had issues - some features may be limited');
@@ -192,11 +142,6 @@ void main() async {
   
   // Start the app
   runApp(const AudiobookOrganizerApp());
-}
-
-// Helper function to check WebView support
-bool _isWebViewSupported() {
-  return Platform.isAndroid || Platform.isIOS;
 }
 
 class AudiobookOrganizerApp extends StatefulWidget {
@@ -322,7 +267,6 @@ class _AudiobookOrganizerAppState extends State<AudiobookOrganizerApp> {
       final serviceStats = _metadataService.getCacheStats();
       Logger.log('Service initialization complete:');
       Logger.log('- MetadataService FFmpeg: ${serviceStats['ffmpeg_available'] ? "✅" : "❌"}');
-      Logger.log('- WebView Support: ${_isWebViewSupported() ? "✅" : "⚠️ Limited"}');
       Logger.log('- All services: ✅');
       
       // Update status
