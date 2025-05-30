@@ -19,6 +19,7 @@ class Sidebar extends StatefulWidget {
   final ValueChanged<String>? onSearchChanged;
   final ValueChanged<SortOption>? onSortOptionChanged;
   final ValueChanged<bool>? onShowCollectionsToggle;
+  final ValueChanged<bool>? onSortReverseChanged; // New callback for reverse sorting
 
   const Sidebar({
     Key? key,
@@ -31,6 +32,7 @@ class Sidebar extends StatefulWidget {
     this.onSearchChanged,
     this.onSortOptionChanged,
     this.onShowCollectionsToggle,
+    this.onSortReverseChanged,
   }) : super(key: key);
 
   @override
@@ -42,6 +44,7 @@ class _UnifiedSidebarState extends State<Sidebar> {
   bool _showCollections = false;
   bool _showAuthors = false; // New state for Genre/Author toggle
   SortOption _selectedSortOption = SortOption.title;
+  bool _isReversed = false; // New state for reverse sorting
   
   // Dynamic categories with counts for library section
   Map<String, int> _availableGenres = {};
@@ -284,7 +287,7 @@ class _UnifiedSidebarState extends State<Sidebar> {
           const SizedBox(height: 16),
           _buildSearchBar(),
           const SizedBox(height: 16),
-          if (!_showCollections) _buildSortDropdown(context),
+          if (!_showCollections) _buildSortSection(context),
           const SizedBox(height: 24),
           _buildLibraryCategories(context),
         ],
@@ -407,6 +410,18 @@ class _UnifiedSidebarState extends State<Sidebar> {
     );
   }
 
+  Widget _buildSortSection(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _buildSortDropdown(context),
+        ),
+        const SizedBox(width: 8),
+        _buildReverseSortButton(context),
+      ],
+    );
+  }
+
   Widget _buildSortDropdown(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
@@ -445,7 +460,7 @@ class _UnifiedSidebarState extends State<Sidebar> {
                   ),
                   const SizedBox(width: 12),
                   Text(
-                    'Sort by ${value.displayName}',
+                    'Sort: ${value.displayName}',
                     style: const TextStyle(fontSize: 14),
                   ),
                 ],
@@ -457,14 +472,53 @@ class _UnifiedSidebarState extends State<Sidebar> {
     );
   }
 
+  Widget _buildReverseSortButton(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: _isReversed ? Theme.of(context).primaryColor : const Color(0xFF2A2A2A),
+        borderRadius: BorderRadius.circular(8),
+        border: _isReversed 
+            ? Border.all(color: Theme.of(context).primaryColor, width: 1)
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          onTap: () {
+            setState(() {
+              _isReversed = !_isReversed;
+            });
+            // Notify the library content view about reverse changes
+            if (widget.currentSection == MainSection.library && widget.onSortReverseChanged != null) {
+              widget.onSortReverseChanged!(_isReversed);
+            }
+          },
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            child: AnimatedRotation(
+              turns: _isReversed ? 0.5 : 0.0,
+              duration: const Duration(milliseconds: 200),
+              child: Icon(
+                Icons.swap_vert,
+                color: _isReversed ? Colors.white : Colors.grey[400],
+                size: 20,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   IconData _getSortIcon(SortOption option) {
     switch (option) {
       case SortOption.title:
-      case SortOption.titleDesc:
         return Icons.sort_by_alpha;
       case SortOption.author:
         return Icons.person;
-      case SortOption.rating:
+      case SortOption.onlineRating:
         return Icons.star;
       case SortOption.duration:
         return Icons.access_time;

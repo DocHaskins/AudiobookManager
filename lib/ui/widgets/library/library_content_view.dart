@@ -19,6 +19,7 @@ class LibraryContentView extends StatefulWidget {
   final String searchQuery;
   final SortOption sortOption;
   final bool showCollections;
+  final bool isReversed;
 
   const LibraryContentView({
     Key? key,
@@ -29,6 +30,7 @@ class LibraryContentView extends StatefulWidget {
     this.searchQuery = '',
     this.sortOption = SortOption.title,
     this.showCollections = false,
+    this.isReversed = false,
   }) : super(key: key);
 
   @override
@@ -77,7 +79,8 @@ class _LibraryContentViewState extends State<LibraryContentView> {
     if (oldWidget.currentSubsection != widget.currentSubsection ||
         oldWidget.searchQuery != widget.searchQuery ||
         oldWidget.sortOption != widget.sortOption ||
-        oldWidget.showCollections != widget.showCollections) {
+        oldWidget.showCollections != widget.showCollections ||
+        oldWidget.isReversed != widget.isReversed) {
       setState(() {
         _updateFilteredData();
       });
@@ -97,6 +100,7 @@ class _LibraryContentViewState extends State<LibraryContentView> {
         searchQuery: widget.searchQuery,
         selectedCategory: widget.currentSubsection,
         sortOption: widget.sortOption,
+        isReversed: widget.isReversed,
       );
     }
   }
@@ -138,10 +142,15 @@ class _LibraryContentViewState extends State<LibraryContentView> {
 
   @override
   Widget build(BuildContext context) {
-    if (_navigationStack.isNotEmpty) {
-      return _buildDetailContent();
-    }
-    return _buildMainContent(context);
+    return Stack(
+      children: [
+        // Main library content - always present to preserve scroll position
+        _buildMainContent(context),
+        
+        // Detail view overlay - only visible when navigation stack is not empty
+        if (_navigationStack.isNotEmpty) _buildDetailOverlay(),
+      ],
+    );
   }
 
   Widget _buildMainContent(BuildContext context) {
@@ -165,6 +174,40 @@ class _LibraryContentViewState extends State<LibraryContentView> {
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _buildDetailOverlay() {
+    return Container(
+      color: const Color(0xFF121212), // Same background as main content
+      child: Column(
+        children: [
+          // Back button header
+          Container(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: _navigateBack,
+                ),
+                const SizedBox(width: 16),
+                const Text(
+                  'Back',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Detail content
+          Expanded(
+            child: _navigationStack.last,
+          ),
+        ],
+      ),
     );
   }
 
@@ -252,34 +295,5 @@ class _LibraryContentViewState extends State<LibraryContentView> {
           return widget.currentSubsection;
       }
     }
-  }
-
-  Widget _buildDetailContent() {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                onPressed: _navigateBack,
-              ),
-              const SizedBox(width: 16),
-              const Text(
-                'Back',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: _navigationStack.last,
-        ),
-      ],
-    );
   }
 }

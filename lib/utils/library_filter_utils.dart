@@ -3,10 +3,10 @@ import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/models/collection.dart';
 
 enum SortOption {
-  title('A-Z'),
-  titleDesc('Z-A'),
+  title('Title'),
   author('Author'),
-  rating('Rating'),
+  //userRating('User Rating'),
+  onlineRating('Rating'),
   duration('Duration'),
   dateAdded('Date Added'),
   series('Series'),
@@ -68,6 +68,7 @@ class LibraryFilterUtils {
     String searchQuery = '',
     String selectedCategory = 'All',
     SortOption sortOption = SortOption.title,
+    bool isReversed = false, // New parameter for reverse sorting
   }) {
     List<AudiobookFile> filtered = books;
 
@@ -119,52 +120,72 @@ class LibraryFilterUtils {
       }
     }
 
-    // Apply sorting
-    return _sortBooks(filtered, sortOption);
+    // Apply sorting with reverse option
+    return _sortBooks(filtered, sortOption, isReversed);
   }
 
-  // Sort books based on the selected sort option
-  static List<AudiobookFile> _sortBooks(List<AudiobookFile> books, SortOption sortOption) {
+  // Sort books based on the selected sort option with reverse capability
+  static List<AudiobookFile> _sortBooks(List<AudiobookFile> books, SortOption sortOption, bool isReversed) {
     final sortedBooks = List<AudiobookFile>.from(books);
     
     switch (sortOption) {
       case SortOption.title:
-        sortedBooks.sort((a, b) => a.displayTitle.compareTo(b.displayTitle));
-        break;
-      case SortOption.titleDesc:
-        sortedBooks.sort((a, b) => b.displayTitle.compareTo(a.displayTitle));
+        sortedBooks.sort((a, b) {
+          final comparison = a.displayTitle.compareTo(b.displayTitle);
+          return isReversed ? -comparison : comparison;
+        });
         break;
       case SortOption.author:
-        sortedBooks.sort((a, b) => a.displayAuthors.compareTo(b.displayAuthors));
-        break;
-      case SortOption.rating:
         sortedBooks.sort((a, b) {
-          final aRating = a.metadata?.userRating ?? a.metadata?.averageRating ?? 0;
-          final bRating = b.metadata?.userRating ?? b.metadata?.averageRating ?? 0;
-          return bRating.compareTo(aRating); // Highest rating first
+          final comparison = a.displayAuthors.compareTo(b.displayAuthors);
+          return isReversed ? -comparison : comparison;
+        });
+        break;
+      case SortOption.onlineRating:
+        sortedBooks.sort((a, b) {
+          final aRating = a.metadata?.averageRating ?? 0.0;
+          final bRating = b.metadata?.averageRating ?? 0.0;
+          
+          // Primary sort: online rating (highest first by default)
+          final ratingComparison = bRating.compareTo(aRating);
+          if (ratingComparison != 0) {
+            return isReversed ? -ratingComparison : ratingComparison;
+          }
+          
+          // Secondary sort: title (if ratings are equal)
+          final titleComparison = a.displayTitle.compareTo(b.displayTitle);
+          return isReversed ? -titleComparison : titleComparison;
         });
         break;
       case SortOption.duration:
         sortedBooks.sort((a, b) {
           final aDuration = a.metadata?.audioDuration?.inSeconds ?? 0;
           final bDuration = b.metadata?.audioDuration?.inSeconds ?? 0;
-          return bDuration.compareTo(aDuration); // Longest first
+          final comparison = bDuration.compareTo(aDuration); // Longest first by default
+          return isReversed ? -comparison : comparison;
         });
         break;
       case SortOption.dateAdded:
-        sortedBooks.sort((a, b) => b.lastModified.compareTo(a.lastModified));
+        sortedBooks.sort((a, b) {
+          final comparison = b.lastModified.compareTo(a.lastModified); // Newest first by default
+          return isReversed ? -comparison : comparison;
+        });
         break;
       case SortOption.series:
         sortedBooks.sort((a, b) {
           final aSeries = a.metadata?.series ?? '';
           final bSeries = b.metadata?.series ?? '';
+          
           if (aSeries != bSeries) {
-            return aSeries.compareTo(bSeries);
+            final seriesComparison = aSeries.compareTo(bSeries);
+            return isReversed ? -seriesComparison : seriesComparison;
           }
+          
           // If same series, sort by position
           final aPos = int.tryParse(a.metadata?.seriesPosition ?? '0') ?? 0;
           final bPos = int.tryParse(b.metadata?.seriesPosition ?? '0') ?? 0;
-          return aPos.compareTo(bPos);
+          final positionComparison = aPos.compareTo(bPos);
+          return isReversed ? -positionComparison : positionComparison;
         });
         break;
       case SortOption.genre:
@@ -175,7 +196,8 @@ class LibraryFilterUtils {
           final bGenre = b.metadata?.categories.isNotEmpty == true 
               ? b.metadata!.categories.first 
               : '';
-          return aGenre.compareTo(bGenre);
+          final comparison = aGenre.compareTo(bGenre);
+          return isReversed ? -comparison : comparison;
         });
         break;
     }
@@ -218,5 +240,39 @@ class LibraryFilterUtils {
     }
 
     return filtered;
+  }
+
+  static String formatUserRating(int userRating) {
+    if (userRating <= 0) return 'Not Rated';
+    return '$userRating/5 ⭐';
+  }
+
+  static String formatOnlineRating(double averageRating) {
+    if (averageRating <= 0.0) return 'No Rating';
+    return '${averageRating.toStringAsFixed(1)}/5 ⭐';
+  }
+
+  static List<AudiobookFile> getFilesWithUserRatings(List<AudiobookFile> files) {
+    return files.where((file) => (file.metadata?.userRating ?? 0) > 0).toList();
+  }
+
+  static List<AudiobookFile> getFilesWithOnlineRatings(List<AudiobookFile> files) {
+    return files.where((file) => (file.metadata?.averageRating ?? 0.0) > 0.0).toList();
+  }
+
+  static double getAverageUserRating(List<AudiobookFile> files) {
+    final ratedFiles = getFilesWithUserRatings(files);
+    if (ratedFiles.isEmpty) return 0.0;
+    
+    final totalRating = ratedFiles.fold<int>(0, (sum, file) => sum + (file.metadata?.userRating ?? 0));
+    return totalRating / ratedFiles.length;
+  }
+
+  static double getAverageOnlineRating(List<AudiobookFile> files) {
+    final ratedFiles = getFilesWithOnlineRatings(files);
+    if (ratedFiles.isEmpty) return 0.0;
+    
+    final totalRating = ratedFiles.fold<double>(0.0, (sum, file) => sum + (file.metadata?.averageRating ?? 0.0));
+    return totalRating / ratedFiles.length;
   }
 }

@@ -27,7 +27,6 @@ class AudiobookDetailView extends StatefulWidget {
 class _AudiobookDetailViewState extends State<AudiobookDetailView> 
     with DetailControllersMixin {
   late AudiobookFile _book;
-  bool _isUpdatingMetadata = false;
   late StreamSubscription<List<AudiobookFile>> _librarySubscription;
 
   @override
@@ -103,6 +102,11 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView>
     });
   }
 
+  bool get _isUpdating {
+    // Check if this file is currently being updated
+    return widget.libraryManager.isFileUpdating(_book.path);
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<bool>(
@@ -139,64 +143,95 @@ class _AudiobookDetailViewState extends State<AudiobookDetailView>
   Widget _buildNormalDetailView() {
     return Container(
       color: const Color(0xFF121212),
-      child: Stack(
+      child: Column(
         children: [
-          SingleChildScrollView(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Left side - Cover and actions
-                AudiobookCoverSection(
-                  book: _book,
-                  libraryManager: widget.libraryManager,
-                  onRefreshBook: refreshBookData,
-                  onUpdateMetadataStatus: (bool isUpdating) {
-                    setState(() {
-                      _isUpdatingMetadata = isUpdating;
-                    });
-                  },
-                  onBookUpdated: _onBookUpdated,
-                  isUpdatingMetadata: _isUpdatingMetadata,
-                ),
-                
-                // Right side - Metadata
-                Expanded(
-                  child: AudiobookMetadataSection(
+          // Non-blocking update indicator at the top
+          if (_isUpdating) _buildUpdateIndicator(),
+          
+          // Main content
+          Expanded(
+            child: SingleChildScrollView(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Left side - Cover and actions
+                  AudiobookCoverSection(
                     book: _book,
                     libraryManager: widget.libraryManager,
-                    controllers: this, // Pass the mixin
                     onRefreshBook: refreshBookData,
                     onUpdateMetadataStatus: (bool isUpdating) {
-                      setState(() {
-                        _isUpdatingMetadata = isUpdating;
-                      });
+                      // This callback is no longer needed for blocking UI
+                      // but we keep it for backwards compatibility
                     },
-                    onEditingStateChanged: _onEditingStateChanged, // Add this callback
-                    isUpdatingMetadata: _isUpdatingMetadata,
+                    onBookUpdated: _onBookUpdated,
+                    isUpdatingMetadata: _isUpdating,
                   ),
-                ),
-              ],
-            ),
-          ),
-          
-          // Loading overlay
-          if (_isUpdatingMetadata)
-            Container(
-              color: Colors.black54,
-              child: const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 16),
-                    Text(
-                      'Updating metadata...',
-                      style: TextStyle(color: Colors.white),
+                  
+                  // Right side - Metadata
+                  Expanded(
+                    child: AudiobookMetadataSection(
+                      book: _book,
+                      libraryManager: widget.libraryManager,
+                      controllers: this, // Pass the mixin
+                      onRefreshBook: refreshBookData,
+                      onUpdateMetadataStatus: (bool isUpdating) {
+                        // This callback is no longer needed for blocking UI
+                        // but we keep it for backwards compatibility
+                      },
+                      onEditingStateChanged: _onEditingStateChanged,
+                      isUpdatingMetadata: _isUpdating,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUpdateIndicator() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).primaryColor.withAlpha(20),
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(context).primaryColor.withAlpha(60),
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                Theme.of(context).primaryColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Updating metadata for "${_book.displayTitle}"...',
+              style: TextStyle(
+                color: Theme.of(context).primaryColor,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Icon(
+            Icons.info_outline,
+            size: 16,
+            color: Theme.of(context).primaryColor.withAlpha(180),
+          ),
         ],
       ),
     );

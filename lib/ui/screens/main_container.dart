@@ -46,6 +46,7 @@ class _MainContainerState extends State<MainContainer> {
   String _searchQuery = '';
   SortOption _sortOption = SortOption.title;
   bool _showCollections = false;
+  bool _isReversed = false; // New state for reverse sorting
 
   // Audio conversion service
   late final AudioConversionService _audioConversionService;
@@ -150,6 +151,12 @@ class _MainContainerState extends State<MainContainer> {
     });
   }
 
+  void _onSortReverseChanged(bool isReversed) {
+    setState(() {
+      _isReversed = isReversed;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -168,6 +175,7 @@ class _MainContainerState extends State<MainContainer> {
             onSearchChanged: _onSearchChanged,
             onSortOptionChanged: _onSortOptionChanged,
             onShowCollectionsToggle: _onShowCollectionsToggle,
+            onSortReverseChanged: _onSortReverseChanged,
           ),
         ),
         
@@ -198,6 +206,7 @@ class _MainContainerState extends State<MainContainer> {
           searchQuery: _searchQuery,
           sortOption: _sortOption,
           showCollections: _showCollections,
+          isReversed: _isReversed,
         );
       case MainSection.tools:
         return ToolsContentView(

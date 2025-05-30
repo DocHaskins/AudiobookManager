@@ -4,10 +4,11 @@ import 'package:audiobook_organizer/models/collection.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/library_manager.dart';
 import 'package:audiobook_organizer/services/collection_manager.dart';
+import 'package:audiobook_organizer/utils/logger.dart';
 import '../audiobook/audiobook_list_item.dart';
 import 'dart:io';
 
-class CollectionDetailView extends StatelessWidget {
+class CollectionDetailView extends StatefulWidget {
   final Collection collection;
   final List<AudiobookFile> books;
   final LibraryManager libraryManager;
@@ -24,10 +25,96 @@ class CollectionDetailView extends StatelessWidget {
   }) : super(key: key);
 
   @override
+  State<CollectionDetailView> createState() => _CollectionDetailViewState();
+}
+
+class _CollectionDetailViewState extends State<CollectionDetailView> {
+  late List<AudiobookFile> _currentBooks;
+  late Collection _currentCollection;
+  bool _isCollectionBeingDeleted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentBooks = widget.books;
+    _currentCollection = widget.collection;
+    
+    // Listen for collection changes to handle auto-cleanup
+    widget.collectionManager.collectionsChanged.listen((_) {
+      if (mounted && !_isCollectionBeingDeleted) {
+        _checkAndUpdateCollection();
+      }
+    });
+  }
+
+  void _checkAndUpdateCollection() {
+    // Get updated collection and books
+    final updatedCollection = widget.collectionManager.getCollection(_currentCollection.id);
+    if (updatedCollection == null) {
+      // Collection was deleted, we should navigate back
+      return;
+    }
+    
+    final updatedBooks = widget.libraryManager.getBooksForCollection(updatedCollection);
+    
+    setState(() {
+      _currentCollection = updatedCollection;
+      _currentBooks = updatedBooks;
+    });
+    
+    // Auto-remove empty collections (except favorites and custom user collections)
+    if (updatedBooks.isEmpty && _shouldAutoRemoveWhenEmpty()) {
+      _autoRemoveEmptyCollection();
+    }
+  }
+
+  bool _shouldAutoRemoveWhenEmpty() {
+    // Don't auto-remove custom collections or favorite collections
+    return _currentCollection.type != CollectionType.custom && 
+           _currentCollection.type != CollectionType.favorite;
+  }
+
+  Future<void> _autoRemoveEmptyCollection() async {
+    if (_isCollectionBeingDeleted) return;
+    
+    try {
+      _isCollectionBeingDeleted = true;
+      Logger.log('Auto-removing empty collection: ${_currentCollection.name}');
+      
+      await widget.collectionManager.deleteCollection(_currentCollection.id);
+      
+      if (mounted) {
+        // Show a brief message and navigate back
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Collection "${_currentCollection.name}" was automatically removed (no books remaining)'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.orange[700],
+          ),
+        );
+        
+        // Navigate back after a short delay
+        await Future.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      }
+    } catch (e) {
+      Logger.error('Error auto-removing empty collection: ${_currentCollection.name}', e);
+      _isCollectionBeingDeleted = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final sortedBooks = collection.getSortedBooks(books);
-    final totalDuration = collection.getTotalDuration(books);
-    final averageRating = collection.calculateAverageRating(books);
+    final sortedBooks = _currentCollection.getSortedBooks(_currentBooks);
+    final totalDuration = _currentCollection.getTotalDuration(_currentBooks);
+    final averageRating = _currentCollection.calculateAverageRating(_currentBooks);
+
+    // Show empty state if no books
+    if (sortedBooks.isEmpty) {
+      return _buildEmptyCollectionView();
+    }
 
     return Container(
       color: const Color(0xFF121212),
@@ -79,7 +166,7 @@ class CollectionDetailView extends StatelessWidget {
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            collection.type.toString().split('.').last.toUpperCase(),
+                            _currentCollection.type.toString().split('.').last.toUpperCase(),
                             style: TextStyle(
                               color: Theme.of(context).primaryColor,
                               fontSize: 12,
@@ -91,17 +178,17 @@ class CollectionDetailView extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        collection.name,
+                        _currentCollection.name,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 48,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      if (collection.description != null) ...[
+                      if (_currentCollection.description != null) ...[
                         const SizedBox(height: 16),
                         Text(
-                          collection.description!,
+                          _currentCollection.description!,
                           style: TextStyle(
                             color: Colors.grey[400],
                             fontSize: 16,
@@ -127,7 +214,7 @@ class CollectionDetailView extends StatelessWidget {
                       const SizedBox(height: 24),
                       
                       // Actions
-                      if (collection.type == CollectionType.custom)
+                      if (_currentCollection.type == CollectionType.custom)
                         Row(
                           children: [
                             ElevatedButton.icon(
@@ -169,7 +256,7 @@ class CollectionDetailView extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Dismissible(
                     key: Key(book.path),
-                    direction: collection.type == CollectionType.custom 
+                    direction: _currentCollection.type == CollectionType.custom 
                         ? DismissDirection.endToStart 
                         : DismissDirection.none,
                     background: Container(
@@ -187,7 +274,8 @@ class CollectionDetailView extends StatelessWidget {
                     onDismissed: (_) => _removeFromCollection(book),
                     child: AudiobookListItem(
                       book: book,
-                      onTap: () => onBookTap(book),
+                      libraryManager: widget.libraryManager, // Pass LibraryManager
+                      onTap: () => widget.onBookTap(book),
                     ),
                   ),
                 );
@@ -195,6 +283,62 @@ class CollectionDetailView extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyCollectionView() {
+    return Container(
+      color: const Color(0xFF121212),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.collections_bookmark_outlined,
+              size: 80,
+              color: Colors.grey[600],
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Collection "${_currentCollection.name}" is empty',
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontSize: 24,
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _shouldAutoRemoveWhenEmpty()
+                  ? 'This collection will be automatically removed since it has no books.'
+                  : 'Add books to this collection to see them here.',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 16,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            if (_currentCollection.type == CollectionType.custom) ...[
+              const SizedBox(height: 32),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => _deleteCollection(context),
+                    icon: const Icon(Icons.delete_outline),
+                    label: const Text('Delete Collection'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red[400],
+                      side: BorderSide(color: Colors.red[400]!),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -269,7 +413,7 @@ class CollectionDetailView extends StatelessWidget {
   }
 
   IconData _getCollectionIcon() {
-    switch (collection.type) {
+    switch (_currentCollection.type) {
       case CollectionType.series:
         return Icons.collections_bookmark;
       case CollectionType.author:
@@ -290,13 +434,15 @@ class CollectionDetailView extends StatelessWidget {
   }
 
   Future<void> _deleteCollection(BuildContext context) async {
+    if (_isCollectionBeingDeleted) return;
+    
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF2A2A2A),
         title: const Text('Delete Collection?', style: TextStyle(color: Colors.white)),
         content: Text(
-          'Are you sure you want to delete "${collection.name}"? The books will remain in your library.',
+          'Are you sure you want to delete "${_currentCollection.name}"? The books will remain in your library.',
           style: TextStyle(color: Colors.grey[300]),
         ),
         actions: [
@@ -313,11 +459,50 @@ class CollectionDetailView extends StatelessWidget {
     );
     
     if (confirmed ?? false) {
-      await collectionManager.deleteCollection(collection.id);
+      _isCollectionBeingDeleted = true;
+      try {
+        await widget.collectionManager.deleteCollection(_currentCollection.id);
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+      } catch (e) {
+        Logger.error('Error deleting collection: ${_currentCollection.name}', e);
+        _isCollectionBeingDeleted = false;
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error deleting collection: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
     }
   }
 
   Future<void> _removeFromCollection(AudiobookFile book) async {
-    await collectionManager.removeBookFromCollection(collection.id, book.path);
+    try {
+      await widget.collectionManager.removeBookFromCollection(_currentCollection.id, book.path);
+      
+      // Show confirmation
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Removed "${book.displayTitle}" from collection'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    } catch (e) {
+      Logger.error('Error removing book from collection', e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error removing book: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }

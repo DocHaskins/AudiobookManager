@@ -112,14 +112,14 @@ class AudiobookIdentifier {
 class AudiobookMetadata {
   final String id;
   final String title;
-  final String subtitle; // NEW: Separate subtitle field
+  final String subtitle;
   final List<String> authors;
-  final String narrator; // NEW: Audiobook-specific narrator field
+  final String narrator;
   final String description;
   final String publisher;
   final String publishedDate;
   final List<String> categories;
-  final String mainCategory; // NEW: Primary category from Google Books
+  final String mainCategory;
   final double averageRating;
   final int ratingsCount;
   final String thumbnailUrl;
@@ -130,7 +130,6 @@ class AudiobookMetadata {
   final String fileFormat;
   final String provider;
   
-  // NEW: Extended metadata fields from Google Books API
   final List<AudiobookIdentifier> identifiers; // ISBN, ASIN, etc.
   final int pageCount; // Original book page count
   final String printType; // BOOK, MAGAZINE, etc.

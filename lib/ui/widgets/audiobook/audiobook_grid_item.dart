@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:audiobook_organizer/models/audiobook_file.dart';
 import 'package:audiobook_organizer/services/audio_player_service.dart';
+import 'package:audiobook_organizer/services/library_manager.dart';
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui';
 
@@ -11,11 +13,13 @@ class AudiobookGridItem extends StatefulWidget {
   final VoidCallback onTap;
   final VoidCallback? onPlayTap;
   final VoidCallback? onFavoriteTap;
+  final LibraryManager libraryManager;
 
   const AudiobookGridItem({
     Key? key,
     required this.book,
     required this.onTap,
+    required this.libraryManager,
     this.onPlayTap,
     this.onFavoriteTap,
   }) : super(key: key);
@@ -27,9 +31,11 @@ class AudiobookGridItem extends StatefulWidget {
 class _AudiobookGridItemState extends State<AudiobookGridItem>
     with SingleTickerProviderStateMixin {
   bool _isHovered = false;
+  bool _isUpdating = false; // Track updating status
   late AnimationController _animationController;
   late Animation<double> _scaleAnimation;
   late Animation<double> _elevationAnimation;
+  StreamSubscription<Set<String>>? _updatingFilesSubscription;
 
   @override
   void initState() {
@@ -52,15 +58,37 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
       parent: _animationController,
       curve: Curves.easeOut,
     ));
+
+    // Initialize updating status
+    _checkUpdateStatus();
+    
+    // Listen to updating files changes
+    _updatingFilesSubscription = widget.libraryManager.updatingFilesChanged.listen((_) {
+      if (mounted) {
+        _checkUpdateStatus();
+      }
+    });
   }
 
   @override
   void dispose() {
     _animationController.dispose();
+    _updatingFilesSubscription?.cancel();
     super.dispose();
   }
 
+  void _checkUpdateStatus() {
+    final newUpdateStatus = widget.libraryManager.isFileUpdating(widget.book.path);
+    if (newUpdateStatus != _isUpdating) {
+      setState(() {
+        _isUpdating = newUpdateStatus;
+      });
+    }
+  }
+
   void _onHoverChange(bool isHovered) {
+    if (_isUpdating) return;
+    
     setState(() {
       _isHovered = isHovered;
     });
@@ -84,7 +112,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
             onEnter: (_) => _onHoverChange(true),
             onExit: (_) => _onHoverChange(false),
             child: GestureDetector(
-              onTap: widget.onTap,
+              onTap: _isUpdating ? null : widget.onTap, // Disable tap when updating
               child: Container(
                 height: 360,
                 decoration: BoxDecoration(
@@ -98,250 +126,259 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
                     ),
                   ],
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Stack(
                   children: [
-                    // Large Cover Section
-                    Container(
-                      height: 260,
-                      width: double.infinity,
-                      decoration: const BoxDecoration(
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
-                      ),
-                      child: Stack(
-                        children: [
-                          // Cover Image
-                          ClipRRect(
-                            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                            child: Container(
-                              width: double.infinity,
-                              height: double.infinity,
-                              color: Colors.grey[900],
-                              child: metadata?.thumbnailUrl != null && metadata!.thumbnailUrl.isNotEmpty
-                                  ? Image.file(
-                                      File(metadata.thumbnailUrl),
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                      errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
-                                    )
-                                  : _buildPlaceholder(),
-                            ),
+                    // Main content
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Large Cover Section
+                        Container(
+                          height: 260,
+                          width: double.infinity,
+                          decoration: const BoxDecoration(
+                            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
                           ),
-                          
-                          // Rating Badge
-                          if (metadata?.averageRating != null && metadata!.averageRating > 0)
-                            Positioned(
-                              top: 12,
-                              right: 12,
-                              child: ClipRect(
-                                child: BackdropFilter(
-                                  filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withAlpha(160),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        const Icon(
-                                          Icons.star,
-                                          color: Color(0xFFFBBF24),
-                                          size: 12,
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Text(
-                                          metadata.averageRating.toStringAsFixed(1),
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w500,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),     
-                            ),
-                          
-                          // Hover Controls - Positioned at Bottom
-                          AnimatedOpacity(
-                            opacity: _isHovered ? 1.0 : 0.0,
-                            duration: const Duration(milliseconds: 200),
-                            child: Container(
-                              width: double.infinity,
-                              height: double.infinity,
-                              decoration: BoxDecoration(
-                                color: Colors.black.withAlpha(90),
+                          child: Stack(
+                            children: [
+                              // Cover Image
+                              ClipRRect(
                                 borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                              ),
-                              child: Align(
-                                alignment: Alignment.bottomCenter,
                                 child: Container(
                                   width: double.infinity,
-                                  padding: const EdgeInsets.all(16),
-                                  decoration: BoxDecoration(
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                      colors: [
-                                        Colors.transparent,
-                                        Colors.black.withAlpha(160),
-                                      ],
-                                    ),
-                                    borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                                  ),
-                                  child: Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      // Favorite Button
-                                      _buildHoverButton(
-                                        icon: metadata?.isFavorite == true 
-                                            ? Icons.favorite 
-                                            : Icons.favorite_border,
-                                        color: metadata?.isFavorite == true 
-                                            ? Colors.red 
-                                            : Colors.white,
-                                        backgroundColor: Colors.black.withAlpha(140),
-                                        onPressed: () => _handleFavoritePress(context),
-                                      ),
-                                      
-                                      const SizedBox(width: 12),
-                                      
-                                      // Play Button
-                                      Consumer<AudioPlayerService>(
-                                        builder: (context, playerService, child) {
-                                          final isCurrentBook = playerService.currentFile?.path == widget.book.path;
-                                          final isPlaying = playerService.isPlaying && isCurrentBook;
-                                          
-                                          return _buildHoverButton(
-                                            icon: isPlaying ? Icons.pause : Icons.play_arrow,
-                                            color: Colors.white,
-                                            backgroundColor: const Color(0xFF3B82F6),
-                                            size: 50,
-                                            iconSize: 24,
-                                            onPressed: () => _handlePlayPress(context, playerService),
-                                          );
-                                        },
-                                      ),
-                                    ],
-                                  ),
+                                  height: double.infinity,
+                                  color: Colors.grey[900],
+                                  child: metadata?.thumbnailUrl != null && metadata!.thumbnailUrl.isNotEmpty
+                                      ? Image.file(
+                                          File(metadata.thumbnailUrl),
+                                          fit: BoxFit.cover,
+                                          width: double.infinity,
+                                          height: double.infinity,
+                                          errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+                                        )
+                                      : _buildPlaceholder(),
                                 ),
                               ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    
-                    // Info Section
-                    Container(
-                      height: 140,
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Title - Reduced space
-                          SizedBox(
-                            height: 36, // Reduced from 44 to 36
-                            child: Text(
-                              metadata?.title ?? widget.book.filename,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 15, // Reduced from 16 to 15
-                                fontWeight: FontWeight.w700,
-                                height: 1.2, // Reduced line height
-                              ),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          
-                          const SizedBox(height: 6), // Reduced from 8
-                          
-                          // Author
-                          SizedBox(
-                            height: 15, // Reduced from 16
-                            child: Text(
-                              metadata?.authorsFormatted ?? 'Unknown Author',
-                              style: TextStyle(
-                                color: Colors.grey[400],
-                                fontSize: 12, // Reduced from 13
-                                height: 1.2,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          
-                          const SizedBox(height: 6), // Reduced from 12
-                          
-                          // Series and Duration Row
-                          SizedBox(
-                            height: 14,
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                // Series Info
-                                Expanded(
-                                  child: Text(
-                                    metadata?.series.isNotEmpty == true
-                                        ? '${metadata!.series}${metadata.seriesPosition.isNotEmpty ? " #${metadata.seriesPosition}" : ""}'
-                                        : 'Standalone',
-                                    style: const TextStyle(
-                                      color: Color(0xFF6366F1),
-                                      fontSize: 10, // Reduced from 11
-                                      fontWeight: FontWeight.w500,
+                              
+                              // Rating Badge
+                              if (metadata?.averageRating != null && metadata!.averageRating > 0)
+                                Positioned(
+                                  top: 12,
+                                  right: 12,
+                                  child: ClipRect(
+                                    child: BackdropFilter(
+                                      filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withAlpha(160),
+                                          borderRadius: BorderRadius.circular(12),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(
+                                              Icons.star,
+                                              color: Color(0xFFFBBF24),
+                                              size: 12,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              metadata.averageRating.toStringAsFixed(1),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                  ),     
+                                ),
+                              
+                              // Hover Controls
+                              if (!_isUpdating)
+                                AnimatedOpacity(
+                                  opacity: _isHovered ? 1.0 : 0.0,
+                                  duration: const Duration(milliseconds: 200),
+                                  child: Container(
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withAlpha(90),
+                                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                                    ),
+                                    child: Align(
+                                      alignment: Alignment.bottomCenter,
+                                      child: Container(
+                                        width: double.infinity,
+                                        padding: const EdgeInsets.all(16),
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topCenter,
+                                            end: Alignment.bottomCenter,
+                                            colors: [
+                                              Colors.transparent,
+                                              Colors.black.withAlpha(160),
+                                            ],
+                                          ),
+                                          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                                        ),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            // Favorite Button
+                                            _buildHoverButton(
+                                              icon: metadata?.isFavorite == true 
+                                                  ? Icons.favorite 
+                                                  : Icons.favorite_border,
+                                              color: metadata?.isFavorite == true 
+                                                  ? Colors.red 
+                                                  : Colors.white,
+                                              backgroundColor: Colors.black.withAlpha(140),
+                                              onPressed: () => _handleFavoritePress(context),
+                                            ),
+                                            
+                                            const SizedBox(width: 12),
+                                            
+                                            // Play Button
+                                            Consumer<AudioPlayerService>(
+                                              builder: (context, playerService, child) {
+                                                final isCurrentBook = playerService.currentFile?.path == widget.book.path;
+                                                final isPlaying = playerService.isPlaying && isCurrentBook;
+                                                
+                                                return _buildHoverButton(
+                                                  icon: isPlaying ? Icons.pause : Icons.play_arrow,
+                                                  color: Colors.white,
+                                                  backgroundColor: const Color(0xFF3B82F6),
+                                                  size: 50,
+                                                  iconSize: 24,
+                                                  onPressed: () => _handlePlayPress(context, playerService),
+                                                );
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
                                   ),
                                 ),
-                                
-                                // Duration
-                                if (metadata?.audioDuration != null)
-                                  Text(
-                                    metadata!.durationFormatted,
-                                    style: TextStyle(
-                                      color: Colors.grey[400],
-                                      fontSize: 10, // Reduced from 11
-                                    ),
-                                  ),
-                              ],
-                            ),
+                            ],
                           ),
-                          
-                          const SizedBox(height: 8),
-                          
-                          // Genre Tag at Bottom
-                          if (_getGenreText(metadata).isNotEmpty)
-                            Container(
-                              height: 20,
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF6366F1).withAlpha(60),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Center(
+                        ),
+                        
+                        // Info Section
+                        Container(
+                          height: 140,
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Title
+                              SizedBox(
+                                height: 36,
                                 child: Text(
-                                  _getGenreText(metadata),
+                                  metadata?.title ?? widget.book.filename,
                                   style: const TextStyle(
-                                    color: Color(0xFFA5B4FC),
-                                    fontSize: 9, // Reduced from 10
-                                    fontWeight: FontWeight.w500,
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.2,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              
+                              const SizedBox(height: 6),
+                              
+                              // Author
+                              SizedBox(
+                                height: 15,
+                                child: Text(
+                                  metadata?.authorsFormatted ?? 'Unknown Author',
+                                  style: TextStyle(
+                                    color: Colors.grey[400],
+                                    fontSize: 12,
+                                    height: 1.2,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
-                            ),
-                        ],
-                      ),
+                              
+                              const SizedBox(height: 6),
+                              
+                              // Series and Duration Row
+                              SizedBox(
+                                height: 14,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    // Series Info
+                                    Expanded(
+                                      child: Text(
+                                        metadata?.series.isNotEmpty == true
+                                            ? '${metadata!.series}${metadata.seriesPosition.isNotEmpty ? " #${metadata.seriesPosition}" : ""}'
+                                            : 'Standalone',
+                                        style: const TextStyle(
+                                          color: Color(0xFF6366F1),
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    
+                                    // Duration
+                                    if (metadata?.audioDuration != null)
+                                      Text(
+                                        metadata!.durationFormatted,
+                                        style: TextStyle(
+                                          color: Colors.grey[400],
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              
+                              const SizedBox(height: 8),
+                              
+                              // Genre Tag at Bottom
+                              if (_getGenreText(metadata).isNotEmpty)
+                                Container(
+                                  height: 20,
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF6366F1).withAlpha(60),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      _getGenreText(metadata),
+                                      style: const TextStyle(
+                                        color: Color(0xFFA5B4FC),
+                                        fontSize: 9,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
+                    
+                    // Updating overlay
+                    if (_isUpdating) _buildUpdatingOverlay(),
                   ],
                 ),
               ),
@@ -349,6 +386,57 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildUpdatingOverlay() {
+    return Positioned.fill(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).primaryColor.withAlpha(40),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Theme.of(context).primaryColor.withAlpha(100),
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        Theme.of(context).primaryColor,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Updating...',
+                    style: TextStyle(
+                      color: Theme.of(context).primaryColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -361,7 +449,7 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
     double iconSize = 18,
   }) {
     return GestureDetector(
-      onTap: onPressed,
+      onTap: _isUpdating ? null : onPressed, // Disable when updating
       child: Container(
         width: size,
         height: size,
@@ -450,6 +538,8 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
   }
 
   Future<void> _handlePlayPress(BuildContext context, AudioPlayerService playerService) async {
+    if (_isUpdating) return; // Don't allow play when updating
+    
     try {
       final isCurrentBook = playerService.currentFile?.path == widget.book.path;
       
@@ -489,6 +579,8 @@ class _AudiobookGridItemState extends State<AudiobookGridItem>
   }
 
   Future<void> _handleFavoritePress(BuildContext context) async {
+    if (_isUpdating) return; // Don't allow favorite toggle when updating
+    
     if (widget.onFavoriteTap != null) {
       widget.onFavoriteTap!();
       return;

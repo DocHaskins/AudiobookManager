@@ -7,7 +7,7 @@ import 'package:audiobook_organizer/ui/widgets/audiobook/audiobook_grid_item.dar
 import 'package:audiobook_organizer/ui/widgets/audiobook/audiobook_list_item.dart';
 import 'package:audiobook_organizer/ui/widgets/audiobook/audiobook_detail_view.dart';
 
-class LibraryBooksView extends StatelessWidget {
+class LibraryBooksView extends StatefulWidget {
   final List<AudiobookFile> books;
   final bool isGridView;
   final LibraryManager libraryManager;
@@ -24,12 +24,34 @@ class LibraryBooksView extends StatelessWidget {
   }) : super(key: key);
 
   @override
+  State<LibraryBooksView> createState() => _LibraryBooksViewState();
+}
+
+class _LibraryBooksViewState extends State<LibraryBooksView> {
+  late ScrollController _gridScrollController;
+  late ScrollController _listScrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _gridScrollController = ScrollController();
+    _listScrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _gridScrollController.dispose();
+    _listScrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (books.isEmpty) {
+    if (widget.books.isEmpty) {
       return _buildEmptyState();
     }
 
-    return isGridView ? _buildGridView() : _buildListView();
+    return widget.isGridView ? _buildGridView() : _buildListView();
   }
 
   Widget _buildEmptyState() {
@@ -61,9 +83,11 @@ class LibraryBooksView extends StatelessWidget {
         const double cardWidth = 200.0;
         const double cardHeight = 400.0;
         const double spacing = 24.0;
+        const double scrollbarSpace = 16.0; // Space reserved for scrollbar
         
         // Calculate how many fixed-size cards fit across the available width
-        final availableWidth = constraints.maxWidth - (spacing * 2);
+        // Subtract scrollbar space from available width
+        final availableWidth = constraints.maxWidth - (spacing * 2) - scrollbarSpace;
         final int crossAxisCount = (availableWidth / (cardWidth + spacing))
             .floor()
             .clamp(1, 10);
@@ -72,38 +96,43 @@ class LibraryBooksView extends StatelessWidget {
         final double gridWidth = (crossAxisCount * cardWidth) + 
             ((crossAxisCount - 1) * spacing);
         
-        return Center(
-          child: SizedBox(
-            width: gridWidth + (spacing * 2),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: GridView.builder(
-                // Use custom delegate with absolutely fixed dimensions
-                gridDelegate: _FixedSizeGridDelegate(
-                  crossAxisCount: crossAxisCount,
-                  itemWidth: cardWidth,
-                  itemHeight: cardHeight,
-                  crossAxisSpacing: spacing,
-                  mainAxisSpacing: spacing,
-                ),
-                itemCount: books.length,
-                itemBuilder: (context, index) {
-                  final book = books[index];
-                  return SizedBox(
-                    width: cardWidth,  // Force exact width
-                    height: cardHeight, // Force exact height
-                    child: AudiobookGridItem(
-                      book: book,
-                      onTap: () => onNavigateToDetail(
-                        AudiobookDetailView(
+        return Scrollbar(
+          controller: _gridScrollController,
+          thumbVisibility: true,
+          trackVisibility: true,
+          thickness: 8.0,
+          radius: const Radius.circular(4.0),
+          child: SingleChildScrollView(
+            controller: _gridScrollController,
+            child: Center(
+              child: Container(
+                width: gridWidth + (spacing * 2),
+                margin: const EdgeInsets.only(right: scrollbarSpace), // Reserve space for scrollbar
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Wrap(
+                    spacing: spacing,
+                    runSpacing: spacing,
+                    alignment: WrapAlignment.start,
+                    children: widget.books.map((book) {
+                      return SizedBox(
+                        width: cardWidth,
+                        height: cardHeight,
+                        child: AudiobookGridItem(
                           book: book,
-                          libraryManager: libraryManager,
+                          libraryManager: widget.libraryManager, // Pass library manager
+                          onTap: () => widget.onNavigateToDetail(
+                            AudiobookDetailView(
+                              book: book,
+                              libraryManager: widget.libraryManager,
+                            ),
+                          ),
+                          onFavoriteTap: () => widget.onToggleFavorite(book),
                         ),
-                      ),
-                      onFavoriteTap: () => onToggleFavorite(book),
-                    ),
-                  );
-                },
+                      );
+                    }).toList(),
+                  ),
+                ),
               ),
             ),
           ),
@@ -113,22 +142,33 @@ class LibraryBooksView extends StatelessWidget {
   }
 
   Widget _buildListView() {
-    return ListView.builder(
-      padding: const EdgeInsets.all(24),
-      itemCount: books.length,
-      itemBuilder: (context, index) {
-        final book = books[index];
-        return AudiobookListItem(
-          book: book,
-          onTap: () => onNavigateToDetail(
-            AudiobookDetailView(
-              book: book,
-              libraryManager: libraryManager,
+    const double scrollbarSpace = 16.0; // Space reserved for scrollbar
+    
+    return Scrollbar(
+      controller: _listScrollController,
+      thumbVisibility: true,
+      trackVisibility: true,
+      thickness: 8.0,
+      radius: const Radius.circular(4.0),
+      child: ListView.builder(
+        controller: _listScrollController,
+        padding: const EdgeInsets.fromLTRB(24, 24, 24 + scrollbarSpace, 24), // Add right padding for scrollbar
+        itemCount: widget.books.length,
+        itemBuilder: (context, index) {
+          final book = widget.books[index];
+          return AudiobookListItem(
+            book: book,
+            libraryManager: widget.libraryManager, // Pass library manager
+            onTap: () => widget.onNavigateToDetail(
+              AudiobookDetailView(
+                book: book,
+                libraryManager: widget.libraryManager,
+              ),
             ),
-          ),
-          // Note: List view doesn't have favorite tap - handled in detail view
-        );
-      },
+            // Note: List view doesn't have favorite tap - handled in detail view
+          );
+        },
+      ),
     );
   }
 }

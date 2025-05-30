@@ -39,17 +39,17 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
     with TickerProviderStateMixin {
   late AnimationController _favoriteController;
   late AnimationController _collectionController;
-  late AnimationController _goodreadsController; // NEW: Animation for Goodreads button
+  late AnimationController _goodreadsController;
   late Animation<double> _favoriteScaleAnimation;
   late Animation<double> _collectionScaleAnimation;
-  late Animation<double> _goodreadsScaleAnimation; // NEW
+  late Animation<double> _goodreadsScaleAnimation;
   late Animation<Color?> _favoriteColorAnimation;
   late Animation<Color?> _collectionColorAnimation;
-  late Animation<Color?> _goodreadsColorAnimation; // NEW
+  late Animation<Color?> _goodreadsColorAnimation;
   
   bool _isFavoriteAnimating = false;
   bool _isCollectionAnimating = false;
-  bool _isGoodreadsAnimating = false; // NEW: Track Goodreads animation
+  bool _isGoodreadsAnimating = false;
   bool _isConverting = false;
 
   @override
@@ -96,7 +96,6 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
       curve: Curves.easeInOut,
     ));
 
-    // NEW: Goodreads animation controller
     _goodreadsController = AnimationController(
       duration: const Duration(milliseconds: 500),
       vsync: this,
@@ -121,7 +120,7 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
   void dispose() {
     _favoriteController.dispose();
     _collectionController.dispose();
-    _goodreadsController.dispose(); // NEW: Dispose Goodreads controller
+    _goodreadsController.dispose();
     super.dispose();
   }
 
@@ -237,8 +236,7 @@ class _AudiobookActionsSectionState extends State<AudiobookActionsSection>
         ),
         
         const SizedBox(height: 12),
-        
-        // NEW: Browse Goodreads button with animation
+
         SizedBox(
           width: double.infinity,
           child: AnimatedBuilder(

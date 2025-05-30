@@ -27,6 +27,16 @@ class LibraryManager {
   final CoverArtManager _coverArtManager = CoverArtManager();
   CollectionManager? _collectionManager;
 
+  final Set<String> _updatingFiles = <String>{};
+  final StreamController<Set<String>> _updatingFilesController = StreamController<Set<String>>.broadcast();
+  bool isFileUpdating(String filePath) {
+    return _updatingFiles.contains(filePath);
+  }
+
+  Set<String> get updatingFiles => Set.from(_updatingFiles);
+
+  // Stream for listening to updating files changes
+  Stream<Set<String>> get updatingFilesChanged => _updatingFilesController.stream;
   // Library data
   List<AudiobookFile> _files = [];
   List<String> _watchedDirectories = [];
@@ -566,7 +576,36 @@ class LibraryManager {
       
       final updatedMetadata = updateFunction(file.metadata!);
       
-      return await updateMetadata(file, updatedMetadata);
+      // Don't call updateMetadata here to avoid double tracking - handle directly
+      Logger.log('Updating file metadata for: ${file.filename}');
+      
+      // Update the metadata in storage first
+      final success = await _storageManager.updateMetadataForFile(
+        file.path, 
+        updatedMetadata, 
+        force: true
+      );
+      
+      if (success) {
+        // Update the file object
+        file.metadata = updatedMetadata;
+
+        await _storageManager.saveLibrary(_files);
+        
+        final fileIndex = _files.indexWhere((f) => f.path == file.path);
+        if (fileIndex != -1) {
+          _files[fileIndex] = file;
+        }
+        
+        // Notify listeners about the change
+        _notifyLibraryChanged();
+        
+        Logger.log('Successfully updated file metadata for: ${file.filename}');
+        return true;
+      }
+      
+      Logger.error('Failed to update file metadata in storage for: ${file.filename}');
+      return false;
     } catch (e) {
       Logger.error('Error in _updateFileMetadata for ${file.filename}', e);
       return false;
@@ -574,7 +613,12 @@ class LibraryManager {
   }
 
   Future<bool> updateMetadata(AudiobookFile file, AudiobookMetadata metadata) async {
+    final filePath = file.path;
+    
     try {
+      // Mark file as updating
+      _setFileUpdating(filePath, true);
+      
       Logger.log('Updating metadata for file: ${file.filename}');
       
       // Update the metadata in storage first
@@ -607,6 +651,9 @@ class LibraryManager {
     } catch (e) {
       Logger.error('Error updating metadata for ${file.filename}', e);
       return false;
+    } finally {
+      // Always mark file as no longer updating
+      _setFileUpdating(filePath, false);
     }
   }
 
@@ -621,7 +668,12 @@ class LibraryManager {
   
   // Update cover image for a specific file
   Future<bool> updateCoverImage(AudiobookFile file, String coverSource) async {
+    final filePath = file.path;
+    
     try {
+      // Mark file as updating
+      _setFileUpdating(filePath, true);
+      
       Logger.log('Updating cover image for: ${file.filename} from source: $coverSource');
       
       String? localCoverPath;
@@ -644,6 +696,8 @@ class LibraryManager {
         final updatedMetadata = file.metadata!.copyWith(thumbnailUrl: localCoverPath);
         
         // Use the standard updateMetadata method to ensure proper persistence
+        // Note: updateMetadata will handle its own _setFileUpdating, so we need to avoid double-tracking
+        _setFileUpdating(filePath, false); // Clear our tracking first
         final success = await updateMetadata(file, updatedMetadata);
         
         if (success) {
@@ -660,6 +714,9 @@ class LibraryManager {
     } catch (e) {
       Logger.error('Error updating cover image for file: ${file.path}', e);
       return false;
+    } finally {
+      // Always mark file as no longer updating
+      _setFileUpdating(filePath, false);
     }
   }
   
@@ -685,15 +742,26 @@ class LibraryManager {
     List<AudiobookBookmark>? bookmarks,
     List<AudiobookNote>? notes,
   }) async {
-    return _updateFileMetadata(file, (metadata) => metadata.copyWith(
-      userRating: userRating ?? metadata.userRating,
-      lastPlayedPosition: lastPlayedPosition ?? metadata.lastPlayedPosition,
-      playbackPosition: playbackPosition ?? metadata.playbackPosition,
-      userTags: userTags ?? metadata.userTags,
-      isFavorite: isFavorite ?? metadata.isFavorite,
-      bookmarks: bookmarks ?? metadata.bookmarks,
-      notes: notes ?? metadata.notes,
-    ));
+    final filePath = file.path;
+    
+    try {
+      _setFileUpdating(filePath, true);
+      
+      return await _updateFileMetadata(file, (metadata) => metadata.copyWith(
+        userRating: userRating ?? metadata.userRating,
+        lastPlayedPosition: lastPlayedPosition ?? metadata.lastPlayedPosition,
+        playbackPosition: playbackPosition ?? metadata.playbackPosition,
+        userTags: userTags ?? metadata.userTags,
+        isFavorite: isFavorite ?? metadata.isFavorite,
+        bookmarks: bookmarks ?? metadata.bookmarks,
+        notes: notes ?? metadata.notes,
+      ));
+    } catch (e) {
+      Logger.error('Error updating user data for ${file.filename}', e);
+      return false;
+    } finally {
+      _setFileUpdating(filePath, false);
+    }
   }
   
   // REFACTORED: Analyze library structure with utilities
@@ -749,12 +817,17 @@ class LibraryManager {
   }
 
   Future<bool> writeMetadataToFile(AudiobookFile file) async {
+    final filePath = file.path;
+    
     if (file.metadata == null) {
       Logger.warning('No metadata to write for file: ${file.filename}');
       return false;
     }
 
     try {
+      // Mark file as updating
+      _setFileUpdating(filePath, true);
+      
       Logger.log('Writing metadata to file: ${file.filename}');
       final currentMetadata = file.metadata!;
       final metadataService = MetadataService();
@@ -811,6 +884,9 @@ class LibraryManager {
     } catch (e) {
       Logger.error('Error writing metadata to file: ${file.filename}', e);
       return false;
+    } finally {
+      // Always mark file as no longer updating
+      _setFileUpdating(filePath, false);
     }
   }
 
@@ -1105,6 +1181,20 @@ class LibraryManager {
       return false;
     }
   }
+
+  void _setFileUpdating(String filePath, bool isUpdating) {
+    if (isUpdating) {
+      if (_updatingFiles.add(filePath)) {
+        _updatingFilesController.add(Set.from(_updatingFiles));
+        Logger.debug('File marked as updating: $filePath');
+      }
+    } else {
+      if (_updatingFiles.remove(filePath)) {
+        _updatingFilesController.add(Set.from(_updatingFiles));
+        Logger.debug('File no longer updating: $filePath');
+      }
+    }
+  }
   
   // Get file by path
   AudiobookFile? getFileByPath(String path) {
@@ -1178,6 +1268,70 @@ class LibraryManager {
 
   List<AudiobookFile> getBooksForCollection(Collection collection) {
     return _files.where((file) => collection.bookPaths.contains(file.path)).toList();
+  }
+
+  Future<bool> searchAndUpdateMetadata(AudiobookFile file) async {
+    final filePath = file.path;
+    
+    try {
+      // Mark file as updating
+      _setFileUpdating(filePath, true);
+      
+      Logger.log('Starting metadata search for: ${file.filename}');
+      
+      if (file.metadata == null) {
+        Logger.warning('Cannot search metadata for file without existing metadata: ${file.filename}');
+        return false;
+      }
+      
+      // Search for enhanced metadata using your existing matcher
+      final enhancedMetadata = await _metadataMatcher.matchWithOnlineSources(
+        file.metadata!,
+        file.path,
+      );
+      
+      if (enhancedMetadata != null) {
+        // Update directly to avoid double tracking
+        Logger.log('Updating with enhanced metadata for: ${file.filename}');
+        
+        // Update the metadata in storage first
+        final success = await _storageManager.updateMetadataForFile(
+          file.path, 
+          enhancedMetadata, 
+          force: true
+        );
+        
+        if (success) {
+          // Update the file object
+          file.metadata = enhancedMetadata;
+
+          await _storageManager.saveLibrary(_files);
+          
+          final fileIndex = _files.indexWhere((f) => f.path == file.path);
+          if (fileIndex != -1) {
+            _files[fileIndex] = file;
+          }
+          
+          // Notify listeners about the change
+          _notifyLibraryChanged();
+          
+          Logger.log('Successfully updated metadata from search for: ${file.filename}');
+          return true;
+        } else {
+          Logger.error('Failed to save searched metadata for: ${file.filename}');
+          return false;
+        }
+      } else {
+        Logger.log('No enhanced metadata found for: ${file.filename}');
+        return false;
+      }
+    } catch (e) {
+      Logger.error('Error in metadata search for $filePath', e);
+      return false;
+    } finally {
+      // Always mark file as no longer updating
+      _setFileUpdating(filePath, false);
+    }
   }
   
   // Get all series with 2+ books
